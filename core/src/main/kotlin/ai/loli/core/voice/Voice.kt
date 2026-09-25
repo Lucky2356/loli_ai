@@ -47,6 +47,11 @@ object SpeechText {
     fun forSpeech(text: String, maxLines: Int = 6): String {
         val lines = text.lines().map { it.trim().removePrefix("•").removePrefix("✓").removePrefix("!").trim() }.filter { it.isNotEmpty() }
         val limited = if (lines.size > maxLines) lines.take(maxLines) + "и ещё ${lines.size - maxLines}." else lines
-        return limited.joinToString(". ").replace(Regex("[«»]"), "").replace("..", ".")
+        val sb = StringBuilder()
+        limited.forEachIndexed { i, line ->
+            if (i > 0) sb.append(if (limited[i - 1].endsWith(":") || limited[i - 1].endsWith(".")) " " else ". ")
+            sb.append(line)
+        }
+        return sb.toString().replace(Regex("[«»]"), "")
     }
 }

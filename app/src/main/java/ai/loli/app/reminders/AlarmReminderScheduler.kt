@@ -25,8 +25,11 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
         val at = maxOf(reminder.triggerAt.toEpochMilli(), System.currentTimeMillis() + 2_000)
         val pi = pendingIntent(reminder.id, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         try {
-            if (canScheduleExact()) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
-            else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
+                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            } else {
+                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            }
         } catch (e: SecurityException) {
             Logger.w(TAG, "Точные будильники запрещены — ставлю неточный", e)
             alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
