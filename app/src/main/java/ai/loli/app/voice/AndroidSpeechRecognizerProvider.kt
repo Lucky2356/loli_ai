@@ -57,11 +57,16 @@ class AndroidSpeechRecognizerProvider(private val context: Context) : SpeechReco
         }.getOrDefault(component.packageName)
     }
 
-    override fun isAvailable(): Boolean = services().isNotEmpty() || SpeechRecognizer.isRecognitionAvailable(context)
+    /** Доступно, если есть сторонний сервис (собственный сервис Лоли — это тот же Vosk, его вызываем напрямую). */
+    override fun isAvailable(): Boolean = services().isNotEmpty()
 
     override fun listen(options: ListenOptions): Flow<SpeechEvent> = flow {
         // null — системный сервис по умолчанию (если перечислить сервисы не удалось).
-        val candidates: List<ComponentName?> = services().ifEmpty { listOf(null) }
+        val candidates: List<ComponentName?> = services().ifEmpty { if (SpeechRecognizer.isRecognitionAvailable(context)) listOf(null) else emptyList() }
+        if (candidates.isEmpty()) {
+            emit(SpeechEvent.Error(SpeechError.UNAVAILABLE, "На телефоне нет системного распознавания речи."))
+            return@flow
+        }
         for ((index, component) in candidates.withIndex()) {
             var busyRetries = 2
             while (true) {

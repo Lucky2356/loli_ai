@@ -13,10 +13,13 @@ import androidx.datastore.preferences.preferencesDataStore
 import ai.loli.core.ai.AIProviderType
 import ai.loli.core.sync.ProfileSync
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -113,7 +116,12 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val profileDirty = booleanPreferencesKey("profile_dirty")
     }
 
+    private val _loaded = MutableStateFlow(false)
+    /** Настройки прочитаны с диска (до этого [settings] содержит значения по умолчанию). */
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
     val settings: StateFlow<AppSettings> = store.data.map { it.toSettings() }
+        .onEach { _loaded.value = true }
         .stateIn(scope, SharingStarted.Eagerly, AppSettings())
 
     /** Актуальные настройки прямо из хранилища (не ждёт первой эмиссии StateFlow). */

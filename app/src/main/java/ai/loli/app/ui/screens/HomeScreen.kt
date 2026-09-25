@@ -110,46 +110,45 @@ fun HomeScreen(
         else -> ""
     }
     val listState = rememberLazyListState()
-    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(listState.layoutInfo.totalItemsCount.coerceAtLeast(1) - 1) }
+    // Новая реплика — прокрутка к ней (индекс 0 — карточки «Сегодня», дальше сообщения).
+    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size) }
 
     Column(Modifier.fillMaxSize().imePadding()) {
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(settings.assistantName, style = MaterialTheme.typography.headlineMedium)
+            }
+            val (icon, label) = when {
+                !online && settings.useAI -> Icons.Rounded.CloudOff to "Офлайн"
+                !settings.useAI -> Icons.Rounded.Bolt to "На устройстве"
+                vm.aiConfigured() -> Icons.Rounded.AutoAwesome to (settings.primaryProvider?.type?.title ?: "AI")
+                else -> Icons.Rounded.AutoAwesome to "AI: нет ключа"
+            }
+            Pill(label, icon, onClick = { openSettings("settings/ai") })
+            IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        // Сфера и статус всегда на виду — даже когда история разговора длинная.
+        Column(Modifier.fillMaxWidth().padding(top = 4.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.clip(CircleShape).clickable(
+                    interactionSource = remember { MutableInteractionSource() }, indication = null,
+                ) { if (active) vm.stop() else onMic() },
+            ) { AssistantOrb(mode, level, size = if (history.isEmpty() && !active) 220.dp else 120.dp) }
+            Text(
+                status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
+                color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 32.dp).clickable(enabled = mode == OrbMode.ERROR) { vm.clearError() },
+            )
+            AnimatedVisibility(heard.isNotBlank()) {
+                Text(heard, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 6.dp))
+            }
+        }
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 12.dp)) {
-            item(key = "header") {
-                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(settings.assistantName, style = MaterialTheme.typography.headlineMedium)
-                    }
-                    val (icon, label) = when {
-                        !online && settings.useAI -> Icons.Rounded.CloudOff to "Офлайн"
-                        !settings.useAI -> Icons.Rounded.Bolt to "На устройстве"
-                        vm.aiConfigured() -> Icons.Rounded.AutoAwesome to (settings.primaryProvider?.type?.title ?: "AI")
-                        else -> Icons.Rounded.AutoAwesome to "AI: нет ключа"
-                    }
-                    Pill(label, icon, onClick = { openSettings("settings/ai") })
-                    IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-            }
-            item(key = "orb") {
-                Column(Modifier.fillMaxWidth().padding(top = 8.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        Modifier.clip(CircleShape).clickable(
-                            interactionSource = remember { MutableInteractionSource() }, indication = null,
-                        ) { if (active) vm.stop() else onMic() },
-                    ) { AssistantOrb(mode, level, size = if (history.isEmpty()) 220.dp else 160.dp) }
-                    Text(
-                        status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
-                        color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 32.dp).clickable(enabled = mode == OrbMode.ERROR) { vm.clearError() },
-                    )
-                    AnimatedVisibility(heard.isNotBlank()) {
-                        Text(heard, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp))
-                    }
-                }
-            }
             item(key = "today") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Stat(Modifier.weight(1f), "Задачи", "${summary.activeTasks}", if (summary.overdueTasks > 0) "просрочено ${summary.overdueTasks}" else "активных") { openPlans(0) }
                     Stat(Modifier.weight(1f), "Сегодня", Money.format(summary.todayExpensesMinor, "RUB"), "потрачено") { openExpenses() }
                     Stat(Modifier.weight(1f), "Напомнить", "${summary.activeReminders}", "запланировано") { openPlans(1) }

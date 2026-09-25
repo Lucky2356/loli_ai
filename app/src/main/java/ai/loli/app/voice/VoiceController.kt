@@ -188,7 +188,7 @@ class VoiceController(
         if (chain.isEmpty()) return Heard.Failed("На телефоне нет распознавания речи. Установите приложение Google или офлайн-модель в настройках.", false)
         var last: Heard.Failed? = null
         for ((i, provider) in chain.withIndex()) {
-            val hint = if (i > 0) "Переключилась на ${provider.displayName.lowercase()} — повторите, пожалуйста" else null
+            val hint = if (i > 0) (if (provider === offlineStt) "Переключилась на офлайн-распознавание — повторите, пожалуйста" else "Повторите, пожалуйста") else null
             val result = listenWith(provider, followUp, hint)
             if (result !is Heard.Failed) return result
             last = result

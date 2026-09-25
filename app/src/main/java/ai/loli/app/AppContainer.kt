@@ -155,6 +155,9 @@ class AppContainer(private val context: Context) {
     /** Завершается, когда сессия и настройки загружены (важно для холодного старта из WorkManager/Receiver). */
     private val ready = CompletableDeferred<Unit>()
     suspend fun awaitReady() = ready.await()
+    private val _started = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** Сессия восстановлена — можно показывать интерфейс (без мелькания экрана входа). */
+    val started: kotlinx.coroutines.flow.StateFlow<Boolean> = _started
 
     init {
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -165,6 +168,7 @@ class AppContainer(private val context: Context) {
             auth.restore()
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()
             ready.complete(Unit)
+            _started.value = true
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

@@ -55,6 +55,8 @@ class WakeWordService : LifecycleService() {
     /** Сколько реплик подряд прошло без повторного обращения по имени. */
     private var followUps = 0
     private var tone: ToneGenerator? = null
+    /** Распознавание уже запускается — повторный startService не должен создавать второй микрофон. */
+    private var initialized = false
 
     override fun onCreate() {
         super.onCreate()
@@ -85,7 +87,8 @@ class WakeWordService : LifecycleService() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (speechService == null) {
+        if (!initialized) {
+            initialized = true
             lifecycleScope.launch { startRecognition() }
             lifecycleScope.launch { watchdog() }
             lifecycleScope.launch {

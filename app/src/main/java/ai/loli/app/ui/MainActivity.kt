@@ -21,6 +21,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -175,6 +179,7 @@ fun rememberListenAction(c: AppContainer): () -> Unit {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
     val auth by c.auth.state.collectAsStateWithLifecycle()
@@ -189,6 +194,13 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    val started by c.started.collectAsStateWithLifecycle()
+    val loaded by c.settings.loaded.collectAsStateWithLifecycle()
+    if (!started || !loaded) {
+        Box(Modifier.fillMaxSize()) // доли секунды при запуске: сессия и настройки ещё читаются
+        return
     }
 
     val needsAuth = showAuth || (auth is AuthState.SignedOut && !settings.localOnly && c.supabaseConfig().isConfigured && !settings.onboardingDone)
@@ -216,15 +228,17 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
     }
     BackHandler(enabled = nav.canGoBack) { nav.back() }
 
+    // Пока открыта клавиатура, нижнее меню прячется, а поле ввода встаёт прямо над клавиатурой.
+    val imeVisible = WindowInsets.isImeVisible
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = { BottomBar(nav) },
+        bottomBar = { if (!imeVisible) BottomBar(nav) },
     ) { padding ->
         val holder = rememberSaveableStateHolder()
         AnimatedContent(
             targetState = nav.tab to nav.route,
             transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
             label = "screens",
         ) { (tab, route) ->
             holder.SaveableStateProvider("${tab.name}/${route.orEmpty()}") {
