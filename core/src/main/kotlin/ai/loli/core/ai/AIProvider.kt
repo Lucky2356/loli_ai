@@ -67,8 +67,24 @@ enum class AIProviderType(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-5-mini",
         listOf("openai/gpt-5-mini", "anthropic/claude-sonnet-5", "google/gemini-2.5-flash"), null, false,
     ),
+    DEEPSEEK(
+        "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat",
+        listOf("deepseek-chat", "deepseek-reasoner"), null, false,
+    ),
+    MISTRAL(
+        "mistral", "Mistral AI", "https://api.mistral.ai/v1", "mistral-small-latest",
+        listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"), null, false,
+    ),
+    GROQ(
+        "groq", "Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile",
+        listOf("llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"), null, false,
+    ),
+    XAI(
+        "xai", "xAI Grok", "https://api.x.ai/v1", "grok-4",
+        listOf("grok-4", "grok-3-mini"), null, false,
+    ),
     CUSTOM(
-        "custom", "OpenAI-совместимый API (свой адрес)", "http://192.168.1.10:11434/v1", "",
+        "custom", "Свой сервер (Ollama, LM Studio, vLLM)", "http://192.168.1.10:11434/v1", "",
         emptyList(), null, true,
     );
 
@@ -76,6 +92,7 @@ enum class AIProviderType(
 
     companion object {
         fun fromId(id: String?): AIProviderType = entries.firstOrNull { it.id == id } ?: OPENAI
+        fun fromIdOrNull(id: String?): AIProviderType? = entries.firstOrNull { it.id == id }
     }
 }
 

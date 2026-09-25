@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Loli" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Loli" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/loli_background</item>
         <item name="android:colorAccent">@color/loli_accent</item>
     </style>
 
-    <!-- Окно ассистента поверх других приложений: прозрачный фон, панель рисует Compose. -->
     <style name="Theme.Loli.Assist" parent="Theme.Loli">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Описание Лоли как цифрового ассистента: сессия (окно ассистента) и офлайн-распознавание речи. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="ai.loli.app.assist.LoliRecognitionService"
+    android:sessionService="ai.loli.app.assist.LoliSessionService"
+    android:settingsActivity="ai.loli.app.ui.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false"
+    android:supportsLocalInteraction="false" />

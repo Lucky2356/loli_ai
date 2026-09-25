@@ -100,7 +100,7 @@ class WakeWordService : LifecycleService() {
         val name = container.settings.current().assistantName
         matcher = WakeWordMatcher(name)
         updateNotification(getString(R.string.wake_listening, name))
-        val model = withContext(Dispatchers.Default) { container.voskEngine.model() }
+        val model = withContext(Dispatchers.Default) { if (container.voskModels.ensureReady()) container.voskEngine.model() else null }
         if (model == null) {
             Logger.w(TAG, "Модель Vosk не загружена")
             updateNotification(getString(R.string.wake_model_missing))
@@ -123,6 +123,7 @@ class WakeWordService : LifecycleService() {
         try {
             rec.reset()
             speechService = SpeechService(rec, VoskSpeechProvider.SAMPLE_RATE).also { it.startListening(listener) }
+            container.voice.wakeHoldsMic.value = true
         } catch (e: Exception) {
             Logger.e(TAG, "Не удалось открыть микрофон", e)
         }
@@ -131,6 +132,7 @@ class WakeWordService : LifecycleService() {
     private fun stopVosk() {
         speechService?.let { runCatching { it.stop() }; runCatching { it.shutdown() } }
         speechService = null
+        container.voice.wakeHoldsMic.value = false
     }
 
     private val listener = object : RecognitionListener {

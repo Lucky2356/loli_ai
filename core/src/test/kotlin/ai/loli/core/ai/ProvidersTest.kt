@@ -117,6 +117,50 @@ class ProvidersTest {
     }
 }
 
+class ChainAIProviderTest {
+    private val req = AIRequest("s", listOf(ChatMessage(ChatMessage.Role.USER, "привет")))
+
+    private class Fake(override val type: AIProviderType, private val fail: AIException?) : AIProvider {
+        override val model = "m-${type.id}"
+        var calls = 0
+        override suspend fun complete(request: AIRequest): AIResponse {
+            calls++
+            fail?.let { throw it }
+            return AIResponse("ответ ${type.id}", model, "stop")
+        }
+    }
+
+    @Test fun fallsBackToNextProviderAndRemembersWhoAnswered() = runTest {
+        val openai = Fake(AIProviderType.OPENAI, AIException.RateLimited())
+        val claude = Fake(AIProviderType.ANTHROPIC, AIException.Network(null))
+        val gemini = Fake(AIProviderType.GEMINI, null)
+        val chain = ChainAIProvider(listOf(openai, claude, gemini))
+        assertEquals("ответ gemini", chain.complete(req).text)
+        assertEquals(AIProviderType.GEMINI, chain.lastUsed?.type)
+        assertEquals(listOf(1, 1, 1), listOf(openai.calls, claude.calls, gemini.calls))
+    }
+
+    @Test fun allFailedReportsFirstError() = runTest {
+        val chain = ChainAIProvider(listOf(Fake(AIProviderType.OPENAI, AIException.Unauthorized("401")), Fake(AIProviderType.GEMINI, AIException.RateLimited())))
+        assertFailsWith<AIException.Unauthorized> { chain.complete(req) }
+    }
+
+    @Test fun factorySkipsProvidersWithoutKeys() {
+        val http = HttpClient(MockEngine { error("no") })
+        val single = AIProviderFactory.createChain(http, listOf(
+            AIConfig(AIProviderType.OPENAI, null, null, ""),
+            AIConfig(AIProviderType.DEEPSEEK, null, null, "sk-deepseek"),
+        ))
+        assertEquals(AIProviderType.DEEPSEEK, single.type)
+        val chain = AIProviderFactory.createChain(http, listOf(
+            AIConfig(AIProviderType.ANTHROPIC, null, null, "k1"),
+            AIConfig(AIProviderType.MISTRAL, null, null, "k2"),
+        ))
+        assertTrue(chain is ChainAIProvider && chain.providers.size == 2)
+        assertFailsWith<AIException.NotConfigured> { AIProviderFactory.createChain(http, listOf(AIConfig(AIProviderType.OPENAI, null, null, ""))) }
+    }
+}
+
 class EndpointSecurityTest {
     @Test fun httpOnlyForLocalNetwork() {
         fun secure(url: String) = AIConfig(AIProviderType.CUSTOM, url, "m", "").isSecureEndpoint

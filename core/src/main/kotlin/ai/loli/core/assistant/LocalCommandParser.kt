@@ -38,6 +38,13 @@ private fun Regex(pattern: String, option: RegexOption): kotlin.text.Regex = kot
 class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser()) {
 
     fun parse(input: String, now: Instant, zone: ZoneId): AssistantPlan? {
+        parseCleaned(input, now, zone)?.let { return it }
+        // В живом разговоре фразы часто начинаются с союза: «и добавь задачу…», «ещё запиши расход…».
+        val bare = input.trim().replace(LEADING_CONJUNCTION, "")
+        return if (bare != input.trim() && bare.isNotBlank()) parseCleaned(bare, now, zone) else null
+    }
+
+    private fun parseCleaned(input: String, now: Instant, zone: ZoneId): AssistantPlan? {
         val text = cleanup(input)
         if (text.isEmpty()) return null
         val today = now.atZone(zone).toLocalDate()
@@ -869,6 +876,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         }
 
         /** Выход из диалогового режима. */
+        private val LEADING_CONJUNCTION = Regex("""^(?:(?:и|а|ещё|еще|теперь|также|кстати|потом)[,\s]+)+""", RegexOption.IGNORE_CASE)
+
         fun isDialogEnd(text: String): Boolean {
             val n = RuTokenizer.normalize(text).trim().trim('.', '!', ',')
             return Regex("""^(хватит|стоп|все,? спасибо|всё,? спасибо|закончим|заканчиваем|пока|на этом вс[её]|достаточно|спасибо,? вс[её]|вс[её]|это вс[её])$""").containsMatchIn(n)

@@ -43,7 +43,10 @@ class ConversationContext(
     var topic: String? = null
     var pendingConfirmation: PendingConfirmation? = null
     var pendingChoice: PendingChoice? = null
+    /** Идёт голосовой разговор: реплики звучат без обращения по имени. */
     var dialogMode: Boolean = false
+    /** Мозговой штурм о записи в фокусе: нераспознанные фразы дописываются в неё. */
+    var appendMode: Boolean = false
     /** Ожидаем дозаполнения (сумма расхода, время напоминания, «сохранить как заметку?»). */
     var pendingSlot: SlotRequest? = null
     /** Последняя созданная в разговоре запись — для «отмени последнее». */
@@ -62,7 +65,7 @@ class ConversationContext(
         val expired = idle > ttl
         if (expired) reset()
         // Диалог (мозговой штурм) завершается сам после короткой паузы.
-        if (dialogMode && idle > DIALOG_IDLE) dialogMode = false
+        if (idle > DIALOG_IDLE) { dialogMode = false; appendMode = false }
         lastActivity = now
         return expired
     }
@@ -95,5 +98,6 @@ class ConversationContext(
         lastCreated = null
         lastExpenseQuery = null
         dialogMode = false
+        appendMode = false
     }
 }

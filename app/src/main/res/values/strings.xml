@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Лоли</string>
     <string name="wake_listening">Жду обращения «%1$s»</string>
-    <string name="wake_model_missing">Офлайн-модель речи не загружена — откройте Настройки → Голос</string>
+    <string name="wake_model_missing">Офлайн-модель речи не установлена — откройте Настройки → Голос</string>
     <string name="wake_command_starting">Включаю прослушивание…</string>
     <string name="wake_command">Слушаю команду…</string>
     <string name="wake_thinking">Выполняю…</string>
@@ -19,4 +19,6 @@
     <string name="tile_label">Спросить Лоли</string>
     <string name="shortcut_listen_short">Говорить</string>
     <string name="shortcut_listen_long">Спросить Лоли голосом</string>
+    <string name="assist_label">Лоли — ассистент</string>
+    <string name="recognition_label">Лоли — офлайн-распознавание речи</string>
 </resources>

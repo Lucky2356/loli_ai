@@ -17,6 +17,7 @@ import ai.loli.app.voice.VoskSpeechProvider
 import ai.loli.core.ai.AIConfig
 import ai.loli.core.ai.AIProvider
 import ai.loli.core.ai.AIProviderFactory
+import ai.loli.core.ai.AIProviderType
 import ai.loli.core.ai.EmbeddingProvider
 import ai.loli.core.assistant.ActionExecutor
 import ai.loli.core.assistant.AssistantEngine
@@ -93,20 +94,28 @@ class AppContainer(private val context: Context) {
     val network = NetworkMonitor(context) { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon(1) }
 
     // --- AI ---
-    fun aiConfig(): AIConfig {
+    /** Все включённые провайдеры в порядке приоритета (ключи — из Keystore). */
+    fun aiConfigs(): List<AIConfig> {
         val s = settings.settings.value
+        return s.activeProviders.map { p -> aiConfig(p.type) }
+    }
+
+    fun aiConfig(type: AIProviderType): AIConfig {
+        val p = settings.settings.value.provider(type)
         return AIConfig(
-            type = s.aiProvider,
-            endpoint = s.aiEndpoint,
-            model = s.aiModel,
-            apiKey = secrets.get(KeystoreSecretStore.aiKey(s.aiProvider.id)).orEmpty(),
-            embeddingsEnabled = s.embeddingsEnabled,
+            type = type,
+            endpoint = p.endpoint,
+            model = p.model,
+            apiKey = secrets.get(KeystoreSecretStore.aiKey(type.id)).orEmpty(),
+            embeddingsEnabled = settings.settings.value.embeddingsEnabled,
         )
     }
 
-    private fun aiProvider(): AIProvider? = aiConfig().takeIf { it.isComplete }?.let { AIProviderFactory.create(http, it) }
+    fun aiConfigured(): Boolean = aiConfigs().any { it.isComplete }
+
+    private fun aiProvider(): AIProvider = AIProviderFactory.createChain(http, aiConfigs())
     private fun embeddingProvider(): EmbeddingProvider? =
-        if (network.online.value) AIProviderFactory.createEmbeddings(http, aiConfig()) else null
+        if (network.online.value && settings.settings.value.useAI) AIProviderFactory.createEmbeddings(http, aiConfigs()) else null
 
     // --- Ассистент ---
     val reminderScheduler = AlarmReminderScheduler(context)
@@ -129,7 +138,13 @@ class AppContainer(private val context: Context) {
     /** Синтезатор речи подключается только когда понадобится (не при запуске из будильника/синхронизации). */
     private val ttsLazy = lazy { AndroidTtsProvider(context) { settings.settings.value.speechRate } }
     val tts: AndroidTtsProvider get() = ttsLazy.value
-    val voice: VoiceController by lazy { VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope) }
+    val voice: VoiceController by lazy {
+        VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope).also { v ->
+            v.systemDialogAvailable = {
+                android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).resolveActivity(context.packageManager) != null
+            }
+        }
+    }
     private val lazyTts = object : ai.loli.core.voice.TextToSpeechProvider {
         override val isReady: Boolean get() = tts.isReady
         override suspend fun speak(text: String) = tts.speak(text)

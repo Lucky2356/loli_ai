@@ -36,7 +36,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
+        // Телефоны — ARM; без x86-библиотек APK заметно меньше.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
+
+    // Офлайн-модель речи (scripts/fetch-vosk-model.sh) встраивается в APK, если скачана.
+    sourceSets.getByName("main").assets.srcDir("vosk-assets")
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -116,7 +121,6 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.service)

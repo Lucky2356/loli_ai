@@ -55,13 +55,13 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
     override val id = "vosk"
     override val displayName = "Офлайн (Vosk)"
 
-    override fun isAvailable(): Boolean = models.isReady()
+    override fun isAvailable(): Boolean = models.isObtainable()
 
     override fun listen(options: ListenOptions): Flow<SpeechEvent> = callbackFlow {
-        // Загрузка модели занимает до нескольких секунд — не в UI-потоке.
-        val model = withContext(Dispatchers.Default) { engine.model() }
+        // Распаковка встроенной модели (первый запуск) и её загрузка занимают несколько секунд — не в UI-потоке.
+        val model = withContext(Dispatchers.Default) { if (models.ensureReady()) engine.model() else null }
         if (model == null) {
-            trySend(SpeechEvent.Error(SpeechError.UNAVAILABLE, "Офлайн-модель речи не загружена (Настройки → Голос)."))
+            trySend(SpeechEvent.Error(SpeechError.UNAVAILABLE, "Офлайн-модель речи не установлена (Настройки → Голос)."))
             close()
             return@callbackFlow
         }
@@ -78,8 +78,12 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
         }
         var done = false
         service.startListening(object : RecognitionListener {
+            private var started = false
             override fun onPartialResult(hypothesis: String?) {
-                voskText(hypothesis, "partial").takeIf { it.isNotEmpty() }?.let { trySend(SpeechEvent.Partial(it)) }
+                voskText(hypothesis, "partial").takeIf { it.isNotEmpty() }?.let {
+                    if (!started) { started = true; trySend(SpeechEvent.SpeechStarted) }
+                    trySend(SpeechEvent.Partial(it))
+                }
             }
             override fun onResult(hypothesis: String?) {
                 val text = voskText(hypothesis, "text")
@@ -87,9 +91,13 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
             }
             override fun onFinalResult(hypothesis: String?) = onResult(hypothesis)
             override fun onError(exception: Exception?) {
-                trySend(SpeechEvent.Error(SpeechError.AUDIO, exception?.message ?: "Ошибка микрофона")); close()
+                if (done) return
+                done = true
+                trySend(SpeechEvent.Error(SpeechError.AUDIO, "Микрофон недоступен: ${exception?.message ?: "ошибка записи"}")); close()
             }
             override fun onTimeout() {
+                if (done) return
+                done = true
                 trySend(SpeechEvent.Error(SpeechError.TIMEOUT, "Не расслышала.")); close()
             }
         }, TIMEOUT_MS)

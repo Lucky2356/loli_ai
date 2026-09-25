@@ -3,6 +3,7 @@ package ai.loli.core.assistant
 import ai.loli.core.ai.AIException
 import ai.loli.core.ai.AIProvider
 import ai.loli.core.ai.AIRequest
+import ai.loli.core.ai.ChainAIProvider
 import ai.loli.core.ai.ChatMessage
 import ai.loli.core.domain.ConversationRepository
 import ai.loli.core.domain.MemoryRepository
@@ -46,6 +47,10 @@ data class AssistantReply(
     /** AI был недоступен, команда обработана офлайн. */
     val offline: Boolean = false,
     val changedData: Boolean = false,
+    /** Пользователь закончил разговор («хватит», «спасибо, всё») — больше не слушать. */
+    val endsDialog: Boolean = false,
+    /** Какой AI-провайдер ответил (при нескольких подключённых). */
+    val provider: String? = null,
 )
 
 /**
@@ -86,14 +91,35 @@ class AssistantEngine(
             AssistantReply("Что-то пошло не так: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.")
         }
         record(text, reply.text)
-        if (source != InputSource.TEXT && !reply.expectFollowUp && !reply.awaitingAnswer && !reply.awaitingConfirmation) {
+        continueDialog(reply, source, cfg)
+    }
+
+    /**
+     * Голосовой разговор: при включённом диалоговом режиме ассистент продолжает слушать после любого ответа,
+     * пока пользователь не скажет «хватит» или не замолчит. Без него — только если ждём ответа на вопрос.
+     */
+    private fun continueDialog(reply: AssistantReply, source: InputSource, cfg: AssistantSettings): AssistantReply {
+        if (reply.endsDialog) {
             context.dialogMode = false
+            context.appendMode = false
+            return reply.copy(expectFollowUp = false)
         }
-        reply
+        if (source == InputSource.TEXT) return reply
+        val waiting = reply.expectFollowUp || reply.awaitingAnswer || reply.awaitingConfirmation
+        if (cfg.dialogMode) {
+            context.dialogMode = true
+        } else if (!waiting) {
+            context.dialogMode = false
+            context.appendMode = false
+        }
+        return reply.copy(expectFollowUp = cfg.dialogMode || waiting)
     }
 
     /** Голосовой разговор закончился (тишина, лимит, кнопка «стоп») — выходим из диалогового режима. */
-    suspend fun endDialog() = mutex.withLock { context.dialogMode = false }
+    suspend fun endDialog() = mutex.withLock {
+        context.dialogMode = false
+        context.appendMode = false
+    }
 
     /** Подтверждение/отмена кнопкой в UI. */
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
@@ -151,9 +177,8 @@ class AssistantEngine(
             }
         }
         // 4. Завершение диалогового режима.
-        if (context.dialogMode && LocalCommandParser.isDialogEnd(text)) {
-            context.dialogMode = false
-            return AssistantReply("Хорошо! Если что — зовите.")
+        if ((context.dialogMode || context.appendMode) && LocalCommandParser.isDialogEnd(text)) {
+            return AssistantReply("Хорошо! Если что — зовите.", endsDialog = true)
         }
         // 4. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
@@ -162,7 +187,9 @@ class AssistantEngine(
             if (provider != null) {
                 try {
                     val plan = planWithAI(provider, text, cfg)
+                    val used = (provider as? ChainAIProvider)?.lastUsed ?: provider
                     return execute(plan, usedAI = true, offline = false, name = cfg.assistantName)
+                        .copy(provider = "${used.type.title} · ${used.model}")
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: AIException) {
@@ -270,7 +297,10 @@ class AssistantEngine(
             parts += slot.question
         }
         val awaitingAnswer = result.pendingChoice != null || plan.slot != null || result.outcomes.any { it.kind == Outcome.Kind.QUESTION }
-        if (plan.expectFollowUp && dialogAllowed) context.dialogMode = true
+        if (plan.expectFollowUp && dialogAllowed) {
+            context.dialogMode = true
+            context.appendMode = true
+        }
         // В диалоге продолжаем слушать, пока пользователь не скажет «хватит» (или не замолчит).
         val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
         return AssistantReply(
@@ -293,7 +323,7 @@ class AssistantEngine(
      */
     private fun localFallback(text: String, cfg: AssistantSettings): AssistantPlan? {
         val focus = context.focus
-        if (context.dialogMode && focus != null && (focus.type == RecordType.NOTE || focus.type == RecordType.IDEA)) {
+        if (context.appendMode && focus != null && (focus.type == RecordType.NOTE || focus.type == RecordType.IDEA)) {
             return AssistantPlan(
                 "", listOf(AssistantAction.AppendNote(TargetRef(focus.id, null, setOf(focus.type)), text.trim().replaceFirstChar { it.uppercase() })),
                 expectFollowUp = true,

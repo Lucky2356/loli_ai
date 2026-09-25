@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import ai.loli.app.AppContainer
 import ai.loli.core.ai.AIProviderFactory
+import ai.loli.core.ai.AIProviderType
 import ai.loli.core.ai.AIRequest
 import ai.loli.core.ai.ChatMessage
 import ai.loli.core.model.ConversationMessage
@@ -58,7 +59,7 @@ class HomeViewModel(val c: AppContainer) : ViewModel() {
         )
     }.stateIn(viewModelScope, started, HomeSummary())
 
-    fun aiConfigured(): Boolean = c.aiConfig().isComplete
+    fun aiConfigured(): Boolean = c.aiConfigured()
     fun listen() = c.voice.startListening()
     fun stop() = c.voice.stop()
     fun send(text: String) = c.voice.submitText(text)
@@ -66,9 +67,9 @@ class HomeViewModel(val c: AppContainer) : ViewModel() {
     fun clearError() = c.voice.clearError()
 }
 
-/** Проверка подключения к AI-провайдеру коротким запросом. */
-suspend fun testAiConnection(c: AppContainer): Result<String> = runCatching {
-    val cfg = c.aiConfig()
+/** Проверка подключения к конкретному AI-провайдеру коротким запросом. */
+suspend fun testAiConnection(c: AppContainer, type: AIProviderType): Result<String> = runCatching {
+    val cfg = c.aiConfig(type)
     val provider = AIProviderFactory.create(c.http, cfg)
     val response = provider.complete(
         AIRequest(
@@ -78,5 +79,5 @@ suspend fun testAiConnection(c: AppContainer): Result<String> = runCatching {
             maxTokens = 1024,
         ),
     )
-    "Подключение работает (${response.model ?: cfg.model}): ${response.text.trim().take(60)}"
+    "Работает (${response.model ?: cfg.model}): ${response.text.trim().take(60)}"
 }

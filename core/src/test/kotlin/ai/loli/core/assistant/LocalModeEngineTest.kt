@@ -141,6 +141,29 @@ class LocalModeEngineTest {
         assertTrue(august.text.contains("700"), august.text)
     }
 
+    @Test fun voiceDialogKeepsListeningAfterAnyCommand() = runTest {
+        val env = env()
+        val r1 = env.engine.handle("Лоли, потратила 300 рублей на кофе", InputSource.VOICE)
+        assertTrue(r1.expectFollowUp, "в диалоговом режиме слушаем дальше после обычной команды")
+        val r2 = env.engine.handle("и добавь задачу купить хлеб", InputSource.VOICE)
+        assertTrue(r2.expectFollowUp)
+        assertEquals(1, env.store.tasks.all().size, r2.text)
+        val bye = env.engine.handle("спасибо, всё", InputSource.VOICE)
+        assertTrue(bye.endsDialog)
+        assertFalse(bye.expectFollowUp)
+        assertFalse(env.engine.context.dialogMode)
+        val offer = env.engine.handle("у соседей опять шумный ремонт")
+        assertTrue(offer.text.contains("Сохранить это как заметку"), "обычный диалог не включает дописывание в записи")
+    }
+
+    @Test fun voiceWithoutDialogModeStopsAfterCommand() = runTest {
+        val env = TestEnv().apply { settings = AssistantSettings(useAI = false, dialogMode = false) }
+        val r = env.engine.handle("потратила 300 рублей на кофе", InputSource.VOICE)
+        assertFalse(r.expectFollowUp)
+        val ask = env.engine.handle("потратила на продукты", InputSource.VOICE)
+        assertTrue(ask.expectFollowUp, "ждём ответа на уточняющий вопрос даже без диалогового режима")
+    }
+
     @Test fun dialogModeRespectsSettingAndEnds() = runTest {
         val env = TestEnv().apply { settings = AssistantSettings(useAI = false, dialogMode = false) }
         env.engine.handle("давай придумаем приложение для кафе", InputSource.VOICE)

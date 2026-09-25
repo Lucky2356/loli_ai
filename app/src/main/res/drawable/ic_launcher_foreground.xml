@@ -1,7 +1,25 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#338B7CFF" android:pathData="M54,22A32,32 0 1,1 53.99,22Z" />
-    <path android:fillColor="#FF8B7CFF" android:pathData="M54,30A24,24 0 1,1 53.99,30Z" />
-    <path android:fillColor="#FF4FD8E8" android:pathData="M54,40A14,14 0 1,1 53.99,40Z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M54,48A6,6 0 1,1 53.99,48Z" />
+    <!-- Мягкое свечение -->
+    <path android:pathData="M54,24A30,30 0 1,1 53.99,24Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="54" android:gradientRadius="30"
+                android:startColor="#556366F1" android:endColor="#006366F1" />
+        </aapt:attr>
+    </path>
+    <!-- Сфера -->
+    <path android:pathData="M54,36A18,18 0 1,1 53.99,36Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="38" android:startY="38" android:endX="70" android:endY="70"
+                android:startColor="#FF6366F1" android:endColor="#FF2DD4BF" />
+        </aapt:attr>
+    </path>
+    <!-- Блик -->
+    <path android:pathData="M48,40A8,8 0 1,1 47.99,40Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="48" android:centerY="48" android:gradientRadius="8"
+                android:startColor="#66FFFFFF" android:endColor="#00FFFFFF" />
+        </aapt:attr>
+    </path>
 </vector>

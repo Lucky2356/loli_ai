@@ -39,6 +39,17 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "type=$TYPE" >> "$GITHUB_OUTPUT"
 
+      - name: Cache Vosk model
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/vosk-assets
+            app/vosk-cache
+          key: vosk-model-small-ru-0.22
+
+      - name: Offline speech model (embedded into APK)
+        run: ./scripts/fetch-vosk-model.sh
+
       - name: Restore signing key
         env:
           LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
@@ -64,12 +75,16 @@ jobs:
           ./gradlew --no-daemon :core:test :app:testDebugUnitTest :app:$TASK
           mkdir -p dist
           cp app/build/outputs/apk/${{ steps.v.outputs.type }}/*.apk "dist/loli-${{ steps.v.outputs.version }}-${{ steps.v.outputs.type }}.apk"
+          # Зеркало офлайн-модели для сборок без встроенной модели (скачивание из приложения).
+          cp app/vosk-cache/vosk-model-small-ru-0.22.zip dist/
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: Лоли ${{ steps.v.outputs.version }}
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            dist/*.zip
           prerelease: ${{ steps.v.outputs.type == 'debug' }}
           generate_release_notes: true
