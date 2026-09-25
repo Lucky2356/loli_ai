@@ -97,6 +97,9 @@ sealed interface AssistantAction {
 
     /** «Исправь последний расход на 900», «поменяй категорию на кафе». */
     data class UpdateLastExpense(val amountMinor: Long?, val category: String?) : AssistantAction
+
+    /** Команда самому телефону: таймер, будильник, фонарик, звонок, открыть приложение… */
+    data class Device(val command: DeviceCommand) : AssistantAction
 }
 
 /** Недостающие данные, которые ассистент спросит у пользователя и дозаполнит следующей репликой. */

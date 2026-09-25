@@ -150,7 +150,7 @@ class WakeWordService : LifecycleService() {
                     val match = matcher.match(text)
                     when {
                         match != null && match.command.split(" ").count { it.isNotBlank() } >= 1 -> dispatch(match.command)
-                        match != null || matcher.containsWakeWord(text) -> enterCommandMode()
+                        match != null || matcher.containsWakeWord(text) -> if (!openAssistWindow()) enterCommandMode()
                     }
                 }
                 Mode.COMMAND -> dispatch(matcher.match(text)?.command?.ifBlank { null } ?: text)
@@ -161,6 +161,16 @@ class WakeWordService : LifecycleService() {
         override fun onFinalResult(hypothesis: String?) = onResult(hypothesis)
         override fun onError(exception: Exception?) { Logger.w(TAG, "Ошибка Vosk: ${exception?.message}") }
         override fun onTimeout() = Unit
+    }
+
+    /**
+     * Только имя без команды: если можно — открываем окно ассистента поверх текущего приложения
+     * (оно само слушает дальше и показывает ответы). Иначе — сигнал и ждём команду здесь.
+     */
+    private fun openAssistWindow(): Boolean {
+        if (!container.launcher.canLaunch()) return false
+        val intent = Intent(this, ai.loli.app.assist.AssistActivity::class.java).setAction(Intent.ACTION_ASSIST)
+        return container.launcher.launch(intent)
     }
 
     private fun enterCommandMode() {

@@ -177,7 +177,8 @@ class RegressionTest {
         val task = assertIs<AssistantAction.CreateTask>(one("надо не забыть оплатить квартиру до 10 числа"))
         assertEquals("Оплатить квартиру", task.title)
         assertEquals(LocalDate.of(2026, 10, 10), task.dueDate)
-        assertEquals(Instant.parse("2026-09-26T03:30:00Z"), assertIs<AssistantAction.CreateReminder>(one("поставь будильник на 6:30")).triggerAt)
+        // Будильник ставится в приложении «Часы», а не напоминанием.
+        assertEquals(DeviceCommand.Alarm(java.time.LocalTime.of(6, 30)), assertIs<AssistantAction.Device>(one("поставь будильник на 6:30")).command)
         assertEquals(null, assertIs<AssistantAction.QueryExpenses>(one("покажи расходы за последнюю неделю")).category)
         assertEquals("Транспорт", assertIs<AssistantAction.CreateExpense>(one("такси 380")).category)
         assertIs<AssistantAction.QueryReminders>(one("какие у меня напоминания"))

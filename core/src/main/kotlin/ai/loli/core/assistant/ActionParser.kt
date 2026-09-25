@@ -8,6 +8,7 @@ import ai.loli.core.model.RecordType
 import ai.loli.core.model.Recurrence
 import ai.loli.core.nlp.ExpenseCategories
 import ai.loli.core.nlp.Money
+import ai.loli.core.nlp.RuTokenizer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -148,6 +149,9 @@ class ActionParser(
                 AssistantAction.Search(query, keywords, types)
             }
             "clarify" -> AssistantAction.Clarify(text(a.s("question"), 500).ifEmpty { throw ValidationException("пустой уточняющий вопрос") })
+            // Команда телефону: модель пересказывает её фразой, а разбирает её тот же офлайн-парсер — так AI не может выдумать опасную команду.
+            "device" -> DevicePhrases.parse(RuTokenizer.normalize(text(a.s("phrase"), 300)), now, zone)
+                ?: throw ValidationException("неизвестная команда телефону")
             "agenda" -> AssistantAction.Agenda(a.s("date")?.let { parseDate(it) } ?: today)
             "delete_last", "undo" -> AssistantAction.DeleteLast(RecordType.fromWire(a.s("record_type")))
             "update_last_expense" -> {

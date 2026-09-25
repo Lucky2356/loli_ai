@@ -2,6 +2,7 @@ package ai.loli.core.ai
 
 import ai.loli.core.data.LoliJson
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -74,6 +75,23 @@ class OpenAiCompatibleProvider(
             throw AIException.InvalidResponse("пустой ответ (finish_reason=$finish)")
         }
         return AIResponse(content, json["model"]?.jsonPrimitive?.contentOrNull, finish)
+    }
+
+    override suspend fun listModels(): List<ModelInfo> = aiCall {
+        val response = http.get("${config.endpoint}/models") {
+            if (config.apiKey.isNotBlank()) header("Authorization", "Bearer ${config.apiKey}")
+        }
+        response.throwIfError()
+        val data = LoliJson.parseToJsonElement(response.bodyAsText()).jsonObject["data"] as? JsonArray
+            ?: throw AIException.InvalidResponse("нет списка моделей")
+        data.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            // Gemini отдаёт «models/gemini-2.5-flash», в запросах нужен id без префикса.
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.removePrefix("models/") ?: return@mapNotNull null
+            val name = (o["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() && !it.startsWith("models/") }
+                ?: (o["display_name"] as? JsonPrimitive)?.contentOrNull ?: id
+            ModelInfo(id, name)
+        }.filter { isChatModel(it.id) }.distinctBy { it.id }.sortedBy { it.id }
     }
 
     override suspend fun embed(texts: List<String>): List<FloatArray> = aiCall {

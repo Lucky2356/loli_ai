@@ -161,6 +161,53 @@ class ChainAIProviderTest {
     }
 }
 
+class ModelListTest {
+    private val json = headersOf(HttpHeaders.ContentType, "application/json")
+
+    @Test fun openAiModelsFilteredAndSorted() = runTest {
+        var path = ""
+        var auth: String? = null
+        val http = HttpClient(MockEngine { r ->
+            path = r.url.encodedPath; auth = r.headers["Authorization"]
+            respond("""{"data":[{"id":"gpt-5-mini"},{"id":"text-embedding-3-small"},{"id":"gpt-4o"},{"id":"whisper-1"},{"id":"tts-1"}]}""", HttpStatusCode.OK, json)
+        })
+        val models = AIProviderFactory.listModels(http, AIConfig(AIProviderType.OPENAI, null, null, "sk-key"))
+        assertEquals("/v1/models", path)
+        assertEquals("Bearer sk-key", auth)
+        assertEquals(listOf("gpt-4o", "gpt-5-mini"), models.map { it.id })
+    }
+
+    @Test fun geminiPrefixRemoved() = runTest {
+        val http = HttpClient(MockEngine {
+            respond("""{"data":[{"id":"models/gemini-2.5-flash"},{"id":"models/gemini-embedding-001"}]}""", HttpStatusCode.OK, json)
+        })
+        assertEquals(listOf("gemini-2.5-flash"), AIProviderFactory.listModels(http, AIConfig(AIProviderType.GEMINI, null, null, "k")).map { it.id })
+    }
+
+    @Test fun anthropicModelsPaginated() = runTest {
+        var calls = 0
+        val http = HttpClient(MockEngine { r ->
+            calls++
+            assertEquals("/v1/models", r.url.encodedPath)
+            assertEquals("k", r.headers["x-api-key"])
+            if (r.url.parameters["after_id"] == null) {
+                respond("""{"data":[{"id":"claude-opus-5","display_name":"Claude Opus 5"}],"has_more":true,"last_id":"claude-opus-5"}""", HttpStatusCode.OK, json)
+            } else {
+                respond("""{"data":[{"id":"claude-haiku-4-5","display_name":"Claude Haiku 4.5"}],"has_more":false,"last_id":"claude-haiku-4-5"}""", HttpStatusCode.OK, json)
+            }
+        })
+        val models = AIProviderFactory.listModels(http, AIConfig(AIProviderType.ANTHROPIC, null, null, "k"))
+        assertEquals(2, calls)
+        assertEquals(listOf("Claude Opus 5", "Claude Haiku 4.5"), models.map { it.name })
+    }
+
+    @Test fun keyRequired() = runTest {
+        assertFailsWith<AIException.NotConfigured> {
+            AIProviderFactory.listModels(HttpClient(MockEngine { error("no") }), AIConfig(AIProviderType.OPENAI, null, null, ""))
+        }
+    }
+}
+
 class EndpointSecurityTest {
     @Test fun httpOnlyForLocalNetwork() {
         fun secure(url: String) = AIConfig(AIProviderType.CUSTOM, url, "m", "").isSecureEndpoint

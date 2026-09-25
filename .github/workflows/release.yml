@@ -50,41 +50,46 @@ jobs:
       - name: Offline speech model (embedded into APK)
         run: ./scripts/fetch-vosk-model.sh
 
-      - name: Restore signing key
+      # Постоянный ключ подписи: из секрета LOLI_KEYSTORE_BASE64, а если его нет — созданный один раз
+      # и хранящийся в кэше Actions. Одинаковая подпись нужна, чтобы новые версии ставились поверх старых.
+      - name: Restore signing key from cache
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: .signing
+          key: loli-signing-key-v1
+
+      - name: Prepare signing key
         env:
           LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$LOLI_KEYSTORE_BASE64" ]; then
-            echo "$LOLI_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/loli.jks"
-            echo "LOLI_KEYSTORE_FILE=$RUNNER_TEMP/loli.jks" >> "$GITHUB_ENV"
-          else
-            echo "::warning::Секрет LOLI_KEYSTORE_BASE64 не задан: APK будет подписан временным debug-ключом. Для обновлений без переустановки добавьте ключ (см. README)."
-          fi
+          LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
+          LOLI_KEY_ALIAS_SECRET: ${{ secrets.LOLI_KEY_ALIAS }}
+          LOLI_KEY_PASSWORD_SECRET: ${{ secrets.LOLI_KEY_PASSWORD }}
+        run: ./scripts/signing-key.sh
+
+      - name: Save signing key to cache
+        if: steps.keycache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .signing
+          key: loli-signing-key-v1
 
       - name: Tests + build
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          LOLI_KEYSTORE_PASSWORD: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
-          LOLI_KEY_ALIAS: ${{ secrets.LOLI_KEY_ALIAS }}
-          LOLI_KEY_PASSWORD: ${{ secrets.LOLI_KEY_PASSWORD }}
           LOLI_VERSION_NAME: ${{ steps.v.outputs.version }}
-          LOLI_VERSION_CODE: ${{ github.run_number }}
         run: |
           TASK=$([ "${{ steps.v.outputs.type }}" = "debug" ] && echo assembleDebug || echo assembleRelease)
           ./gradlew --no-daemon :core:test :app:testDebugUnitTest :app:$TASK
           mkdir -p dist
           cp app/build/outputs/apk/${{ steps.v.outputs.type }}/*.apk "dist/loli-${{ steps.v.outputs.version }}-${{ steps.v.outputs.type }}.apk"
-          # Зеркало офлайн-модели для сборок без встроенной модели (скачивание из приложения).
-          cp app/vosk-cache/vosk-model-small-ru-0.22.zip dist/
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: Лоли ${{ steps.v.outputs.version }}
-          files: |
-            dist/*.apk
-            dist/*.zip
+          files: dist/*.apk
           prerelease: ${{ steps.v.outputs.type == 'debug' }}
           generate_release_notes: true

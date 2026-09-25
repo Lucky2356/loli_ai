@@ -2,6 +2,7 @@ package ai.loli.app
 
 import android.content.Context
 import ai.loli.app.data.DatabaseFactory
+import ai.loli.app.device.AndroidDeviceController
 import ai.loli.app.reminders.AlarmReminderScheduler
 import ai.loli.app.security.KeystoreSecretStore
 import ai.loli.app.security.KeystoreSessionStore
@@ -111,6 +112,9 @@ class AppContainer(private val context: Context) {
         )
     }
 
+    /** Списки моделей, загруженные с серверов провайдеров (на время работы приложения). */
+    val modelCache = mutableMapOf<AIProviderType, List<ai.loli.core.ai.ModelInfo>>()
+
     fun aiConfigured(): Boolean = aiConfigs().any { it.isComplete }
 
     private fun aiProvider(): AIProvider = AIProviderFactory.createChain(http, aiConfigs())
@@ -121,7 +125,14 @@ class AppContainer(private val context: Context) {
     val reminderScheduler = AlarmReminderScheduler(context)
     val search: SearchService by lazy { SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddingProvider() } }
     private val resolver by lazy { TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories) }
-    private val executor by lazy { ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time) }
+    /** Команды телефону (таймер, будильник, приложения, звонки…); запасной таймер — напоминание Лоли. */
+    val launcher = ai.loli.app.device.BackgroundLauncher(context)
+    val updates = ai.loli.app.update.UpdateManager(context)
+    val device = AndroidDeviceController(context, launcher) { text, at ->
+        val r = store.reminders.create(text, at, null, time.zone().id)
+        reminderScheduler.schedule(r)
+    }
+    private val executor by lazy { ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device) }
 
     val engine: AssistantEngine by lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
@@ -169,6 +180,7 @@ class AppContainer(private val context: Context) {
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()
             ready.complete(Unit)
             _started.value = true
+            updates.schedulePeriodic()
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

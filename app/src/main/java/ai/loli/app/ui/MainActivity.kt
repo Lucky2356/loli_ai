@@ -18,7 +18,13 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -81,6 +87,8 @@ class MainActivity : ComponentActivity() {
 
     /** Запрос «начать слушать» от ярлыка или жеста ассистента. */
     private val listenRequest = MutableStateFlow(0)
+    /** Открыть настройки (из системных настроек телефона — «Настройки в приложении»). */
+    private val openSettingsRequest = MutableStateFlow(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,7 +110,7 @@ class MainActivity : ComponentActivity() {
                 onDispose { }
             }
             LoliTheme(settings.themeMode, settings.dynamicColor) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest) }
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest, openSettingsRequest) }
             }
         }
     }
@@ -118,6 +126,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val s = container.settings.current() // не значение по умолчанию до загрузки DataStore
             if (s.wakeWordEnabled && container.voskModels.isObtainable() && !WakeWordService.running) WakeWordService.start(this@MainActivity)
+            // Проверка новой версии не чаще раза в 6 часов; установка — по кнопке на главной или автоматически.
+            if (s.autoUpdate && System.currentTimeMillis() - container.updates.lastCheckedAt > 6 * 3600_000L) container.updates.check()
         }
     }
 
@@ -125,11 +135,20 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND, ACTION_LISTEN, "android.intent.action.SEARCH_LONG_PRESS" ->
                 listenRequest.value = listenRequest.value + 1
+            // Уведомление «Доступна новая версия»: сразу скачиваем и ставим.
+            ACTION_UPDATE -> lifecycleScope.launch {
+                val info = container.updates.check() ?: return@launch
+                if (!container.updates.canInstall()) startActivity(container.updates.installPermissionIntent())
+                else container.updates.downloadAndInstall(info)
+            }
+            // «Настройки приложения» из системных настроек телефона.
+            Intent.ACTION_APPLICATION_PREFERENCES -> openSettingsRequest.value = openSettingsRequest.value + 1
         }
     }
 
     companion object {
         const val ACTION_LISTEN = "ai.loli.action.LISTEN"
+        const val ACTION_UPDATE = "ai.loli.action.UPDATE"
     }
 }
 
@@ -181,7 +200,7 @@ fun rememberListenAction(c: AppContainer): () -> Unit {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
+private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>) {
     val auth by c.auth.state.collectAsStateWithLifecycle()
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     var showAuth by rememberSaveable { mutableStateOf(false) }
@@ -226,6 +245,13 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
             listen()
         }
     }
+    val settingsRequest by openSettingsRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(settingsRequest) {
+        if (settingsRequest > 0) {
+            openSettingsRequest.value = 0
+            nav.showRoot(Tab.SETTINGS)
+        }
+    }
     BackHandler(enabled = nav.canGoBack) { nav.back() }
 
     // Пока открыта клавиатура, нижнее меню прячется, а поле ввода встаёт прямо над клавиатурой.
@@ -237,7 +263,19 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
         val holder = rememberSaveableStateHolder()
         AnimatedContent(
             targetState = nav.tab to nav.route,
-            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+            transitionSpec = {
+                val (fromTab, fromRoute) = initialState
+                val (toTab, toRoute) = targetState
+                when {
+                    // Вложенный экран открывается справа, «Назад» — уезжает вправо.
+                    fromTab == toTab && fromRoute == null && toRoute != null ->
+                        (slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(280)) { -it / 8 } + fadeOut(tween(180)))
+                    fromTab == toTab && fromRoute != null && toRoute == null ->
+                        (slideInHorizontally(tween(280)) { -it / 8 } + fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(280)) { it / 3 } + fadeOut(tween(180)))
+                    // Смена вкладки — мягкое проявление с лёгким масштабом.
+                    else -> (fadeIn(tween(220)) + scaleIn(tween(260), initialScale = 0.97f)) togetherWith fadeOut(tween(140))
+                }
+            },
             modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
             label = "screens",
         ) { (tab, route) ->
@@ -285,8 +323,14 @@ private fun Screen(
         Tab.PLANS -> PlansScreen(c, plansSegment, setPlansSegment)
         Tab.EXPENSES -> ExpensesScreen(c)
         Tab.SETTINGS -> {
-            val page = route?.let { r -> SettingsPage.entries.firstOrNull { it.route == r } }
-            SettingsScreen(c, page, open = { p -> nav.open(p.route) }, onBack = back, onOpenAuth = onOpenAuth)
+            val providerId = route?.takeIf { it.startsWith("settings/ai/") }?.removePrefix("settings/ai/")
+            val provider = providerId?.let { ai.loli.core.ai.AIProviderType.fromIdOrNull(it) }
+            if (provider != null) {
+                ai.loli.app.ui.screens.ProviderScreen(c, provider, back)
+            } else {
+                val page = route?.let { r -> SettingsPage.entries.firstOrNull { it.route == r } }
+                SettingsScreen(c, page, open = { p -> nav.open(p.route) }, openRoute = { nav.open(it) }, onBack = back, onOpenAuth = onOpenAuth)
+            }
         }
     }
 }
@@ -298,10 +342,12 @@ private fun BottomBar(nav: Navigator) {
         NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
             Tab.entries.forEach { tab ->
                 val selected = nav.tab == tab
+                // Выбранная вкладка слегка «подпрыгивает».
+                val scale by animateFloatAsState(if (selected) 1.12f else 1f, spring(dampingRatio = 0.5f, stiffness = 500f), label = "tab")
                 NavigationBarItem(
                     selected = selected,
                     onClick = { nav.select(tab) },
-                    icon = { Icon(tab.icon, contentDescription = tab.title) },
+                    icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale }) },
                     label = { Text(tab.title, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onSurface,

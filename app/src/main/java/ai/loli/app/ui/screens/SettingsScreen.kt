@@ -26,7 +26,9 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,6 +67,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.loli.app.AppContainer
 import ai.loli.app.BuildConfig
+import ai.loli.app.device.BackgroundLauncher
 import ai.loli.app.security.KeystoreSecretStore
 import ai.loli.app.settings.SttMode
 import ai.loli.app.settings.ThemeMode
@@ -80,6 +84,8 @@ import ai.loli.app.ui.components.SecondaryButton
 import ai.loli.app.ui.components.SectionLabel
 import ai.loli.app.ui.components.SwitchItem
 import ai.loli.app.ui.components.ValueItem
+import ai.loli.app.ui.components.UpdateCard
+import ai.loli.app.update.UpdateState
 import ai.loli.app.ui.components.rememberResumeTick
 import ai.loli.app.voice.VoskModelManager
 import ai.loli.app.voice.WakeWordService
@@ -101,16 +107,23 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
 }
 
 @Composable
-fun SettingsScreen(c: AppContainer, page: SettingsPage?, open: (SettingsPage) -> Unit, onBack: () -> Unit, onOpenAuth: () -> Unit) {
+fun SettingsScreen(
+    c: AppContainer,
+    page: SettingsPage?,
+    open: (SettingsPage) -> Unit,
+    openRoute: (String) -> Unit,
+    onBack: () -> Unit,
+    onOpenAuth: () -> Unit,
+) {
     when (page) {
         null -> SettingsRoot(c, open)
         SettingsPage.ASSISTANT -> AssistantPage(c, onBack)
         SettingsPage.VOICE -> VoicePage(c, onBack)
-        SettingsPage.AI -> AiPage(c, onBack)
+        SettingsPage.AI -> AiPage(c, onBack, openProvider = { type -> openRoute("settings/ai/${type.id}") })
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
         SettingsPage.PERMISSIONS -> PermissionsPage(c, onBack)
-        SettingsPage.ABOUT -> AboutPage(onBack)
+        SettingsPage.ABOUT -> AboutPage(c, onBack)
     }
 }
 
@@ -122,6 +135,8 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
     val context = LocalContext.current
     val resumeTick = rememberResumeTick()
     val isAssistant = remember(resumeTick) { isDefaultAssistant(context) }
+    var guide by remember { mutableStateOf(false) }
+    if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
     LoliScreen(title = "Настройки") {
         if (isAssistant == false) {
             item(key = "assist") {
@@ -129,7 +144,7 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
                     RowItem(
                         title = "Сделать ${s.assistantName} ассистентом по умолчанию",
                         subtitle = "Долгое нажатие «Домой» или кнопки питания откроет ${s.assistantName} поверх любого приложения",
-                        icon = Icons.Rounded.TouchApp, chevron = true, onClick = { openAssistantSettings(context) },
+                        icon = Icons.Rounded.TouchApp, chevron = true, onClick = { guide = true },
                     )
                 }
             }
@@ -207,6 +222,8 @@ private fun VoicePage(c: AppContainer, onBack: () -> Unit) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
     val isAssistant = remember(resumeTick) { isDefaultAssistant(context) }
+    var guide by remember { mutableStateOf(false) }
+    if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
     val services = remember(resumeTick) { c.systemStt.services().map { c.systemStt.serviceLabel(it) }.distinct() }
     // После выдачи разрешения сразу включаем фоновое прослушивание, о котором просил пользователь.
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -279,121 +296,11 @@ private fun VoicePage(c: AppContainer, onBack: () -> Unit) {
                     subtitle = if (isAssistant == true) "Долгое нажатие «Домой» или кнопки питания открывает ${s.assistantName}"
                     else "Откроются настройки: выберите «${s.assistantName}» в пункте «Цифровой ассистент»",
                     icon = Icons.Rounded.TouchApp, chevron = true,
-                    onClick = { openAssistantSettings(context) },
+                    onClick = { guide = true },
                 )
             }
-            Hint("На некоторых телефонах (Xiaomi, Samsung) пункт называется «Помощник и голосовой ввод» или «Приложение-помощник».")
+            Hint("Не получается выбрать? Нажмите на пункт выше — покажу путь именно для вашего телефона.")
         }
-    }
-}
-
-// ------------------------------------------------------------------ AI
-
-@Composable
-private fun AiPage(c: AppContainer, onBack: () -> Unit) {
-    val s by c.settings.settings.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    var refresh by remember { mutableIntStateOf(0) }
-    var expanded by rememberSaveable { mutableStateOf<String?>(null) }
-    LoliScreen(title = "AI-провайдеры", subtitle = "Необязательно: команды и так понимаются на устройстве", onBack = onBack) {
-        item(key = "use") {
-            Group(Modifier.padding(top = 4.dp)) {
-                SwitchItem(
-                    "Облачный AI", if (s.useAI) "Свободный разговор и сложные фразы. Нужен интернет и API-ключ" else "Выключен: всё работает локально, без интернета",
-                    s.useAI, icon = Icons.Rounded.AutoAwesome,
-                ) { v -> scope.launch { c.settings.setUseAI(v) } }
-            }
-            Hint(
-                "Включите один или несколько провайдеров. Запрос уходит первому по списку; если он не отвечает (нет ключа, лимит, сбой) — " +
-                    "следующему, а без интернета команда выполнится на устройстве. Порядок меняется стрелками.",
-            )
-        }
-        item(key = "providers") {
-            SectionLabel("Провайдеры · приоритет сверху вниз")
-            Group {
-                s.providers.forEachIndexed { i, p ->
-                    if (i > 0) GroupDivider()
-                    val hasKey = remember(p.type, refresh) { c.secrets.contains(KeystoreSecretStore.aiKey(p.type.id)) }
-                    val status = when {
-                        p.type == AIProviderType.CUSTOM -> p.effectiveModel.ifBlank { "укажите модель" }
-                        hasKey -> "${p.effectiveModel} · ключ сохранён"
-                        else -> "${p.effectiveModel} · нужен ключ"
-                    }
-                    RowItem(
-                        title = p.type.title, subtitle = status,
-                        onClick = { expanded = if (expanded == p.type.id) null else p.type.id },
-                        leading = {
-                            Column {
-                                IconButton(onClick = { scope.launch { c.settings.moveProvider(p.type, -1) } }, enabled = i > 0, modifier = Modifier.size(24.dp)) {
-                                    Icon(Icons.Rounded.KeyboardArrowUp, contentDescription = "Выше")
-                                }
-                                IconButton(onClick = { scope.launch { c.settings.moveProvider(p.type, 1) } }, enabled = i < s.providers.lastIndex, modifier = Modifier.size(24.dp)) {
-                                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Ниже")
-                                }
-                            }
-                        },
-                        trailing = { Switch(checked = p.enabled, onCheckedChange = { v -> scope.launch { c.settings.setProviderEnabled(p.type, v) } }) },
-                    )
-                    AnimatedVisibility(expanded == p.type.id) {
-                        ProviderConfig(c, p.type, hasKey) { refresh++ }
-                    }
-                }
-            }
-        }
-        item(key = "emb") {
-            SectionLabel("Поиск")
-            Group {
-                SwitchItem("Поиск по смыслу через AI", "Эмбеддинги OpenAI или Gemini (если подключены). Без них работает локальный поиск с синонимами.",
-                    s.embeddingsEnabled) { v -> scope.launch { c.settings.setEmbeddings(v) } }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProviderConfig(c: AppContainer, type: AIProviderType, hasKey: Boolean, onKeyChanged: () -> Unit) {
-    val s by c.settings.settings.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    val p = s.provider(type)
-    var model by remember(type, p.model) { mutableStateOf(p.model) }
-    var endpoint by remember(type, p.endpoint) { mutableStateOf(p.endpoint) }
-    var key by remember(type) { mutableStateOf("") }
-    var testing by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LoliField(model, { model = it }, "Модель", placeholder = type.defaultModel.ifBlank { "например, llama3.1" })
-        if (type.suggestedModels.isNotEmpty()) {
-            Pills(type.suggestedModels, type.suggestedModels.indexOf(model.ifBlank { type.defaultModel }), { model = type.suggestedModels[it] },
-                Modifier.padding(horizontal = 0.dp))
-        }
-        if (type.endpointEditable) {
-            LoliField(endpoint, { endpoint = it }, "Адрес API", placeholder = type.defaultEndpoint, keyboardType = KeyboardType.Uri,
-                supporting = if (type == AIProviderType.CUSTOM) "http:// — только для компьютера в вашей локальной сети" else null)
-        }
-        if (model != p.model || endpoint != p.endpoint) {
-            PrimaryButton("Сохранить", { scope.launch { c.settings.setProviderConfig(type, model, endpoint) } }, modifier = Modifier.fillMaxWidth())
-        }
-        // Ключ хранится только в зашифрованном виде (Android Keystore), не синхронизируется и не показывается повторно.
-        LoliField(key, { key = it.trim() }, if (hasKey) "Новый API-ключ (сохранён ранее)" else "API-ключ",
-            keyboardType = KeyboardType.Password, visualTransformation = PasswordVisualTransformation())
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (key.isNotBlank()) SecondaryButton("Сохранить ключ", {
-                c.secrets.put(KeystoreSecretStore.aiKey(type.id), key); key = ""; result = null; onKeyChanged()
-                if (!p.enabled) scope.launch { c.settings.setProviderEnabled(type, true) }
-            })
-            if (hasKey && key.isBlank()) SecondaryButton("Удалить ключ", { c.secrets.put(KeystoreSecretStore.aiKey(type.id), null); onKeyChanged() }, danger = true)
-            Spacer(Modifier.weight(1f))
-            TextButton(enabled = !testing && (hasKey || type == AIProviderType.CUSTOM), onClick = {
-                testing = true
-                scope.launch {
-                    result = testAiConnection(c, type).fold({ it }, { "Ошибка: ${it.message}" })
-                    testing = false
-                }
-            }) {
-                if (testing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("Проверить")
-            }
-        }
-        result?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("Ошибка")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary) }
     }
 }
 
@@ -529,6 +436,17 @@ private fun PermissionsPage(c: AppContainer, onBack: () -> Unit) {
             val tick = resumeTick + refresh
             Group(Modifier.padding(top = 4.dp)) {
                 PermissionRow("Микрофон", "Голосовые команды", Icons.Rounded.Mic, Manifest.permission.RECORD_AUDIO, tick) { refresh++ }
+                GroupDivider(inset = 66.dp)
+                val overlay = remember(tick) { c.launcher.canLaunchFromBackground() }
+                RowItem(
+                    title = "Поверх других приложений",
+                    subtitle = if (overlay) "Разрешено: таймеры, будильники и приложения открываются, даже когда Лоли свёрнута"
+                    else "Нужно, чтобы по голосу открывать часы, приложения и звонки, когда Лоли свёрнута",
+                    icon = Icons.Rounded.Layers,
+                    trailing = { if (!overlay) TextButton(onClick = { runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) } }) { Text("Разрешить") } },
+                )
+                GroupDivider(inset = 66.dp)
+                PermissionRow("Контакты", "Чтобы звонить и писать по имени: «позвони маме»", Icons.Rounded.Contacts, Manifest.permission.READ_CONTACTS, tick) { refresh++ }
                 if (Build.VERSION.SDK_INT >= 33) {
                     GroupDivider(inset = 66.dp)
                     PermissionRow("Уведомления", "Напоминания и фоновое прослушивание", Icons.Rounded.Notifications, Manifest.permission.POST_NOTIFICATIONS, tick) { refresh++ }
@@ -574,8 +492,36 @@ private fun PermissionRow(title: String, subtitle: String, icon: ImageVector, pe
 // ------------------------------------------------------------------ О приложении
 
 @Composable
-private fun AboutPage(onBack: () -> Unit) {
+private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
+    val s by c.settings.settings.collectAsStateWithLifecycle()
+    val update by c.updates.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
     LoliScreen(title = "О приложении", onBack = onBack) {
+        item(key = "update") {
+            SectionLabel("Обновления")
+            UpdateCard(c)
+            Group {
+                ValueItem("Версия", c.updates.currentVersion)
+                GroupDivider()
+                SwitchItem("Обновлять автоматически", "Проверять раз в 12 часов, скачивать и устанавливать новые версии", s.autoUpdate) { v ->
+                    scope.launch { c.settings.setAutoUpdate(v) }
+                }
+                GroupDivider()
+                RowItem(
+                    title = "Проверить обновления",
+                    subtitle = when (val u = update) {
+                        UpdateState.Checking -> "Проверяю…"
+                        UpdateState.UpToDate -> "Установлена последняя версия"
+                        is UpdateState.Error -> u.message
+                        else -> c.updates.lastCheckedAt.takeIf { it > 0 }?.let {
+                            "Проверено " + DateTimeFormatter.ofPattern("d MMM, HH:mm", java.util.Locale("ru")).withZone(ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(it))
+                        }
+                    },
+                    icon = Icons.Rounded.SystemUpdate,
+                    onClick = { scope.launch { c.updates.check() } },
+                )
+            }
+        }
         item(key = "security") {
             SectionLabel("Безопасность")
             Group {
@@ -591,10 +537,7 @@ private fun AboutPage(onBack: () -> Unit) {
                 }
             }
         }
-        item(key = "version") {
-            SectionLabel("Версия")
-            Group { ValueItem("Лоли", BuildConfig.VERSION_NAME) }
-        }
+
     }
 }
 
@@ -630,14 +573,83 @@ fun isDefaultAssistant(context: Context): Boolean? = runCatching {
     }
 }.getOrNull()
 
-/** Открывает системный выбор цифрового ассистента (у разных производителей — разные экраны). */
+/**
+ * Открывает системный выбор цифрового ассистента. У производителей разные экраны, поэтому пробуем по порядку:
+ * прямой экран роли «Ассистент» → «Приложения по умолчанию» → «Помощник и голосовой ввод» → настройки.
+ * (Экран «Голосовой ввод» на многих телефонах ведёт в настройки Google — поэтому он не первый.)
+ */
 fun openAssistantSettings(context: Context) {
-    val intents = listOf(
-        Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
-        Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
-        Intent(Settings.ACTION_SETTINGS),
-    )
+    val intents = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(Intent("android.intent.action.MANAGE_DEFAULT_APP").putExtra("android.intent.extra.ROLE_NAME", "android.app.role.ASSISTANT"))
+        }
+        add(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        add(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+        add(Intent(Settings.ACTION_SETTINGS))
+    }
     for (intent in intents) {
         if (runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
     }
+}
+
+/** Путь к выбору ассистента в настройках конкретного производителя. */
+fun assistantSteps(name: String): List<String> {
+    val brand = (Build.MANUFACTURER + " " + Build.BRAND).lowercase()
+    return when {
+        "samsung" in brand -> listOf(
+            "Настройки → Приложения → Выбор приложений по умолчанию",
+            "«Цифровой помощник» (или «Приложение цифрового помощника»)",
+            "Выберите «$name» вместо Google/Gemini",
+            "Дополнительно: Настройки → Дополнительные функции → Боковая клавиша → Двойное нажатие → Открыть приложение → $name",
+        )
+        "xiaomi" in brand || "redmi" in brand || "poco" in brand -> listOf(
+            "Настройки → Приложения → Приложения по умолчанию (или «Все приложения» → ⋮ → «Приложения по умолчанию»)",
+            "«Помощник и голосовой ввод» → «Помощник»",
+            "Выберите «$name»",
+        )
+        "huawei" in brand || "honor" in brand -> listOf(
+            "Настройки → Приложения → Приложения по умолчанию",
+            "«Помощник» (или «Голосовой помощник»)",
+            "Выберите «$name»",
+        )
+        "oppo" in brand || "realme" in brand || "oneplus" in brand || "vivo" in brand -> listOf(
+            "Настройки → Приложения → Приложения по умолчанию",
+            "«Цифровой помощник» / «Помощник и голосовой ввод»",
+            "Выберите «$name»",
+        )
+        else -> listOf(
+            "Настройки → Приложения → Приложения по умолчанию",
+            "«Цифровой ассистент» (или «Помощник и голосовой ввод»)",
+            "Выберите «$name» вместо Google/Gemini",
+        )
+    }
+}
+
+/** Пошаговая инструкция и кнопка перехода в настройки телефона. */
+@Composable
+fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        title = { Text("$name — ассистент по умолчанию") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Сервисы Google при этом продолжат работать — меняется только приложение, которое открывается долгим нажатием «Домой» или кнопки питания.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                assistantSteps(name).forEachIndexed { i, step ->
+                    Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(
+                    "Если «$name» нет в списке — обновите приложение до последней версии и перезагрузите телефон. " +
+                        "Вызвать $name можно и без этого: плитка в шторке, виджет на рабочем столе или слово «$name» в фоне.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onDismiss(); openAssistantSettings(context) }) { Text("Открыть настройки") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+    )
 }

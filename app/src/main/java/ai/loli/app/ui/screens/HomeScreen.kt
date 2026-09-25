@@ -1,6 +1,13 @@
 package ai.loli.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,7 +70,9 @@ import ai.loli.app.ui.components.OrbMode
 import ai.loli.app.ui.components.Pill
 import ai.loli.app.ui.components.PrimaryButton
 import ai.loli.app.ui.components.SecondaryButton
+import ai.loli.app.ui.components.UpdateCard
 import ai.loli.app.ui.components.groupColor
+import ai.loli.app.ui.components.pressScale
 import ai.loli.app.voice.VoiceState
 import ai.loli.core.model.MessageRole
 import ai.loli.core.nlp.Money
@@ -128,6 +137,7 @@ fun HomeScreen(
             Pill(label, icon, onClick = { openSettings("settings/ai") })
             IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
+        UpdateCard(vm.c)
         // Сфера и статус всегда на виду — даже когда история разговора длинная.
         Column(Modifier.fillMaxWidth().padding(top = 4.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
@@ -165,7 +175,9 @@ fun HomeScreen(
                     }
                 }
             } else {
-                items(history, key = { it.id }) { m -> Message(m.content, m.role == MessageRole.USER) }
+                items(history, key = { it.id }) { m ->
+                    Box(Modifier.animateItem()) { Message(m.content, m.role == MessageRole.USER) }
+                }
             }
             reply?.let { r ->
                 if (r.awaitingConfirmation || r.provider != null || (r.offline && settings.useAI)) {
@@ -205,10 +217,16 @@ private fun greeting(): String = when (LocalTime.now().hour) {
 
 @Composable
 private fun Stat(modifier: Modifier, title: String, value: String, caption: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium, color = groupColor(), modifier = modifier) {
+    val interaction = remember { MutableInteractionSource() }
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium, color = groupColor(), interactionSource = interaction, modifier = modifier.pressScale(interaction)) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+            // Число меняется «перелистыванием» снизу вверх.
+            AnimatedContent(
+                targetState = value,
+                transitionSpec = { (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) },
+                label = "stat",
+            ) { v -> Text(v, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp)) }
             Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
     }
@@ -216,7 +234,8 @@ private fun Stat(modifier: Modifier, title: String, value: String, caption: Stri
 
 @Composable
 private fun Suggestion(text: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = groupColor()) {
+    val interaction = remember { MutableInteractionSource() }
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = groupColor(), interactionSource = interaction, modifier = Modifier.pressScale(interaction)) {
         Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp).widthIn(max = 220.dp))
     }
 }
@@ -267,7 +286,14 @@ private fun InputBar(value: String, onChange: (String) -> Unit, name: String, ac
 
 @Composable
 private fun RoundButton(icon: ImageVector, description: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(52.dp)) {
-        Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = description, modifier = Modifier.size(24.dp)) }
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+        interactionSource = interaction, modifier = Modifier.size(52.dp).pressScale(interaction),
+    ) {
+        // Микрофон ↔ стоп — плавная смена значка.
+        Crossfade(targetState = icon, label = "mic") { i ->
+            Box(contentAlignment = Alignment.Center) { Icon(i, contentDescription = description, modifier = Modifier.size(24.dp)) }
+        }
     }
 }

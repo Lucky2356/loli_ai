@@ -21,4 +21,9 @@
     <string name="shortcut_listen_long">Спросить Лоли голосом</string>
     <string name="assist_label">Лоли — ассистент</string>
     <string name="recognition_label">Лоли — офлайн-распознавание речи</string>
+    <string name="update_ready">Обновление Лоли готово</string>
+    <string name="update_available">Доступна Лоли %1$s</string>
+    <string name="update_tap">Нажмите, чтобы установить</string>
+    <string name="widget_label">Лоли</string>
+    <string name="widget_description">Спросить Лоли одним касанием</string>
 </resources>

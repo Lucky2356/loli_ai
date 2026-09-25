@@ -71,6 +71,8 @@ data class AppSettings(
     val sttMode: SttMode = SttMode.AUTO,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
+    /** Сама скачивать и ставить новые версии. */
+    val autoUpdate: Boolean = true,
     val supabaseUrlOverride: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
@@ -109,6 +111,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val sttMode = stringPreferencesKey("stt_mode")
         val theme = stringPreferencesKey("theme")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
+        val autoUpdate = booleanPreferencesKey("auto_update")
         val supabaseUrl = stringPreferencesKey("supabase_url")
         val localOnly = booleanPreferencesKey("local_only")
         val onboarding = booleanPreferencesKey("onboarding_done")
@@ -164,6 +167,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             sttMode = SttMode.fromId(p[K.sttMode]) ?: if (p[K.legacyOfflineStt] == true) SttMode.OFFLINE else SttMode.AUTO,
             themeMode = ThemeMode.fromId(p[K.theme]),
             dynamicColor = p[K.dynamicColor] ?: false,
+            autoUpdate = p[K.autoUpdate] ?: true,
             supabaseUrlOverride = p[K.supabaseUrl].orEmpty(),
             localOnly = p[K.localOnly] ?: false,
             onboardingDone = p[K.onboarding] ?: false,
@@ -235,6 +239,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setSttMode(v: SttMode) = store.edit { it[K.sttMode] = v.id }
     suspend fun setTheme(v: ThemeMode) = store.edit { it[K.theme] = v.id }
     suspend fun setDynamicColor(v: Boolean) = store.edit { it[K.dynamicColor] = v }
+    suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setSupabaseUrl(v: String) = store.edit { it[K.supabaseUrl] = v.trim() }
     suspend fun setLocalOnly(v: Boolean) = store.edit { it[K.localOnly] = v }
     suspend fun setOnboardingDone(v: Boolean) = store.edit { it[K.onboarding] = v }

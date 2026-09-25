@@ -202,6 +202,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (Regex("""^(расскажи|скажи)? ?(анекдот|шутку|что-нибудь смешное)|^пошути""").containsMatchIn(n)) {
             return AssistantPlan(JOKES[pick(now, JOKES.size)], emptyList())
         }
+        // Бытовые вопросы без интернета: сколько дней до даты, день недели, монетка, кубик, перевод единиц.
+        DevicePhrases.answer(n, z.toLocalDate())?.let { return AssistantPlan(it, emptyList()) }
         Calculator.evaluate(n)?.let { v -> return AssistantPlan("Получается ${Calculator.format(v)}.", emptyList()) }
 
         // Мозговой штурм: «давай придумаем приложение для склада», «давай подумаем над моей идеей про холодильник»
@@ -245,6 +247,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (original.isEmpty()) return null
         val n = RuTokenizer.normalize(original).trimEnd('?', '!', '.')
 
+        // Команды телефону: таймер, будильник, фонарик, звонок, приложения, музыка, громкость…
+        DevicePhrases.parse(n, now, zone)?.let { return plan(it) }
         parseExpenseQuery(n, today)?.let { return plan(it) }
         if (Regex("""(какие|покажи|мои|список|перечисли|что за)\s.*напоминани|^напоминания$""").containsMatchIn(n) &&
             !Regex("""^(добавь|создай|поставь|удали|отмени)""").containsMatchIn(n)
@@ -829,7 +833,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             • «У меня идея: приложение для холодильника», «давай придумаем приложение для склада»
             • «Запомни, что я люблю зелёный чай», «что ты обо мне знаешь», «как меня зовут?»
             • «Найди всё про отпуск», «отмени последнее», «исправь последний расход на 900»
-            • «Сколько будет 15% от 2000», «который час»
+            • «Поставь таймер на 5 минут», «разбуди меня в 7:30 по будням», «включи фонарик», «сколько заряда»
+            • «Открой телеграм», «позвони маме», «следующий трек», «сделай погромче», «построй маршрут до вокзала»
+            • «Сколько будет 15% от 2000», «сколько дней до нового года», «переведи 5 миль в километры», «подбрось монетку»
         """.trimIndent()
 
         private val JOKES = listOf(

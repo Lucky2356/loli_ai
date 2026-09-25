@@ -8,6 +8,19 @@ interface AIProvider {
     val type: AIProviderType
     val model: String
     suspend fun complete(request: AIRequest): AIResponse
+
+    /** Модели, доступные с этим ключом (для выбора в настройках). */
+    suspend fun listModels(): List<ModelInfo> = emptyList()
+}
+
+/** Модель провайдера: [id] передаётся в API, [name] — для показа человеку. */
+data class ModelInfo(val id: String, val name: String = id)
+
+/** Отбрасывает модели, которые не умеют вести диалог (эмбеддинги, речь, картинки, модерация). */
+internal fun isChatModel(id: String): Boolean {
+    val x = id.lowercase()
+    return listOf("embed", "whisper", "tts", "dall-e", "moderation", "transcribe", "realtime", "image", "audio", "aqa", "imagen", "veo", "rerank")
+        .none { x.contains(it) }
 }
 
 /** Векторные представления текста для семантического поиска. Поддерживается не всеми провайдерами. */
@@ -53,19 +66,19 @@ enum class AIProviderType(
 ) {
     OPENAI(
         "openai", "OpenAI", "https://api.openai.com/v1", "gpt-5-mini",
-        listOf("gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1-mini"), "text-embedding-3-small", false,
+        listOf("gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini", "o3"), "text-embedding-3-small", false,
     ),
     GEMINI(
         "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash",
-        listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"), "gemini-embedding-001", false,
+        listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"), "gemini-embedding-001", false,
     ),
     ANTHROPIC(
         "anthropic", "Anthropic Claude", "https://api.anthropic.com", "claude-opus-5",
-        listOf("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"), null, true,
+        listOf("claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5", "claude-opus-4-1", "claude-sonnet-4-5"), null, true,
     ),
     OPENROUTER(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-5-mini",
-        listOf("openai/gpt-5-mini", "anthropic/claude-sonnet-5", "google/gemini-2.5-flash"), null, false,
+        listOf("openai/gpt-5-mini", "openai/gpt-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "google/gemini-2.5-flash", "google/gemini-2.5-pro", "deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "mistralai/mistral-small"), null, false,
     ),
     DEEPSEEK(
         "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat",
@@ -73,7 +86,7 @@ enum class AIProviderType(
     ),
     MISTRAL(
         "mistral", "Mistral AI", "https://api.mistral.ai/v1", "mistral-small-latest",
-        listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"), null, false,
+        listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo", "ministral-8b-latest"), null, false,
     ),
     GROQ(
         "groq", "Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile",
@@ -81,7 +94,7 @@ enum class AIProviderType(
     ),
     XAI(
         "xai", "xAI Grok", "https://api.x.ai/v1", "grok-4",
-        listOf("grok-4", "grok-3-mini"), null, false,
+        listOf("grok-4", "grok-3", "grok-3-mini"), null, false,
     ),
     CUSTOM(
         "custom", "Свой сервер (Ollama, LM Studio, vLLM)", "http://192.168.1.10:11434/v1", "",

@@ -1,6 +1,25 @@
 package ai.loli.app.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -138,8 +157,15 @@ fun LoliScreen(
 
 @Composable
 fun LoliFab(icon: ImageVector, description: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    // Кнопка появляется с пружинкой при открытии экрана.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val appear by animateFloatAsState(if (shown) 1f else 0f, spring(dampingRatio = 0.55f, stiffness = 400f), label = "fab")
     FloatingActionButton(
         onClick = onClick,
+        interactionSource = interaction,
+        modifier = Modifier.graphicsLayer { scaleX = appear; scaleY = appear; alpha = appear }.pressScale(interaction),
         shape = RoundedCornerShape(20.dp),
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -237,23 +263,38 @@ fun ValueItem(title: String, value: String, icon: ImageVector? = null, onClick: 
     })
 }
 
-/** Сегментированный переключатель (Заметки | Идеи | Память). */
+/** Лёгкое «вдавливание» при нажатии — отклик для карточек и кнопок. */
+fun Modifier.pressScale(interaction: MutableInteractionSource): Modifier = composed {
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "press")
+    graphicsLayer { scaleX = scale; scaleY = scale }
+}
+
+/** Сегментированный переключатель (Заметки | Идеи | Память) со скользящим индикатором. */
 @Composable
 fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
-    Row(
+    BoxWithConstraints(
         modifier.fillMaxWidth().padding(horizontal = 16.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(3.dp),
     ) {
-        options.forEachIndexed { i, label ->
-            val active = i == selected
-            val bg by animateColorAsState(if (active) groupColor() else Color.Transparent, label = "seg-bg")
-            val fg by animateColorAsState(if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "seg-fg")
-            Box(
-                Modifier.weight(1f).clip(RoundedCornerShape(11.dp)).background(bg).clickable { onSelect(i) }.padding(vertical = 9.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text(label, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1) }
+        val count = options.size.coerceAtLeast(1)
+        val itemWidth = maxWidth / count
+        val offset by animateDpAsState(itemWidth * selected.coerceIn(0, count - 1), spring(dampingRatio = 0.8f, stiffness = 500f), label = "seg-offset")
+        Box(
+            Modifier.offset(x = offset).width(itemWidth).height(38.dp)
+                .shadow(1.dp, RoundedCornerShape(11.dp))
+                .clip(RoundedCornerShape(11.dp)).background(groupColor()),
+        )
+        Row(Modifier.fillMaxWidth()) {
+            options.forEachIndexed { i, label ->
+                val fg by animateColorAsState(if (i == selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, label = "seg-fg")
+                Box(
+                    Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(11.dp)).clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) { Text(label, style = MaterialTheme.typography.labelLarge, color = fg, maxLines = 1) }
+            }
         }
     }
 }
@@ -318,7 +359,14 @@ fun EmptyState(icon: ImageVector, title: String, hint: String, modifier: Modifie
         modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+        // Иконка мягко «парит» — пустой экран не выглядит застывшим.
+        val float by rememberInfiniteTransition(label = "empty").animateFloat(
+            -3f, 3f, infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "float",
+        )
+        Box(
+            Modifier.graphicsLayer { translationY = float * density }.size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp))
         }
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)

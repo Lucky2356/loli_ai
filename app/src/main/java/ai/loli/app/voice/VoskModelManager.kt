@@ -192,11 +192,8 @@ class VoskModelManager(private val context: Context) {
         private const val INCOMPLETE = ".incomplete"
         private const val BUFFER = 64 * 1024
         const val MODEL_NAME = "vosk-model-small-ru-0.22"
-        /** Зеркала по порядку: GitHub Releases этого проекта (доступен почти везде), затем сайт авторов Vosk. */
-        val MODEL_URLS = listOf(
-            "https://github.com/Lucky2356/loli_ai/releases/latest/download/$MODEL_NAME.zip",
-            "https://alphacephei.com/vosk/models/$MODEL_NAME.zip",
-        )
+        /** Модель встроена в APK; скачивание — только для сборок без неё (локальная разработка). */
+        val MODEL_URLS = listOf("https://alphacephei.com/vosk/models/$MODEL_NAME.zip")
         private const val APPROX_SIZE = 45L * 1024 * 1024
     }
 }

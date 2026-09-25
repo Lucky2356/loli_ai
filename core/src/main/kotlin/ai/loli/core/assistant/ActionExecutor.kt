@@ -44,6 +44,7 @@ class ActionExecutor(
     private val resolver: TargetResolver,
     private val scheduler: ReminderScheduler,
     private val time: TimeSource,
+    private val device: DeviceController = UnsupportedDevice,
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -292,6 +293,11 @@ class ActionExecutor(
                     "Удалить ${target.type.titleRu.lowercase()} ${RuFormat.quote(target.title)}?",
                     listOf(DestructiveOp(target.type, target.id, target.title, cancelOnly = false)),
                 ))
+            }
+
+            is AssistantAction.Device -> {
+                val r = device.perform(action.command)
+                if (r.ok) query(r.text) else error(r.text)
             }
 
             is AssistantAction.UpdateLastExpense -> {

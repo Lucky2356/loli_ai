@@ -69,7 +69,7 @@ class LocalNluTest {
         assertEquals(today.plusDays(1), due.dueDate)
         assertEquals("Отвезти документы", due.title)
         assertIs<AssistantAction.CreateReminder>(one("не забыть в 18:00 забрать посылку")).let { assertEquals("Забрать посылку", it.text) }
-        assertIs<AssistantAction.CreateReminder>(one("разбуди меня завтра в 7 утра")).let { assertEquals(Instant.parse("2026-09-26T04:00:00Z"), it.triggerAt) }
+        assertEquals(DeviceCommand.Alarm(java.time.LocalTime.of(7, 0)), assertIs<AssistantAction.Device>(one("разбуди меня завтра в 7 утра")).command)
         assertIs<AssistantAction.CreateReminder>(one("не дай мне забыть через 20 минут выключить плиту")).let { assertEquals(now.plusSeconds(1200), it.triggerAt) }
         assertIs<AssistantAction.CreateReminder>(one("напомни в обед поесть")).let { assertEquals(Instant.parse("2026-09-25T10:00:00Z"), it.triggerAt) }
     }

@@ -25,6 +25,14 @@ object AIProviderFactory {
         return providers.singleOrNull() ?: ChainAIProvider(providers)
     }
 
+    /** Список моделей, доступных с ключом (модель в настройках для этого не нужна). */
+    suspend fun listModels(http: HttpClient, config: AIConfig): List<ModelInfo> {
+        if (config.apiKey.isBlank() && config.type != AIProviderType.CUSTOM) throw AIException.NotConfigured()
+        if (!config.isSecureEndpoint) throw AIException.InsecureEndpoint()
+        val provider: AIProvider = if (config.type == AIProviderType.ANTHROPIC) AnthropicProvider(http, config) else OpenAiCompatibleProvider(http, config)
+        return provider.listModels()
+    }
+
     /** Первый провайдер цепочки, умеющий эмбеддинги (OpenAI, Gemini). */
     fun createEmbeddings(http: HttpClient, configs: List<AIConfig>): EmbeddingProvider? =
         configs.firstNotNullOfOrNull { createEmbeddings(http, it) }

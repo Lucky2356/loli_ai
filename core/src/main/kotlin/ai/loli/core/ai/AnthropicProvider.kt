@@ -2,7 +2,9 @@ package ai.loli.core.ai
 
 import ai.loli.core.data.LoliJson
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -66,6 +68,30 @@ class AnthropicProvider(
             .joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
         if (text.isBlank()) throw AIException.InvalidResponse("пустой ответ (stop_reason=$stop)")
         AIResponse(text, json["model"]?.jsonPrimitive?.contentOrNull, stop)
+    }
+
+    override suspend fun listModels(): List<ModelInfo> = aiCall {
+        val all = ArrayList<ModelInfo>()
+        var after: String? = null
+        repeat(10) {
+            val response = http.get("${config.endpoint}/v1/models") {
+                header("x-api-key", config.apiKey)
+                header("anthropic-version", API_VERSION)
+                parameter("limit", 1000)
+                after?.let { parameter("after_id", it) }
+            }
+            response.throwIfError()
+            val json = LoliJson.parseToJsonElement(response.bodyAsText()).jsonObject
+            (json["data"] as? JsonArray).orEmpty().forEach { el ->
+                val o = el.jsonObject
+                val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                all += ModelInfo(id, o["display_name"]?.jsonPrimitive?.contentOrNull ?: id)
+            }
+            val more = json["has_more"]?.jsonPrimitive?.contentOrNull == "true"
+            after = json["last_id"]?.jsonPrimitive?.contentOrNull
+            if (!more || after == null) return@aiCall all
+        }
+        all
     }
 
     companion object {

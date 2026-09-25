@@ -1,6 +1,7 @@
 package ai.loli.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +49,7 @@ import ai.loli.app.ui.components.SecondaryButton
 import ai.loli.app.ui.components.SectionLabel
 import ai.loli.app.ui.components.Segmented
 import ai.loli.app.ui.components.groupColor
+import ai.loli.app.ui.components.pressScale
 import ai.loli.core.model.MemoryItem
 import ai.loli.core.model.MessageRole
 import ai.loli.core.model.Note
@@ -116,7 +118,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                         if (segment == 0) "Скажите: «$name, создай заметку список покупок: молоко, хлеб»" else "Скажите: «$name, у меня идея — …»",
                     )
                 }
-                items(list, key = { it.id }) { n -> NoteCard(n) { editNote = n } }
+                items(list, key = { it.id }) { n -> Box(Modifier.animateItem()) { NoteCard(n) { editNote = n } } }
             }
             else -> {
                 if (memories.isEmpty()) item(key = "empty") {
@@ -161,7 +163,11 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
 
 @Composable
 private fun NoteCard(n: Note, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.large, color = groupColor(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp)) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Surface(
+        onClick = onClick, shape = MaterialTheme.shapes.large, color = groupColor(), interactionSource = interaction,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).pressScale(interaction),
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text(n.title.ifBlank { "Без названия" }, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (n.content.isNotBlank()) {

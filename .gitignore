@@ -29,3 +29,4 @@ supabase/.branches/
 # Офлайн-модель Vosk: скачивается скриптом scripts/fetch-vosk-model.sh и встраивается в APK
 app/vosk-assets/
 app/vosk-cache/
+.signing/

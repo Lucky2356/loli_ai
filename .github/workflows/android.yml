@@ -84,26 +84,34 @@ jobs:
       - name: Offline speech model (embedded into APK)
         run: ./scripts/fetch-vosk-model.sh
 
-      - name: Restore signing key (optional)
+      # Постоянный ключ подписи: из секрета LOLI_KEYSTORE_BASE64, а если его нет — созданный один раз
+      # и хранящийся в кэше Actions. Одинаковая подпись нужна, чтобы новые версии ставились поверх старых.
+      - name: Restore signing key from cache
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: .signing
+          key: loli-signing-key-v1
+
+      - name: Prepare signing key
         env:
           LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$LOLI_KEYSTORE_BASE64" ]; then
-            echo "$LOLI_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/loli.jks"
-            echo "LOLI_KEYSTORE_FILE=$RUNNER_TEMP/loli.jks" >> "$GITHUB_ENV"
-            echo "Подпись постоянным ключом из секретов"
-          else
-            echo "::notice::LOLI_KEYSTORE_BASE64 не задан — APK подписан временным debug-ключом (обновление поверх потребует переустановки)"
-          fi
+          LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
+          LOLI_KEY_ALIAS_SECRET: ${{ secrets.LOLI_KEY_ALIAS }}
+          LOLI_KEY_PASSWORD_SECRET: ${{ secrets.LOLI_KEY_PASSWORD }}
+        run: ./scripts/signing-key.sh
+
+      - name: Save signing key to cache
+        if: steps.keycache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .signing
+          key: loli-signing-key-v1
 
       - name: Lint, unit tests, assemble
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          LOLI_KEYSTORE_PASSWORD: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
-          LOLI_KEY_ALIAS: ${{ secrets.LOLI_KEY_ALIAS }}
-          LOLI_KEY_PASSWORD: ${{ secrets.LOLI_KEY_PASSWORD }}
-          LOLI_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease
 
       - name: Rename APK

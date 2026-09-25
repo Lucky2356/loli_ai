@@ -17,6 +17,9 @@ fun config(name: String): String =
 fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+/** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
+val APP_VERSION = "1.3.0"
+
 val releaseKeystoreFile = config("LOLI_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
 
@@ -28,8 +31,12 @@ android {
         applicationId = "ai.loli.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = config("LOLI_VERSION_CODE").toIntOrNull() ?: 1
-        versionName = config("LOLI_VERSION_NAME").ifEmpty { "1.0.0" }
+        // Код версии выводится из номера (1.3.0 → 10300): новые релизы всегда ставятся поверх старых.
+        versionName = config("LOLI_VERSION_NAME").ifEmpty { APP_VERSION }
+        versionCode = versionName!!.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+            .let { (it.getOrElse(0) { 0 } * 10000) + (it.getOrElse(1) { 0 } * 100) + it.getOrElse(2) { 0 } }
+        // Откуда приложение проверяет обновления (в CI — текущий репозиторий).
+        buildConfigField("String", "UPDATE_REPO", config("GITHUB_REPOSITORY").ifEmpty { "Lucky2356/loli_ai" }.asBuildConfigString())
 
         buildConfigField("String", "SUPABASE_URL", config("SUPABASE_URL").asBuildConfigString())
         buildConfigField("String", "SUPABASE_ANON_KEY", config("SUPABASE_ANON_KEY").asBuildConfigString())
