@@ -51,10 +51,19 @@ class KeystoreSecretStore(context: Context) {
     fun contains(key: String): Boolean = prefs.contains(key)
 
     /** Пароль для шифрования локальной БД (SQLCipher). Генерируется один раз. */
+    /** Keystore не смог расшифровать сохранённый пароль БД — новый генерировать нельзя (иначе потеря данных). */
+    class KeystoreUnavailableException : IllegalStateException("Android Keystore недоступен")
+
     @Synchronized
     fun databasePassphrase(): ByteArray {
-        val existing = get(DB_KEY)
-        if (existing != null) return existing.toByteArray(Charsets.UTF_8)
+        if (contains(DB_KEY)) {
+            // Пароль уже есть: при временном сбое Keystore пробуем ещё раз, но НИКОГДА не перезаписываем его.
+            repeat(3) { attempt ->
+                get(DB_KEY)?.let { return it.toByteArray(Charsets.UTF_8) }
+                if (attempt < 2) Thread.sleep(150)
+            }
+            throw KeystoreUnavailableException()
+        }
         val random = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val hex = random.joinToString("") { "%02x".format(it) }
         put(DB_KEY, hex)
@@ -62,6 +71,16 @@ class KeystoreSecretStore(context: Context) {
     }
 
     fun hasDatabasePassphrase(): Boolean = contains(DB_KEY)
+
+    /**
+     * Откладывает (не удаляет) зашифрованный пароль БД под другим именем — вместе с переименованной БД
+     * это позволяет позже восстановить данные, если сбой Keystore был временным.
+     */
+    @Synchronized
+    fun moveDatabasePassphraseAside(suffix: String) {
+        val raw = prefs.getString(DB_KEY, null) ?: return
+        prefs.edit().putString("${DB_KEY}_backup_$suffix", raw).remove(DB_KEY).apply()
+    }
 
     private fun secretKey(): SecretKey {
         val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }

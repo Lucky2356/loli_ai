@@ -28,6 +28,8 @@ data class AssistantSettings(
     val assistantName: String = "Лоли",
     /** Облачный AI необязателен: по умолчанию всё понимается локально, без интернета. */
     val useAI: Boolean = false,
+    /** Разрешён ли диалоговый режим (продолжать разговор без обращения по имени). */
+    val dialogMode: Boolean = true,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -72,7 +74,7 @@ class AssistantEngine(
     suspend fun handle(input: String, source: InputSource = InputSource.TEXT): AssistantReply = mutex.withLock {
         val cfg = settings()
         val text = stripWakeWord(input, cfg.assistantName)
-        if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true)
+        if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
         context.touch()
 
         val reply = try {
@@ -89,6 +91,9 @@ class AssistantEngine(
         }
         reply
     }
+
+    /** Голосовой разговор закончился (тишина, лимит, кнопка «стоп») — выходим из диалогового режима. */
+    suspend fun endDialog() = mutex.withLock { context.dialogMode = false }
 
     /** Подтверждение/отмена кнопкой в UI. */
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
@@ -127,7 +132,7 @@ class AssistantEngine(
                 context.touchRecord(chosen)
                 val kept = context.pendingConfirmation
                 val actions = listOf(withTarget(choice.action, chosen.id)) + choice.remaining
-                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept, name = cfg.assistantName)
+                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept, name = cfg.assistantName, dialogAllowed = cfg.dialogMode)
             }
             context.pendingConfirmation = null
         }
@@ -235,6 +240,7 @@ class AssistantEngine(
         offline: Boolean,
         carriedConfirmation: PendingConfirmation? = null,
         name: String = "Лоли",
+        dialogAllowed: Boolean = settings().dialogMode,
     ): AssistantReply {
         val executed = executor.execute(plan.actions, context)
         // Подтверждение, заданное до уточнения, не теряется — объединяем с новыми.
@@ -264,7 +270,7 @@ class AssistantEngine(
             parts += slot.question
         }
         val awaitingAnswer = result.pendingChoice != null || plan.slot != null || result.outcomes.any { it.kind == Outcome.Kind.QUESTION }
-        if (plan.expectFollowUp) context.dialogMode = true
+        if (plan.expectFollowUp && dialogAllowed) context.dialogMode = true
         // В диалоге продолжаем слушать, пока пользователь не скажет «хватит» (или не замолчит).
         val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
         return AssistantReply(

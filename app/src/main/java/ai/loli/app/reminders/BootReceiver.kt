@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import ai.loli.app.LoliApp
 import ai.loli.app.R
 import ai.loli.app.ui.MainActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
@@ -19,7 +20,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as LoliApp
         val pending = goAsync()
-        app.container.appScope.launch {
+        app.container.appScope.launch(Dispatchers.IO) {
             try {
                 app.container.awaitReady()
                 app.container.rescheduleReminders()

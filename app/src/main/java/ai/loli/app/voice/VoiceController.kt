@@ -66,6 +66,8 @@ class VoiceController(
             try {
                 conversationLoop(source)
             } finally {
+                // Разговор закончился (тишина, лимит, «стоп») — ассистент выходит из диалогового режима.
+                scope.launch { engine.endDialog() }
                 _uiListening.value = false
                 if (_state.value !is VoiceState.Error) _state.value = VoiceState.Idle
             }
@@ -74,6 +76,7 @@ class VoiceController(
 
     fun stop() {
         job?.cancel()
+        scope.launch { engine.endDialog() }
         tts.stop()
         _uiListening.value = false
         _state.value = VoiceState.Idle
@@ -92,6 +95,8 @@ class VoiceController(
         job?.cancel()
         job = scope.launch { process(if (yes) "да" else "нет", InputSource.TEXT, speak = false) }
     }
+
+    suspend fun endDialog() = engine.endDialog()
 
     /** Реплика, уже распознанная фоновым сервисом wake word. */
     suspend fun handleRecognized(text: String, source: InputSource): AssistantReply = process(text, source, speak = true)

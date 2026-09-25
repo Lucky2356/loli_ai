@@ -19,15 +19,24 @@ object DatabaseFactory {
         System.loadLibrary("sqlcipher")
         val hadPassphrase = secrets.hasDatabasePassphrase()
         if (!hadPassphrase && context.getDatabasePath(NAME).exists()) {
-            // БД есть, а пароля нет (например, после восстановления из резервной копии) — открыть её нельзя.
-            Logger.w(TAG, "Пароль локальной БД утерян — создаю новую (данные восстановятся синхронизацией)")
-            context.deleteDatabase(NAME)
+            // БД есть, а пароля нет — открыть её нельзя. Откладываем файл (не удаляем).
+            Logger.w(TAG, "Пароль локальной БД отсутствует — откладываю старую БД и создаю новую")
+            val db = context.getDatabasePath(NAME)
+            db.renameTo(java.io.File(db.parentFile, "$NAME.orphan-${System.currentTimeMillis()}"))
         }
         return try {
             open(context, secrets).also { verify(it) }
         } catch (e: Exception) {
-            Logger.e(TAG, "Не удалось открыть зашифрованную БД — пересоздаю", e)
-            context.deleteDatabase(NAME)
+            // Не удаляем данные: откладываем файл БД и пароль к нему, создаём новую БД.
+            // Несинхронизированные записи можно будет восстановить, облачные вернутся синхронизацией.
+            Logger.e(TAG, "Не удалось открыть зашифрованную БД — сохраняю копию и создаю новую", e)
+            val suffix = System.currentTimeMillis().toString()
+            val db = context.getDatabasePath(NAME)
+            if (db.exists()) db.renameTo(java.io.File(db.parentFile, "$NAME.bak-$suffix"))
+            java.io.File(db.parentFile, "$NAME-journal").delete()
+            java.io.File(db.parentFile, "$NAME-wal").delete()
+            java.io.File(db.parentFile, "$NAME-shm").delete()
+            secrets.moveDatabasePassphraseAside(suffix)
             open(context, secrets).also { verify(it) }
         }
     }

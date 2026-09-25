@@ -141,6 +141,26 @@ class LocalModeEngineTest {
         assertTrue(august.text.contains("700"), august.text)
     }
 
+    @Test fun dialogModeRespectsSettingAndEnds() = runTest {
+        val env = TestEnv().apply { settings = AssistantSettings(useAI = false, dialogMode = false) }
+        env.engine.handle("давай придумаем приложение для кафе", InputSource.VOICE)
+        assertFalse(env.engine.context.dialogMode, "диалог выключен в настройках")
+        env.settings = AssistantSettings(useAI = false, dialogMode = true)
+        env.engine.handle("давай придумаем приложение для склада", InputSource.VOICE)
+        assertTrue(env.engine.context.dialogMode)
+        env.engine.endDialog()
+        assertFalse(env.engine.context.dialogMode)
+        val offer = env.engine.handle("у соседей опять шумный ремонт")
+        assertTrue(offer.text.contains("Сохранить это как заметку"), "после окончания диалога фраза не дописывается в идею")
+    }
+
+    @Test fun bareWakeWordKeepsListening() = runTest {
+        val env = env()
+        val r = env.engine.handle("Лоли")
+        assertEquals("Слушаю!", r.text)
+        assertTrue(r.awaitingAnswer)
+    }
+
     @Test fun helpAndIdentityUseAssistantName() = runTest {
         val env = TestEnv().apply { settings = AssistantSettings(assistantName = "Кира", useAI = false) }
         val who = env.engine.handle("кто ты")

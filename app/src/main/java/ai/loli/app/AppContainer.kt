@@ -60,7 +60,8 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    val store = LocalStore(DatabaseFactory.create(context, secrets), time)
+    /** БД открывается лениво и заранее прогревается в фоне (ключ SQLCipher — тяжёлая операция). */
+    val store: LocalStore by lazy { LocalStore(DatabaseFactory.create(context, secrets), time) }
 
     // --- Supabase ---
     fun supabaseConfig(): SupabaseConfig {
@@ -77,7 +78,7 @@ class AppContainer(private val context: Context) {
     )
 
     val syncScheduler = SyncScheduler(context)
-    val syncEngine = SyncEngine(
+    val syncEngine: SyncEngine by lazy { SyncEngine(
         local = store,
         remote = object : ai.loli.core.remote.RemoteDataSource {
             // Конфигурация может меняться в настройках — создаём клиент на каждый вызов.
@@ -88,7 +89,7 @@ class AppContainer(private val context: Context) {
         },
         profile = settings,
         userId = { auth.userId },
-    )
+    ) }
     val network = NetworkMonitor(context) { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon(1) }
 
     // --- AI ---
@@ -109,32 +110,42 @@ class AppContainer(private val context: Context) {
 
     // --- Ассистент ---
     val reminderScheduler = AlarmReminderScheduler(context)
-    val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddingProvider() }
-    private val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
-    private val executor = ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time)
+    val search: SearchService by lazy { SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddingProvider() } }
+    private val resolver by lazy { TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories) }
+    private val executor by lazy { ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time) }
 
-    val engine = AssistantEngine(
+    val engine: AssistantEngine by lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
         conversations = store.conversations, search = search, executor = executor, time = time,
-        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI) } },
+        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled) } },
         aiProvider = { aiProvider() },
-    )
+    ) }
 
     // --- Голос ---
     val voskModels = VoskModelManager(context)
     val voskEngine = VoskEngine(voskModels)
     val systemStt = AndroidSpeechRecognizerProvider(context)
     val offlineStt = VoskSpeechProvider(voskEngine, voskModels)
-    val tts = AndroidTtsProvider(context) { settings.settings.value.speechRate }
-    val voice = VoiceController(engine, settings.settings, systemStt, offlineStt, tts, appScope)
+    /** Синтезатор речи подключается только когда понадобится (не при запуске из будильника/синхронизации). */
+    private val ttsLazy = lazy { AndroidTtsProvider(context) { settings.settings.value.speechRate } }
+    val tts: AndroidTtsProvider get() = ttsLazy.value
+    val voice: VoiceController by lazy { VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope) }
+    private val lazyTts = object : ai.loli.core.voice.TextToSpeechProvider {
+        override val isReady: Boolean get() = tts.isReady
+        override suspend fun speak(text: String) = tts.speak(text)
+        override fun stop() { if (ttsLazy.isInitialized()) tts.stop() }
+        override fun shutdown() { if (ttsLazy.isInitialized()) tts.shutdown() }
+    }
 
     /** Завершается, когда сессия и настройки загружены (важно для холодного старта из WorkManager/Receiver). */
     private val ready = CompletableDeferred<Unit>()
     suspend fun awaitReady() = ready.await()
 
     init {
-        // Любое локальное изменение → синхронизация вскоре (если пользователь вошёл).
-        store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Прогрев БД вне главного потока; дальше — подписка на изменения для синхронизации.
+            store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
+        }
         appScope.launch {
             auth.restore()
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()
@@ -144,7 +155,7 @@ class AppContainer(private val context: Context) {
                 syncScheduler.requestSoon(1)
             }
         }
-        appScope.launch { rescheduleReminders() }
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) { rescheduleReminders() }
     }
 
     suspend fun rescheduleReminders() {

@@ -54,7 +54,8 @@ fun RemindersScreen(c: AppContainer, onBack: () -> Unit) {
     val context = LocalContext.current
     val zone = c.time.zone()
     val now = c.time.now()
-    val exact = c.reminderScheduler.canScheduleExact()
+    val resumeTick = ai.loli.app.ui.components.rememberResumeTick()
+    val exact = remember(resumeTick) { c.reminderScheduler.canScheduleExact() }
     Scaffold(
         topBar = { LoliTopBar("Напоминания", onBack) },
         floatingActionButton = { FloatingActionButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, contentDescription = "Добавить напоминание") } },

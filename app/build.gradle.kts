@@ -51,7 +51,7 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            // Без суффикса пакета: статические ярлыки (res/xml/shortcuts.xml) указывают на ai.loli.app.
             versionNameSuffix = "-debug"
             // Если в CI передан постоянный ключ — подписываем им и debug-сборку,
             // чтобы обновления ставились поверх без потери данных.

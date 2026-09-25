@@ -10,6 +10,7 @@ import ai.loli.app.LoliApp
 import ai.loli.app.R
 import ai.loli.app.ui.MainActivity
 import ai.loli.core.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -19,7 +20,7 @@ class ReminderReceiver : BroadcastReceiver() {
         val id = intent.getStringExtra(EXTRA_ID) ?: return
         val app = context.applicationContext as LoliApp
         val pending = goAsync()
-        app.container.appScope.launch {
+        app.container.appScope.launch(Dispatchers.IO) {
             try {
                 val c = app.container
                 when (intent.action) {

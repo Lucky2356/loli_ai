@@ -52,6 +52,8 @@ class WakeWordService : LifecycleService() {
     private var matcher = WakeWordMatcher("Лоли")
     @Volatile private var mode = Mode.WAITING
     @Volatile private var commandDeadline = 0L
+    /** Сколько реплик подряд прошло без повторного обращения по имени. */
+    private var followUps = 0
     private var tone: ToneGenerator? = null
 
     override fun onCreate() {
@@ -62,7 +64,8 @@ class WakeWordService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (intent?.action == ACTION_STOP) {
-            lifecycleScope.launch { container.settings.setWakeWord(false) }
+            // appScope, а не lifecycleScope: запись не должна отмениться вместе с сервисом.
+            container.appScope.launch { container.settings.setWakeWord(false) }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -138,6 +141,7 @@ class WakeWordService : LifecycleService() {
             if (text.isEmpty()) return
             when (mode) {
                 Mode.WAITING -> {
+                    followUps = 0
                     val match = matcher.match(text)
                     when {
                         match != null && match.command.split(" ").count { it.isNotBlank() } >= 1 -> dispatch(match.command)
@@ -176,11 +180,12 @@ class WakeWordService : LifecycleService() {
             recognizer?.reset()
             speechService?.setPause(false)
             val s = container.settings.settings.value
-            if (reply != null && reply.expectFollowUp && (s.dialogModeEnabled || reply.awaitingAnswer || reply.awaitingConfirmation)) {
+            val wantsMore = reply != null && reply.expectFollowUp && (s.dialogModeEnabled || reply.awaitingAnswer || reply.awaitingConfirmation)
+            if (wantsMore && followUps < MAX_FOLLOW_UPS) {
+                followUps++
                 enterCommandMode()
             } else {
-                mode = Mode.WAITING
-                updateNotification(getString(R.string.wake_listening, s.assistantName))
+                backToWaiting()
             }
         }
     }
@@ -188,11 +193,16 @@ class WakeWordService : LifecycleService() {
     private suspend fun watchdog() {
         while (true) {
             delay(1000)
-            if (mode == Mode.COMMAND && System.currentTimeMillis() > commandDeadline) {
-                mode = Mode.WAITING
-                updateNotification(getString(R.string.wake_listening, container.settings.settings.value.assistantName))
-            }
+            if (mode == Mode.COMMAND && System.currentTimeMillis() > commandDeadline) backToWaiting()
         }
+    }
+
+    /** Возврат к ожиданию имени: диалог закончен (тишина, лимит), ассистент выходит из режима диалога. */
+    private fun backToWaiting() {
+        mode = Mode.WAITING
+        followUps = 0
+        lifecycleScope.launch { container.voice.endDialog() }
+        updateNotification(getString(R.string.wake_listening, container.settings.settings.value.assistantName))
     }
 
     private fun beep() {
@@ -240,6 +250,7 @@ class WakeWordService : LifecycleService() {
         private const val TAG = "WakeWord"
         private const val ACTION_STOP = "ai.loli.action.STOP_WAKE"
         private const val COMMAND_WINDOW_MS = 8_000L
+        private const val MAX_FOLLOW_UPS = 12
 
         @Volatile var running = false
             private set

@@ -71,6 +71,7 @@ fun SettingsScreen(c: AppContainer, onOpenAuth: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var refresh by remember { mutableIntStateOf(0) }
+    val resumeTick = ai.loli.app.ui.components.rememberResumeTick()
 
     Scaffold(topBar = { LoliTopBar("Настройки") }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
@@ -158,8 +159,17 @@ fun SettingsScreen(c: AppContainer, onOpenAuth: () -> Unit) {
 
             // ---------- Голос ----------
             Section("Голос") {
-                val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+                val micGranted = remember(refresh, resumeTick) {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                }
+                // После выдачи разрешения сразу включаем фоновое прослушивание, о котором просил пользователь.
+                val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                    refresh++
+                    if (granted) {
+                        scope.launch { c.settings.setWakeWord(true) }
+                        WakeWordService.start(context)
+                    }
+                }
                 SwitchRow("Озвучивать ответы", "Системный синтезатор речи", s.ttsEnabled) { v -> scope.launch { c.settings.setTts(v) } }
                 Text("Скорость речи: ${"%.1f".format(s.speechRate)}", modifier = Modifier.padding(top = 4.dp))
                 Slider(value = s.speechRate, onValueChange = { v -> scope.launch { c.settings.setSpeechRate(v) } }, valueRange = 0.5f..2f)
@@ -208,7 +218,7 @@ fun SettingsScreen(c: AppContainer, onOpenAuth: () -> Unit) {
 
             // ---------- Разрешения ----------
             Section("Разрешения") {
-                key(refresh) {
+                key(refresh, resumeTick) {
                     PermissionRow("Микрофон", Manifest.permission.RECORD_AUDIO) { refresh++ }
                     if (Build.VERSION.SDK_INT >= 33) PermissionRow("Уведомления", Manifest.permission.POST_NOTIFICATIONS) { refresh++ }
                     val exact = c.reminderScheduler.canScheduleExact()

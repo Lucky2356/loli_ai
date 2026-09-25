@@ -86,6 +86,21 @@ fun DeleteButton(what: String, onConfirm: () -> Unit) {
     }
 }
 
+/** Счётчик, увеличивающийся при каждом возврате на экран (ON_RESUME) — чтобы перепроверить разрешения. */
+@Composable
+fun rememberResumeTick(): Int {
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var tick by remember { mutableStateOf(0) }
+    androidx.compose.runtime.DisposableEffect(owner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) tick++
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    return tick
+}
+
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp))
