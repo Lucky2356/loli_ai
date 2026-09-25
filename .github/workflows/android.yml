@@ -137,6 +137,12 @@ jobs:
           echo "::warning::Не удалось сохранить APK как artifact (вероятно, исчерпана квота хранилища Actions). Скачайте APK из GitHub Releases (workflow «Release APK») или удалите старые артефакты."
           echo "⚠️ Artifact не загружен (квота хранилища). Используйте workflow **Release APK**." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Lint errors in log
+        if: failure()
+        run: |
+          f=app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          [ -f "$f" ] && grep -A3 ": Error:" "$f" || true
+
       - name: Lint report
         if: always()
         uses: actions/upload-artifact@v4

@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Будильники и таймеры в приложении «Часы» по голосовой команде. -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- Необязательно: «позвони маме» — поиск номера в контактах (спрашивается в настройках). -->
