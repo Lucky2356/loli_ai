@@ -1,0 +1,29 @@
+-- Долгосрочная память: факты, предпочтения, цели, которые пользователь попросил запомнить.
+CREATE TABLE memory (
+    id TEXT NOT NULL PRIMARY KEY,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+selectActive:
+SELECT * FROM memory WHERE deleted = 0 ORDER BY updated_at DESC;
+
+selectById:
+SELECT * FROM memory WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO memory VALUES ?;
+
+selectDirty:
+SELECT * FROM memory WHERE dirty = 1;
+
+markSynced:
+UPDATE memory SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+deleteAll:
+DELETE FROM memory;

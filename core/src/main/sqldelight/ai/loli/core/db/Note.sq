@@ -1,0 +1,42 @@
+-- Заметки и идеи (kind = 'note' | 'idea').
+-- Служебные поля синхронизации: dirty (есть неотправленные изменения),
+-- deleted (мягкое удаление/tombstone), synced_updated_at (версия, полученная/отправленная последней).
+CREATE TABLE note (
+    id TEXT NOT NULL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+CREATE INDEX note_kind_idx ON note(kind, deleted, updated_at);
+
+selectActive:
+SELECT * FROM note WHERE deleted = 0 ORDER BY pinned DESC, updated_at DESC;
+
+selectActiveByKind:
+SELECT * FROM note WHERE deleted = 0 AND kind = ? ORDER BY pinned DESC, updated_at DESC;
+
+selectById:
+SELECT * FROM note WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO note VALUES ?;
+
+selectDirty:
+SELECT * FROM note WHERE dirty = 1;
+
+markSynced:
+UPDATE note SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+countActiveByKind:
+SELECT count(*) FROM note WHERE deleted = 0 AND kind = ?;
+
+deleteAll:
+DELETE FROM note;

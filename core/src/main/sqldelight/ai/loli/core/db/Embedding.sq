@@ -1,0 +1,21 @@
+-- Локальный кэш эмбеддингов для семантического поиска. Не синхронизируется:
+-- это производные данные, каждый клиент пересчитывает их сам.
+CREATE TABLE embedding (
+    record_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    vector BLOB NOT NULL,
+    PRIMARY KEY (record_id, model)
+);
+
+selectByModel:
+SELECT * FROM embedding WHERE model = ?;
+
+upsert:
+INSERT OR REPLACE INTO embedding VALUES ?;
+
+deleteByRecord:
+DELETE FROM embedding WHERE record_id = ?;
+
+deleteAll:
+DELETE FROM embedding;

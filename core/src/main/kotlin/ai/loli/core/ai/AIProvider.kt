@@ -1,0 +1,95 @@
+package ai.loli.core.ai
+
+/**
+ * Абстракция языковой модели. Бизнес-логика ассистента зависит только от этого интерфейса —
+ * провайдер (OpenAI, Gemini, Anthropic, локальная модель) выбирается в настройках.
+ */
+interface AIProvider {
+    val type: AIProviderType
+    val model: String
+    suspend fun complete(request: AIRequest): AIResponse
+}
+
+/** Векторные представления текста для семантического поиска. Поддерживается не всеми провайдерами. */
+interface EmbeddingProvider {
+    val embeddingModel: String
+    suspend fun embed(texts: List<String>): List<FloatArray>
+}
+
+data class ChatMessage(val role: Role, val content: String) {
+    enum class Role { USER, ASSISTANT }
+}
+
+data class AIRequest(
+    val system: String,
+    val messages: List<ChatMessage>,
+    /** Просить модель вернуть строго JSON-объект. */
+    val jsonMode: Boolean = true,
+    val maxTokens: Int = 4096,
+)
+
+data class AIResponse(val text: String, val model: String?, val stopReason: String?)
+
+/** Ошибки AI-слоя с понятными сообщениями для пользователя. */
+sealed class AIException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class NotConfigured : AIException("AI не настроен: укажите провайдера, модель и API-ключ в настройках.")
+    class Unauthorized(detail: String) : AIException("API-ключ не принят провайдером ($detail). Проверьте ключ в настройках.")
+    class RateLimited : AIException("Превышен лимит запросов к AI. Попробуйте чуть позже.")
+    class Network(cause: Throwable?) : AIException("Нет связи с AI-сервисом. Проверьте интернет.", cause)
+    class Server(code: Int, detail: String) : AIException("AI-сервис вернул ошибку $code: $detail")
+    class InvalidResponse(detail: String) : AIException("AI вернул ответ в неожиданном формате: $detail")
+    class Refused : AIException("Модель отказалась отвечать на этот запрос.")
+}
+
+enum class AIProviderType(
+    val id: String,
+    val title: String,
+    val defaultEndpoint: String,
+    val defaultModel: String,
+    val suggestedModels: List<String>,
+    val defaultEmbeddingModel: String?,
+    val endpointEditable: Boolean,
+) {
+    OPENAI(
+        "openai", "OpenAI", "https://api.openai.com/v1", "gpt-5-mini",
+        listOf("gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1-mini"), "text-embedding-3-small", false,
+    ),
+    GEMINI(
+        "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash",
+        listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"), "gemini-embedding-001", false,
+    ),
+    ANTHROPIC(
+        "anthropic", "Anthropic Claude", "https://api.anthropic.com", "claude-opus-5",
+        listOf("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"), null, true,
+    ),
+    OPENROUTER(
+        "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-5-mini",
+        listOf("openai/gpt-5-mini", "anthropic/claude-sonnet-5", "google/gemini-2.5-flash"), null, false,
+    ),
+    CUSTOM(
+        "custom", "OpenAI-совместимый API (свой адрес)", "http://192.168.1.10:11434/v1", "",
+        emptyList(), null, true,
+    );
+
+    val isOpenAiCompatible: Boolean get() = this != ANTHROPIC
+
+    companion object {
+        fun fromId(id: String?): AIProviderType = entries.firstOrNull { it.id == id } ?: OPENAI
+    }
+}
+
+/** Настройки подключения. [apiKey] никогда не попадает в toString()/логи. */
+class AIConfig(
+    val type: AIProviderType,
+    endpoint: String?,
+    model: String?,
+    val apiKey: String,
+    val embeddingsEnabled: Boolean = true,
+) {
+    val endpoint: String = (endpoint?.takeIf { it.isNotBlank() } ?: type.defaultEndpoint).trim().trimEnd('/')
+    val model: String = (model?.takeIf { it.isNotBlank() } ?: type.defaultModel).trim()
+
+    val isComplete: Boolean get() = model.isNotBlank() && endpoint.isNotBlank() && (apiKey.isNotBlank() || type == AIProviderType.CUSTOM)
+
+    override fun toString(): String = "AIConfig(type=${type.id}, endpoint=$endpoint, model=$model, apiKey=${if (apiKey.isBlank()) "<empty>" else "***"})"
+}

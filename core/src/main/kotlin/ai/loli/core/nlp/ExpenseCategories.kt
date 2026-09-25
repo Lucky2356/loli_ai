@@ -1,0 +1,71 @@
+package ai.loli.core.nlp
+
+/**
+ * Категории расходов. AI может предложить любую категорию, но мы приводим её к каноничному
+ * названию, если она совпадает с известной — чтобы статистика не расползалась («еда»/«продукты»/«продуктики»).
+ */
+object ExpenseCategories {
+    const val OTHER = "Другое"
+
+    private val categories: List<Pair<String, List<String>>> = listOf(
+        "Продукты" to listOf("продукт", "продукты", "еда домой", "магазин", "супермаркет", "пятерочк", "перекрест", "магнит", "ашан", "лент", "вкусвилл", "овощ", "фрукт", "молок", "хлеб", "мяс", "grocer", "food", "groceries", "продуктов"),
+        "Кафе и рестораны" to listOf("кафе", "ресторан", "кофе", "кофейн", "обед", "ужин", "завтрак", "бар", "пицц", "суши", "бургер", "доставк", "фастфуд", "столов", "латте", "капучино", "cafe", "restaurant"),
+        "Транспорт" to listOf("такси", "метро", "автобус", "транспорт", "проезд", "бензин", "топлив", "заправк", "парковк", "каршеринг", "электричк", "трамва", "троллейбус", "самокат", "taxi"),
+        "Дом и ЖКХ" to listOf("квартплат", "жкх", "коммунал", "аренд", "свет", "электричеств", "газ", "вод", "ремонт", "мебел", "хозтовар", "бытов"),
+        "Связь и интернет" to listOf("связь", "телефон", "мобильн", "интернет", "сотов"),
+        "Подписки" to listOf("подписк", "netflix", "spotify", "яндекс плюс", "кинопоиск", "icloud", "chatgpt", "claude", "youtube"),
+        "Здоровье" to listOf("аптек", "лекарств", "врач", "клиник", "анализ", "стоматолог", "зуб", "медицин", "таблетк", "витамин"),
+        "Красота" to listOf("красот", "парикмахер", "стрижк", "маникюр", "косметик", "салон", "парфюм", "духи"),
+        "Одежда и обувь" to listOf("одежд", "обув", "куртк", "плать", "джинс", "кроссовк", "футболк", "ботинк"),
+        "Развлечения" to listOf("кино", "концерт", "театр", "игр", "развлечен", "музей", "выставк", "клуб", "боулинг"),
+        "Подарки" to listOf("подар", "цветы", "букет"),
+        "Образование" to listOf("курс", "обучен", "книг", "учеб", "репетитор", "школ", "универ"),
+        "Путешествия" to listOf("отел", "гостиниц", "билет", "самолет", "авиа", "поезд", "путешеств", "отпуск", "тур"),
+        "Спорт" to listOf("спорт", "фитнес", "зал", "тренировк", "бассейн", "йог"),
+        "Дети" to listOf("дет", "ребен", "игрушк", "садик", "детск"),
+        "Питомцы" to listOf("кот", "кошк", "собак", "питом", "корм", "ветеринар", "зоо"),
+        "Электроника" to listOf("электроник", "ноутбук", "смартфон", "наушник", "гаджет", "компьютер"),
+    )
+
+    val all: List<String> = categories.map { it.first } + OTHER
+
+    /** Определяет категорию по свободному тексту описания. */
+    fun categorize(text: String): String {
+        val norm = RuTokenizer.normalize(text)
+        val words = TextAnalysis.words(norm)
+        var best: String? = null
+        var bestScore = 0
+        for ((name, keys) in categories) {
+            var score = 0
+            for (k in keys) {
+                if (k.contains(' ')) {
+                    if (norm.contains(k)) score += 2
+                } else if (words.any { it.startsWith(k) || (it.length >= 4 && k.startsWith(it)) }) {
+                    score += if (words.any { it == k }) 2 else 1
+                }
+            }
+            if (score > bestScore) { bestScore = score; best = name }
+        }
+        return best ?: OTHER
+    }
+
+    /**
+     * Приводит категорию от AI к каноничному виду. Если она не похожа ни на одну известную —
+     * сохраняем как есть (с заглавной буквы), чтобы не терять смысл.
+     */
+    fun normalize(category: String?, description: String = ""): String {
+        val c = category?.trim().orEmpty()
+        if (c.isEmpty()) return categorize(description)
+        all.firstOrNull { it.equals(c, ignoreCase = true) }?.let { return it }
+        val guessed = categorize(c)
+        if (guessed != OTHER) return guessed
+        val english = mapOf(
+            "food" to "Продукты", "groceries" to "Продукты", "transport" to "Транспорт", "cafe" to "Кафе и рестораны",
+            "restaurants" to "Кафе и рестораны", "health" to "Здоровье", "entertainment" to "Развлечения",
+            "clothes" to "Одежда и обувь", "gifts" to "Подарки", "education" to "Образование", "travel" to "Путешествия",
+            "home" to "Дом и ЖКХ", "utilities" to "Дом и ЖКХ", "subscriptions" to "Подписки", "other" to OTHER,
+        )
+        english[c.lowercase()]?.let { return it }
+        return c.replaceFirstChar { it.uppercase() }.take(40)
+    }
+}

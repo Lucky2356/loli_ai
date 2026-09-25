@@ -1,0 +1,32 @@
+-- История взаимодействий (реплики пользователя и ассистента).
+CREATE TABLE conversation_message (
+    id TEXT NOT NULL PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+CREATE INDEX conversation_created_idx ON conversation_message(deleted, created_at);
+
+selectRecent:
+SELECT * FROM conversation_message WHERE deleted = 0 ORDER BY created_at DESC LIMIT :limit;
+
+selectById:
+SELECT * FROM conversation_message WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO conversation_message VALUES ?;
+
+selectDirty:
+SELECT * FROM conversation_message WHERE dirty = 1;
+
+markSynced:
+UPDATE conversation_message SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+deleteAll:
+DELETE FROM conversation_message;

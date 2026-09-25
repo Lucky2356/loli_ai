@@ -1,0 +1,35 @@
+-- Задачи. due_date — ISO дата, due_time — ISO время (HH:mm), оба необязательны.
+CREATE TABLE task (
+    id TEXT NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    details TEXT NOT NULL,
+    due_date TEXT,
+    due_time TEXT,
+    done INTEGER NOT NULL DEFAULT 0,
+    completed_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+CREATE INDEX task_state_idx ON task(deleted, done, due_date);
+
+selectActive:
+SELECT * FROM task WHERE deleted = 0 ORDER BY done ASC, due_date IS NULL, due_date ASC, created_at DESC;
+
+selectById:
+SELECT * FROM task WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO task VALUES ?;
+
+selectDirty:
+SELECT * FROM task WHERE dirty = 1;
+
+markSynced:
+UPDATE task SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+deleteAll:
+DELETE FROM task;

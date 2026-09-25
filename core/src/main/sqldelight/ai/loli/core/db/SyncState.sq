@@ -1,0 +1,14 @@
+-- Курсоры синхронизации: до какого server_updated_at каждая таблица уже скачана.
+CREATE TABLE sync_state (
+    table_name TEXT NOT NULL PRIMARY KEY,
+    last_pulled_at TEXT NOT NULL
+);
+
+selectCursor:
+SELECT last_pulled_at FROM sync_state WHERE table_name = ?;
+
+upsertCursor:
+INSERT OR REPLACE INTO sync_state VALUES (?, ?);
+
+deleteAll:
+DELETE FROM sync_state;

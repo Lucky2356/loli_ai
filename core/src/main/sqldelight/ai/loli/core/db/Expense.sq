@@ -1,0 +1,39 @@
+-- Расходы. Сумма хранится в минимальных единицах валюты (копейки/центы), чтобы избежать ошибок float.
+-- occurred_on — дата расхода в формате ISO (yyyy-MM-dd).
+CREATE TABLE expense (
+    id TEXT NOT NULL PRIMARY KEY,
+    amount_minor INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    occurred_on TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+CREATE INDEX expense_date_idx ON expense(deleted, occurred_on);
+
+selectActive:
+SELECT * FROM expense WHERE deleted = 0 ORDER BY occurred_on DESC, created_at DESC;
+
+selectBetween:
+SELECT * FROM expense WHERE deleted = 0 AND occurred_on >= :fromDate AND occurred_on <= :toDate
+ORDER BY occurred_on DESC, created_at DESC;
+
+selectById:
+SELECT * FROM expense WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO expense VALUES ?;
+
+selectDirty:
+SELECT * FROM expense WHERE dirty = 1;
+
+markSynced:
+UPDATE expense SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+deleteAll:
+DELETE FROM expense;
