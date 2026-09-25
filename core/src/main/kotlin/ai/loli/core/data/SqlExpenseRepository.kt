@@ -64,7 +64,7 @@ class SqlExpenseRepository(
     override suspend fun markSynced(id: String, updatedAt: Long) { io { q.markSynced(updatedAt, id) } }
     override suspend fun clear() { io { q.deleteAll() } }
 
-    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?) {
+    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?, expectedLocalUpdatedAt: Long?, guard: Boolean) {
         val created = payload.instant("created_at") ?: Instant.now()
         val row = ExpenseRow(
             id = payload.str("id") ?: return,
@@ -79,7 +79,12 @@ class SqlExpenseRepository(
             dirty = dirty.toLong(),
             synced_updated_at = syncedUpdatedAt,
         )
-        io { q.upsert(row) }
+        io {
+            db.transaction {
+                if (guard && q.selectById(row.id).executeAsOneOrNull()?.updated_at != expectedLocalUpdatedAt) return@transaction
+                q.upsert(row)
+            }
+        }
     }
 
     private fun ExpenseRow.toDomain() = Expense(

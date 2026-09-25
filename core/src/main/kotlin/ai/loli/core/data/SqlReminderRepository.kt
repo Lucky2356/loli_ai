@@ -31,6 +31,12 @@ class SqlReminderRepository(
 
     override suspend fun create(text: String, triggerAt: Instant, recurrence: Recurrence?, timeZone: String): Reminder {
         val now = nowMs()
+        // Ежемесячное правило помнит исходное число, иначе после февраля оно «съедет» с 31-го на 28-е.
+        val zone = runCatching { ZoneId.of(timeZone) }.getOrDefault(ZoneId.systemDefault())
+        @Suppress("NAME_SHADOWING")
+        val recurrence = if (recurrence?.frequency == Recurrence.Frequency.MONTHLY && recurrence.dayOfMonth == null) {
+            recurrence.copy(dayOfMonth = triggerAt.atZone(zone).dayOfMonth, time = recurrence.time ?: triggerAt.atZone(zone).toLocalTime())
+        } else recurrence
         val row = ReminderRow(Ids.newId(), text.trim(), triggerAt.toEpochMilli(), recurrence?.encode(), timeZone, 1, null, now, now, 0, 1, null)
         io { q.upsert(row) }
         changed()
@@ -82,7 +88,7 @@ class SqlReminderRepository(
     override suspend fun markSynced(id: String, updatedAt: Long) { io { q.markSynced(updatedAt, id) } }
     override suspend fun clear() { io { q.deleteAll() } }
 
-    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?) {
+    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?, expectedLocalUpdatedAt: Long?, guard: Boolean) {
         val created = payload.instant("created_at") ?: Instant.now()
         val row = ReminderRow(
             id = payload.str("id") ?: return,
@@ -98,7 +104,12 @@ class SqlReminderRepository(
             dirty = dirty.toLong(),
             synced_updated_at = syncedUpdatedAt,
         )
-        io { q.upsert(row) }
+        io {
+            db.transaction {
+                if (guard && q.selectById(row.id).executeAsOneOrNull()?.updated_at != expectedLocalUpdatedAt) return@transaction
+                q.upsert(row)
+            }
+        }
     }
 
     private fun ReminderRow.toDomain() = Reminder(

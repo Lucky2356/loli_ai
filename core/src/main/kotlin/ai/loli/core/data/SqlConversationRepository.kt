@@ -41,7 +41,7 @@ class SqlConversationRepository(
     override suspend fun markSynced(id: String, updatedAt: Long) { io { q.markSynced(updatedAt, id) } }
     override suspend fun clear() { io { q.deleteAll() } }
 
-    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?) {
+    override suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?, expectedLocalUpdatedAt: Long?, guard: Boolean) {
         val created = payload.instant("created_at") ?: Instant.now()
         val row = MessageRow(
             id = payload.str("id") ?: return,
@@ -54,7 +54,12 @@ class SqlConversationRepository(
             dirty = dirty.toLong(),
             synced_updated_at = syncedUpdatedAt,
         )
-        io { q.upsert(row) }
+        io {
+            db.transaction {
+                if (guard && q.selectById(row.id).executeAsOneOrNull()?.updated_at != expectedLocalUpdatedAt) return@transaction
+                q.upsert(row)
+            }
+        }
     }
 
     private fun MessageRow.toDomain() = ConversationMessage(id, conversation_id, MessageRole.fromWire(role), content, Instant.ofEpochMilli(created_at))

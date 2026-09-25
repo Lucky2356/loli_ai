@@ -118,16 +118,17 @@ class SyncEngine(
         val remoteUpdated = (remoteRow["updated_at"] as? JsonPrimitive)?.contentOrNull?.let { parseInstant(it) }?.toEpochMilli() ?: return false
         val payload = JsonObject(remoteRow.filterKeys { it !in SERVER_ONLY_COLUMNS })
         val localRow = table.row(id)
+        val expected = localRow?.updatedAt
         when {
-            localRow == null -> table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated)
-            !localRow.dirty -> if (remoteUpdated >= localRow.updatedAt) table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated)
+            localRow == null -> table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated, expectedLocalUpdatedAt = null, guard = true)
+            !localRow.dirty -> if (remoteUpdated >= localRow.updatedAt) table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated, expectedLocalUpdatedAt = expected, guard = true)
             localRow.syncedUpdatedAt == remoteUpdated -> Unit // сервер не менялся с нашей базовой версии — отправим локальную
-            remoteUpdated == localRow.updatedAt -> table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated) // наша же версия
+            remoteUpdated == localRow.updatedAt -> table.write(payload, dirty = false, syncedUpdatedAt = remoteUpdated, expectedLocalUpdatedAt = expected, guard = true) // наша же версия
             else -> {
                 val merged = table.merge(localRow.payload, payload, localRow.updatedAt, remoteUpdated)
                 val newUpdated = maxOf(localRow.updatedAt, remoteUpdated) + 1
                 val stamped = JsonObject(merged + ("updated_at" to JsonPrimitive(Instant.ofEpochMilli(newUpdated).toString())))
-                table.write(stamped, dirty = true, syncedUpdatedAt = remoteUpdated)
+                table.write(stamped, dirty = true, syncedUpdatedAt = remoteUpdated, expectedLocalUpdatedAt = expected, guard = true)
                 Logger.i(TAG, "Конфликт в ${table.remoteTable} разрешён слиянием")
                 return true
             }

@@ -21,8 +21,12 @@ interface SyncableTable {
     val remoteTable: String
     suspend fun dirtyRows(): List<SyncRow>
     suspend fun row(id: String): SyncRow?
-    /** Записать строку из серверного формата. [dirty] — нужно ли её потом отправить. */
-    suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?)
+    /**
+     * Записать строку из серверного формата. [dirty] — нужно ли её потом отправить.
+     * Если [guard] — запись выполняется, только если локальная версия не изменилась с момента чтения
+     * ([expectedLocalUpdatedAt], null — строки не было): правка пользователя во время синхронизации не затирается.
+     */
+    suspend fun write(payload: JsonObject, dirty: Boolean, syncedUpdatedAt: Long?, expectedLocalUpdatedAt: Long? = null, guard: Boolean = false)
     /** Снять флаг dirty, если запись не менялась после отправки. */
     suspend fun markSynced(id: String, updatedAt: Long)
     /**

@@ -127,7 +127,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     private fun splitByConjunction(text: String): List<String> {
         val result = ArrayList<String>()
-        val sep = Regex(""",?\s+(?:и|а также|а ещё|а еще|и ещё|и еще|потом|затем|после этого|ещё|еще)\s+|,\s+""")
+        val sep = Regex(""",?\s+(?:и ещё|и еще|и также|а также|а ещё|а еще|а потом|и потом|после этого|потом|затем|ещё|еще|и)\s+|,\s+""")
         var start = 0
         for (m in sep.findAll(text)) {
             val rest = text.substring(m.range.last + 1)
@@ -146,6 +146,13 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     private fun triggerAt(text: String): Boolean = RuTokenizer.normalize(text).split(" ").firstOrNull() in TRIGGERS
 
+    /** Начинается ли фраза с команды (после вежливых слов) — тогда это не ответ на уточнение. */
+    fun startsWithCommand(text: String): Boolean {
+        val t = RuTokenizer.normalize(cleanup(text))
+        val first = t.split(" ").firstOrNull().orEmpty()
+        return first in TRIGGERS || first in setOf("надо", "нужно", "создай", "покажи", "найди", "что", "какие", "давай", "список")
+    }
+
     // =====================================================================
     // Фразы целиком: разговор, справка, время, калькулятор, мозговой штурм
     // =====================================================================
@@ -162,6 +169,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         }
         if (Regex("""^(спасибо|благодарю|спасиб|пасиб|ты молодец|умница|отлично|супер|класс)""").containsMatchIn(n)) {
             return AssistantPlan(listOf("Всегда пожалуйста!", "Рада помочь!", "Обращайтесь!")[pick(now, 3)], emptyList())
+        }
+        if (Regex("""^(хватит|стоп|достаточно|отбой|не надо|ничего)$""").containsMatchIn(n)) {
+            return AssistantPlan("Хорошо.", emptyList())
         }
         if (Regex("""^(пока|до свидания|спокойной ночи|до завтра)$""").containsMatchIn(n)) {
             return AssistantPlan(if (n.contains("ночи")) "Спокойной ночи!" else "До связи!", emptyList())
@@ -229,22 +239,30 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val n = RuTokenizer.normalize(original).trimEnd('?', '!', '.')
 
         parseExpenseQuery(n, today)?.let { return plan(it) }
+        if (Regex("""(какие|покажи|мои|список|перечисли|что за)\s.*напоминани|^напоминания$""").containsMatchIn(n) &&
+            !Regex("""^(добавь|создай|поставь|удали|отмени)""").containsMatchIn(n)
+        ) return plan(AssistantAction.QueryReminders)
         parseAgenda(original, n, today)?.let { return plan(it) }
         parseReminder(original, n, now, zone, prev)?.let { return it }
-        parseList(original, n)?.let { return AssistantPlan("", it) }
+        parseTaskCreateExplicit(original, n, today)?.let { return plan(it) }
+        parseList(original, n, today)?.let { return AssistantPlan("", it) }
         parseTaskQuery(n)?.let { return plan(it) }
         parseCompleteTask(original, n)?.let { return plan(it) }
         parseUndoAndEdit(n)?.let { return plan(it) }
         parseDelete(original, n)?.let { return plan(it) }
         parseMemoryQuestion(original, n)?.let { return plan(it) }
         parseMemory(original, n)?.let { return plan(it) }
-        parseTaskCreateExplicit(original, n, today)?.let { return plan(it) }
         parseAppend(original, n, now, zone, today, prev)?.let { return it }
         parseIdea(original, n)?.let { return plan(it) }
+        if (Regex("""^(?:мне\s+)?(?:надо|нужно|необходимо|не забыть|не забудь|я должна|я должен)\s""").containsMatchIn(n)) {
+            parseTaskImplicit(original, n, now, zone, today)?.let { return plan(it) }
+        }
         parseExpense(original, n, today, prev)?.let { return it }
         parseNote(original, n)?.let { return plan(it) }
         parseTaskImplicit(original, n, now, zone, today)?.let { return plan(it) }
+        parseScheduledStatement(original, n, now, zone, today)?.let { return plan(it) }
         parseSearch(original, n)?.let { return plan(it) }
+        parseBareInfinitiveTask(original, n, today)?.let { return plan(it) }
         return null
     }
 
@@ -252,10 +270,37 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     private fun sub(original: String, g: MatchGroup): String = original.substring(g.range.first, minOf(g.range.last + 1, original.length)).trim()
 
+    /**
+     * Уточнение к предыдущему вопросу о расходах: «а на транспорт?», «а вчера?», «а в августе?».
+     */
+    fun followUpExpenseQuery(text: String, previous: AssistantAction.QueryExpenses, now: Instant, zone: ZoneId): AssistantAction.QueryExpenses? {
+        val n = RuTokenizer.normalize(cleanupKeepA(text)).trimEnd('?', '.', '!')
+        val m = Regex("""^(?:а|и)\s+(.+)$""").find(n) ?: return null
+        val tail = m.groupValues[1].trim()
+        if (tail.split(" ").size > 5) return null
+        val today = now.atZone(zone).toLocalDate()
+        monthRange(tail, today)?.let { (from, to) -> return previous.copy(preset = null, from = from, to = to) }
+        val periodHit = Regex("""(сегодня|вчера|недел|месяц|год|вс[её] время)""").containsMatchIn(tail)
+        if (periodHit) return previous.copy(preset = period(tail), from = null, to = null)
+        val catWord = tail.removePrefix("на ").removePrefix("в ").removePrefix("за ").trim()
+        if (catWord.isEmpty() || !Regex("""^(на|в|за)\s""").containsMatchIn(tail)) return null
+        val category = ExpenseCategories.categorize(catWord).takeIf { it != ExpenseCategories.OTHER } ?: catWord
+        return previous.copy(category = category)
+    }
+
+    private fun cleanupKeepA(s: String): String = s.trim().trimEnd('.', '!')
+
     // --- Расходы: вопросы -------------------------------------------------
 
     private fun parseExpenseQuery(n: String, today: LocalDate): AssistantAction? {
+        // «траты на кофе 300 рублей» — это запись расхода, а не вопрос
+        val amountTokens = RuTokenizer.tokenize(n)
+        val hasAmount = amountTokens.withIndex().any { (i, t) ->
+            t.isNumber && amountTokens.getOrNull(i + 1)?.norm?.let { it.startsWith("дн") || it.startsWith("недел") || it.startsWith("месяц") } != true
+        }
+        if (hasAmount && !n.contains("сколько") && !Regex("""(самы|на что|куда|по категориям)""").containsMatchIn(n)) return null
         val mode = when {
+            Regex("""в среднем|средн\w+ (расход|трат)""").containsMatchIn(n) -> ReportMode.AVERAGE
             Regex("""(самы[ей]|самый)\s+(большие|крупные|дорогие|большой|крупный|дорогой)\s+(расход|трат|покупк)""").containsMatchIn(n) -> ReportMode.TOP
             Regex("""(на что|куда)\s+(я\s+)?(больше всего\s+)?(трач|потрат|уход|ушл|спуска)""").containsMatchIn(n) -> ReportMode.BY_CATEGORY
             Regex("""по категориям""").containsMatchIn(n) && Regex("""(расход|трат)""").containsMatchIn(n) -> ReportMode.BY_CATEGORY
@@ -265,7 +310,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             Regex("""(итог|сумма|бюджет)\s+(расходов|трат)""").containsMatchIn(n) -> ReportMode.TOTAL
             else -> return null
         }
-        val category = Regex("""(?:потратил\w*|трат\w*|трачу|расход\w*|ушл\w*|спустил\w*|заплатил\w*|отдал\w*)\s+(?:на|в|за)\s+([а-я]+(?:\s[а-я]+)?)""").find(n)?.groupValues?.get(1)
+        val category = Regex("""(?:потратил\w*|трат\w*|трачу|расход\w*|ушл\w*|спустил\w*|заплатил\w*|отдал\w*)\s+(?:на|в)\s+([а-я]+(?:\s[а-я]+)?)""").find(n)?.groupValues?.get(1)
             ?.split(" ")?.firstOrNull { it !in PERIOD_WORDS }
             ?.takeIf { it !in setOf("что", "все", "всё", "это") }
             ?.let { word -> ExpenseCategories.categorize(word).takeIf { it != ExpenseCategories.OTHER } ?: word }
@@ -303,10 +348,11 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     // --- План на день -----------------------------------------------------
 
     private fun parseAgenda(original: String, n: String, today: LocalDate): AssistantAction? {
-        val hit = Regex("""^(что у меня|что мне (надо|нужно) (сделать|успеть)|какие (у меня )?планы|мои планы|мой план|план на|планы на|расписание|что запланировано|что на сегодня|что на завтра|мой день|чем я занята|чем я занят)""").containsMatchIn(n)
+        val hit = Regex("""^(что у меня|что мне (надо|нужно) (сделать|успеть)|какие (у меня )?планы|мои планы|мой план|план на|планы на|расписание|что запланировано|что на сегодня|что на завтра|мой день$|чем я занята|чем я занят)""").containsMatchIn(n)
         if (!hit) return null
         if (Regex("""(задач|расход|трат|напоминан|заметк|иде)""").containsMatchIn(n) && !n.startsWith("что у меня")) return null
         if (n.startsWith("что у меня") && Regex("""(задач|расход|трат|напоминан|заметк|иде|записано)""").containsMatchIn(n)) return null
+        if (Regex("""\bнедел""").containsMatchIn(n)) return AssistantAction.QueryTasks(TaskFilter.WEEK)
         val date = dates.parse(original, today).spec.date ?: today
         return AssistantAction.Agenda(date)
     }
@@ -327,13 +373,14 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 original.substring(0, mid.range.first) + " " + original.substring(minOf(mid.range.last + 1, original.length))
             }
         }
-        val parsed = dates.parse(body, today)
-        val rawText = parsed.remainder.trim().trim(',', '.').trim()
+        val parsedRaw = dates.parse(body, today)
+        val rawText = parsedRaw.remainder.trim().trim(',', '.').trim()
         val isReference = Regex("""^(об этом|про это|это|о ней|о нем|о нём|про неё|про нее|про него)$""").matches(RuTokenizer.normalize(rawText))
         var text = if (isReference) "" else rawText
             .replace(Regex("""^(что|о том,? что|о том|про|о|об|чтобы|,)\s+""", RegexOption.IGNORE_CASE), "")
             .trim().trim(',', '.').trim()
         if (wake && text.isEmpty()) text = "Подъём!"
+        val parsed = if (wake) parsedRaw.copy(spec = parsedRaw.spec.copy(ambiguousHour = false)) else parsedRaw
         // «добавь задачу купить хлеб и напомни об этом завтра» — «об этом» = предыдущая команда
         if (text.isEmpty()) {
             text = when (prev) {
@@ -359,6 +406,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     // --- Задачи -----------------------------------------------------------
 
     private fun parseTaskQuery(n: String): AssistantAction? {
+        if (Regex("""^(добавь|создай|запиши|внеси|поставь|заведи)\s""").containsMatchIn(n)) return null
         val hit = Regex("""(покажи|какие|мои|список|что у меня|что по|сколько( у меня)?|перечисли|выведи)\s.*(задач|дел\b|дела\b)|^(задачи|мои дела|список дел)$""").containsMatchIn(n)
         if (!hit) return null
         val filter = when {
@@ -379,6 +427,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             Regex("""^(?:задача\s+)(.+?)\s+(?:выполнена|сделана|готова|завершена)$"""),
             Regex("""^(?:я\s+)?(?:сделал\w*|выполнил\w*|закончил\w*|доделал\w*|завершил\w*)\s+(?:задачу\s+)(.+)$"""),
             Regex("""^(?:вычеркни|закрой|заверши|отметь выполнение)\s+(?:задачу\s+)?(.+)$"""),
+            Regex("""^(?:отметь|пометь)[,]?\s+что\s+(?:я\s+)?(?:уже\s+)?(.+)$"""),
             Regex("""^(.+?)\s*[—:-]\s*(?:готово|сделано|выполнено)$"""),
         )
         for (p in patterns) {
@@ -391,7 +440,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     }
 
     private fun parseTaskCreateExplicit(original: String, n: String, today: LocalDate): AssistantAction? {
-        val m = Regex("""^(?:(?:добавь|создай|запиши|поставь|заведи|внеси|сделай)\s+)?(?:мне\s+)?(?:(?:новую\s+)?задачу|в\s+задачи|в\s+список\s+задач|в\s+список\s+дел|в\s+дела|новая\s+задача|задача|в\s+туду|туду)[:,]?\s+(.+)$""").find(n) ?: return null
+        val m = Regex("""^(?:(?:добавь|создай|запиши|поставь|заведи|внеси|сделай)\s+)?(?:мне\s+)?(?:(?:новую\s+)?задачу|в\s+(?:мои\s+)?задачи|в\s+список\s+задач|в\s+список\s+дел|в\s+(?:мои\s+)?дела|новая\s+задача|задача|в\s+туду|туду)[:,]?\s+(.+)$""").find(n) ?: return null
+        // «задачи на завтра» / «задача на сегодня какая?» — это вопрос, а не создание
+        if (Regex("""^(?:задачи|задача)\s""").containsMatchIn(n) && dates.parse(sub(original, m.groups[1]!!), today).remainder.isBlank()) return null
         return taskFrom(sub(original, m.groups[1]!!), today)
     }
 
@@ -401,6 +452,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val prefix = original.substring(0, m.range.first).trim()
         if (prefix.isNotEmpty() && dates.parse(prefix, today).remainder.isNotBlank()) return null
         val body = (prefix + " " + sub(original, m.groups[1]!!)).trim()
+            .replace(Regex("""^(?:не забыть|не забудь)\s+""", RegexOption.IGNORE_CASE), "")
         val parsed = dates.parse(body, today)
         // С конкретным временем — это скорее напоминание: «не забыть в 18:00 забрать посылку».
         if (parsed.spec.time != null || parsed.spec.offset != null) {
@@ -497,10 +549,13 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     // --- Списки: «список покупок: молоко, хлеб», «список дел: …» ---------------
 
-    private fun parseList(original: String, n: String): List<AssistantAction>? {
+    private fun parseList(original: String, n: String, today: LocalDate): List<AssistantAction>? {
         val m = Regex("""^(?:составь|создай|сделай|запиши|новый)?\s*(список\s+[а-я]+)[:,]?\s+(.+)$""").find(n) ?: return null
         val title = sub(original, m.groups[1]!!).replaceFirstChar { it.uppercase() }
-        val items = sub(original, m.groups[2]!!).split(Regex("""\s*,\s*|\s+и\s+|\s*;\s*""")).map { it.trim() }.filter { it.isNotEmpty() }
+        val rest = sub(original, m.groups[2]!!)
+        // «список дел на сегодня» — это вопрос о задачах, а не новый список
+        if (dates.parse(rest, today).remainder.isBlank() || Regex("""^(на|за)\s""").containsMatchIn(RuTokenizer.normalize(rest)) && !rest.contains(':') && !rest.contains(',')) return null
+        val items = rest.split(Regex("""\s*,\s*|\s+и\s+|\s*;\s*""")).map { it.trim() }.filter { it.isNotEmpty() }
         if (items.isEmpty()) return null
         if (RuTokenizer.normalize(title).let { it == "список дел" || it == "список задач" }) {
             return items.map { AssistantAction.CreateTask(it.replaceFirstChar { c -> c.uppercase() }, "", null, null) }
@@ -511,6 +566,16 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     // --- Дополнение записей ------------------------------------------------------
 
     private fun parseAppend(original: String, n: String, now: Instant, zone: ZoneId, today: LocalDate, prev: AssistantAction?): AssistantPlan? {
+        // «добавь в список покупок хлеб и масло» — каждый продукт отдельным пунктом
+        Regex("""^(?:добавь|допиши|внеси|запиши|занеси)\s+в\s+(?:мой\s+)?(список\s+[а-я]+)\s+(.+)$""").find(n)?.let { m ->
+            val listName = sub(original, m.groups[1]!!)
+            val items = sub(original, m.groups[2]!!).split(Regex("""\s*,\s*|\s+и\s+|\s*;\s*""")).map { it.trim() }.filter { it.isNotEmpty() }
+            if (items.isNotEmpty()) {
+                return AssistantPlan("", items.map {
+                    AssistantAction.AppendNote(TargetRef(null, listName, setOf(RecordType.NOTE, RecordType.IDEA)), it, titleIfNew = listName.replaceFirstChar { c -> c.uppercase() })
+                })
+            }
+        }
         // «добавь к идее холодильника сканирование штрихкодов» — сначала запись, потом текст
         Regex("""^(?:добавь|допиши|дополни|внеси)\s+(?:к|в|ко)\s+(?:моей\s+|мою\s+|моим\s+|нашей\s+)?(идее|идею|заметке|заметку|идеям|заметкам|списку|список)\s+(?:про\s+|о\s+|с\s+|об\s+|для\s+)?(.+)$""").find(n)?.let { m ->
             val kindWord = m.groupValues[1]
@@ -585,6 +650,13 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     private fun noteFromText(text: String): AssistantAction.CreateNote {
         val clean = text.trim().replaceFirstChar { it.uppercase() }
+        // «рецепт блинов: мука, молоко, яйца» — заголовок до двоеточия, пункты после
+        val colon = clean.indexOf(':')
+        if (colon in 2..80) {
+            val head = clean.substring(0, colon).trim()
+            val items = clean.substring(colon + 1).split(Regex("""\s*,\s*|\s*;\s*""")).map { it.trim() }.filter { it.isNotEmpty() }
+            if (items.isNotEmpty()) return AssistantAction.CreateNote(NoteKind.NOTE, head, if (items.size > 1) items.joinToString("\n") { "• $it" } else items.single())
+        }
         val title = clean.split(Regex("\\s+")).take(7).joinToString(" ").trimEnd(',', '.', ':')
         return AssistantAction.CreateNote(NoteKind.NOTE, title, if (title == clean) "" else clean)
     }
@@ -614,7 +686,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val desc = descriptionFrom(tokens, amountIdx)
         val categoryHit = ExpenseCategories.categorize(desc.ifEmpty { original }) != ExpenseCategories.OTHER
         val hasPrep = tokens.any { it.norm == "на" || it.norm == "за" }
-        val accept = hasVerb || explicit || currencyNext || (categoryHit && hasPrep) || continuesExpense
+        val shortPhrase = tokens.size <= 4
+        val accept = hasVerb || explicit || currencyNext || (categoryHit && (hasPrep || shortPhrase)) || continuesExpense
         if (!accept) return null
         val currency = if (currencyNext) Money.currencyWords.getValue(tokens[amountIdx + 1].norm) else "RUB"
         val date = dates.parse(original, today).spec.date?.takeIf { !it.isAfter(today) } ?: (prev as? AssistantAction.CreateExpense)?.date ?: today
@@ -640,9 +713,43 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             val prev = tokens.getOrNull(i - 1)?.norm
             val beforePrev = tokens.getOrNull(i - 2)?.norm.orEmpty()
             val vAfterSpend = (prev == "в" || prev == "во") && SPEND_PREFIXES.any { beforePrev.startsWith(it) }
-            if (t.isNumber && next !in TIME_WORDS && (vAfterSpend || (prev != "в" && prev != "во")) && next !in MONTHS_GEN && !t.isTime) return i
+            val dayOfMonth = next == "числа" || next == "число" || next == "го" || next == "-го"
+            if (t.isNumber && next !in TIME_WORDS && !dayOfMonth && (vAfterSpend || (prev != "в" && prev != "во")) && next !in MONTHS_GEN && !t.isTime) return i
         }
         return null
+    }
+
+    // --- События с датой/временем: «у меня завтра встреча в 15:00», «в пятницу сдать отчёт» -----
+
+    private fun parseScheduledStatement(original: String, n: String, now: Instant, zone: ZoneId, today: LocalDate): AssistantAction? {
+        if (original.trim().endsWith("?")) return null
+        if (Regex("""^(что|где|когда|кто|какой|какая|какие|как|сколько|почему|зачем)\s""").containsMatchIn(n)) return null
+        val parsed = dates.parse(original, today)
+        if (parsed.spec.isEmpty) return null
+        val text = parsed.remainder
+            .replace(Regex("""^(?:у меня|у нас|мне|я|нам)\s+(?:будет\s+|есть\s+)?""", RegexOption.IGNORE_CASE), "")
+            .trim().trim(',', '.', '-', '—').trim()
+        if (text.isEmpty() || text.split(Regex("\\s+")).size > 10) return null
+        val title = text.replaceFirstChar { it.uppercase() }
+        if (parsed.spec.time != null || parsed.spec.offset != null || parsed.spec.recurrence != null) {
+            val trigger = dates.resolveTrigger(parsed.spec, now, zone) ?: return null
+            if (!trigger.isAfter(now)) return null
+            return AssistantAction.CreateReminder(title, trigger, dates.effectiveRecurrence(parsed.spec))
+        }
+        val date = parsed.spec.date ?: return null
+        if (date.isBefore(today)) return null
+        return AssistantAction.CreateTask(title, "", date, null)
+    }
+
+    /** «купить корм коту», «позвонить в банк» — короткая фраза-действие без команды становится задачей. */
+    private fun parseBareInfinitiveTask(original: String, n: String, today: LocalDate): AssistantAction? {
+        val words = n.split(" ").filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.size > 8) return null
+        val first = words.first()
+        val isInfinitive = (first.endsWith("ть") || first.endsWith("ти") || first.endsWith("чь")) && first.length >= 4 &&
+            first !in setOf("есть", "быть", "мать", "путь", "часть", "власть", "память", "новость", "радость", "сеть", "кровать", "тетрадь", "площадь")
+        if (!isInfinitive) return null
+        return taskFrom(original, today)
     }
 
     // --- Поиск и вопросы ----------------------------------------------------------------
@@ -698,7 +805,11 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         private val DATE_WORDS = setOf("сегодня", "вчера", "позавчера", "завтра")
         private val PREPOSITIONS = setOf("на", "за", "в", "во", "с", "со", "у", "к", "по", "для", "из")
         private val FILLER = setOf("я", "мне", "уже", "вот", "и", "ещё", "еще", "там", "тут", "это", "всего", "примерно", "около", "где-то")
-        private val PERIOD_WORDS = setOf("этой", "прошлой", "этот", "прошлый", "этом", "прошлом", "неделе", "неделю", "месяц", "месяце", "сегодня", "вчера", "год")
+        private val PERIOD_WORDS = setOf(
+            "этой", "прошлой", "этот", "прошлый", "этом", "прошлом", "неделе", "неделю", "месяц", "месяце", "сегодня", "вчера", "год",
+            "последнюю", "последний", "последние", "прошлую", "эту", "текущий", "текущую", "январе", "феврале", "марте", "апреле", "мае",
+            "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре",
+        )
         private val MONTH_STEMS = listOf("январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр")
         private val MONTHS_GEN = setOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
 
@@ -722,16 +833,39 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             "Холодильник — единственный, кто по-настоящему знает, сколько раз за ночь я «просто посмотреть».",
         )
 
-        /** Короткие ответы «да/нет» на запрос подтверждения. */
+        private val YES_WORDS = setOf(
+            "да", "ага", "угу", "конечно", "подтверждаю", "верно", "ок", "окей", "yes", "согласна", "согласен", "точно",
+            "разумеется", "именно", "давай", "удаляй", "отменяй", "сохраняй", "записывай", "естественно", "подтверди",
+        )
+        private val YES_FILLER = setOf("да", "конечно", "удаляй", "давай", "подтверждаю", "пожалуйста", "так", "ок", "это", "все", "всё", "его", "её", "ее", "их", "точно", "сохраняй")
+        private val NO_START = Regex("""^(нет|неа|отмена|отмени|стоп|no|не надо|не нужно|не удаляй|не сохраняй|не стоит|не надо удалять|передумал\w*|да нет|не)(\s|$|[,.!])""")
+
+        private fun words(text: String) = RuTokenizer.normalize(text).trim().trim('.', '!', ',', '?')
+            .split(Regex("""[\s,]+""")).filter { it.isNotEmpty() }
+
+        /**
+         * Короткий ответ «да» на запрос подтверждения. Только сама фраза согласия (до 4 слов) —
+         * новая команда («удали заметку про борщ») подтверждением не считается.
+         */
         fun isYes(text: String): Boolean {
-            val n = RuTokenizer.normalize(text).trim().trim('.', '!', ',')
-            return Regex("""^(да|ага|угу|конечно|подтверждаю|давай|верно|удаляй|удали|отменяй|отмени|ок|окей|yes|согласна|согласен|точно|сохрани|сохраняй|запиши|да,? удали\w*|разумеется|именно)(\s|$|[,.!])""").containsMatchIn(n) &&
-                !n.startsWith("да нет")
+            val w = words(text)
+            if (w.isEmpty() || w.size > 4) return false
+            if (w.size == 1 && w[0] in setOf("удали", "отмени", "сохрани", "запиши")) return true
+            if (w.first() !in YES_WORDS) return false
+            if (w.joinToString(" ").startsWith("да нет")) return false
+            return w.drop(1).all { it in YES_FILLER || it.startsWith("удал") || it.startsWith("сохран") }
         }
 
+        /** Короткий отказ. «Не забудь купить хлеб» — не отказ, а новая команда. */
         fun isNo(text: String): Boolean {
-            val n = RuTokenizer.normalize(text).trim().trim('.', '!', ',')
-            return Regex("""^(нет|не надо|не нужно|не удаляй|не сохраняй|отмена|стоп|no|передумал\w*|не стоит|да нет|не)(\s|$|[,.!])""").containsMatchIn(n)
+            val w = words(text)
+            if (w.isEmpty()) return false
+            val joined = w.joinToString(" ")
+            if (!NO_START.containsMatchIn(joined)) return false
+            if (w.first() == "не" && w.size > 1 && joined !in setOf("не надо", "не нужно", "не стоит", "не удаляй", "не сохраняй", "не надо удалять")) {
+                return joined.startsWith("не надо") || joined.startsWith("не нужно") || joined.startsWith("не удаляй") || joined.startsWith("не сохраняй")
+            }
+            return w.size <= 5 || w.first() == "нет"
         }
 
         /** Выход из диалогового режима. */

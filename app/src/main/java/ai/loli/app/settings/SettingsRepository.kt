@@ -132,7 +132,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     // --- ProfileSync: общий профиль для всех устройств пользователя (без API-ключей) ---
 
     override suspend fun local(): JsonObject? {
-        val s = settings.value
+        val s = current()
         return buildJsonObject {
             put("assistant_name", s.assistantName)
             put("ai_provider", s.aiProvider.id)
@@ -142,8 +142,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         }
     }
 
-    override suspend fun localUpdatedAt(): Instant? = settings.value.profileUpdatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it) }
-    override suspend fun isDirty(): Boolean = settings.value.profileDirty
+    override suspend fun localUpdatedAt(): Instant? = current().profileUpdatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it) }
+    override suspend fun isDirty(): Boolean = current().profileDirty
 
     override suspend fun applyRemote(profile: JsonObject) {
         fun s(k: String) = (profile[k] as? JsonPrimitive)?.contentOrNull

@@ -19,7 +19,7 @@ enum class PeriodPreset(val wire: String) {
 data class DateRange(val from: LocalDate, val to: LocalDate, val label: String)
 
 enum class ReportMode(val wire: String) {
-    TOTAL("total"), BY_CATEGORY("by_category"), TOP("top"), LIST("list");
+    TOTAL("total"), BY_CATEGORY("by_category"), TOP("top"), LIST("list"), AVERAGE("average");
 
     companion object {
         fun fromWire(v: String?): ReportMode = entries.firstOrNull { it.wire == v?.lowercase() } ?: TOTAL
@@ -112,6 +112,14 @@ object ExpenseAnalytics {
                 sb.append("Самые большие расходы $period$cat: ")
                 sb.append(report.top.joinToString("; ") { "${Money.format(it.amountMinor, it.currency)} — ${label(it)} (${dayFmt.format(it.occurredOn)})" })
                 sb.append(". Всего $total.")
+            }
+            ReportMode.AVERAGE -> {
+                val days = (java.time.temporal.ChronoUnit.DAYS.between(report.range.from, report.range.to) + 1).coerceAtLeast(1)
+                val firstDay = report.items.minOfOrNull { it.occurredOn }
+                val effectiveDays = if (report.range.from.year <= 2000 && firstDay != null) {
+                    (java.time.temporal.ChronoUnit.DAYS.between(firstDay, report.range.to) + 1).coerceAtLeast(1)
+                } else days
+                sb.append("В среднем ${Money.format(report.totalMinor / effectiveDays, report.currency)} в день $period$cat (всего $total за ${plural(effectiveDays.toInt(), "день", "дня", "дней")}).")
             }
             ReportMode.LIST -> {
                 sb.append("Расходы $period$cat, всего $total$others:\n")

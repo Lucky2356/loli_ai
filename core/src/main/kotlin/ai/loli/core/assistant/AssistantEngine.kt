@@ -104,6 +104,7 @@ class AssistantEngine(
                 }
                 LocalCommandParser.isNo(text) -> {
                     context.pendingConfirmation = null
+                    context.pendingChoice = null
                     return AssistantReply("Хорошо, ничего не удаляю.")
                 }
                 context.pendingChoice != null -> Unit // сначала ответ на «какую запись?», подтверждение ждёт
@@ -113,8 +114,14 @@ class AssistantEngine(
         // 2. Ожидаем выбор варианта.
         context.pendingChoice?.let { choice ->
             context.pendingChoice = null
-            if (LocalCommandParser.isNo(text)) return AssistantReply("Хорошо, отменила.")
-            val index = LocalCommandParser.ordinal(text, choice.options.size) ?: matchOptionByTitle(text, choice.options)
+            if (LocalCommandParser.isNo(text)) { context.pendingConfirmation = null; return AssistantReply("Хорошо, отменила.") }
+            // Ответ на «какую?» — короткая фраза без новой команды: «вторую», «про склад».
+            val wordCount = text.trim().split(Regex("\\s+")).size
+            val looksLikeCommand = localParser.startsWithCommand(text)
+            val index = if (looksLikeCommand) null else {
+                (if (wordCount <= 3) LocalCommandParser.ordinal(text, choice.options.size) else null)
+                    ?: (if (wordCount <= 6) matchOptionByTitle(text, choice.options) else null)
+            }
             if (index != null) {
                 val chosen = choice.options[index]
                 context.touchRecord(chosen)
@@ -130,6 +137,12 @@ class AssistantEngine(
             if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote) return AssistantReply("Хорошо, отменила.")
             localParser.fillSlot(slot, text, time.now(), time.zone())?.let { filled ->
                 return execute(filled, usedAI = false, offline = false, name = cfg.assistantName)
+            }
+        }
+        // Уточнение к вопросу о расходах: «а на транспорт?»
+        context.lastExpenseQuery?.let { prevQuery ->
+            localParser.followUpExpenseQuery(text, prevQuery, time.now(), time.zone())?.let { q ->
+                return execute(AssistantPlan("", listOf(q)), usedAI = false, offline = false, name = cfg.assistantName)
             }
         }
         // 4. Завершение диалогового режима.

@@ -17,6 +17,8 @@ data class WhenSpec(
     val time: LocalTime? = null,
     val offset: Duration? = null,
     val recurrence: Recurrence? = null,
+    /** Час назван без «утра/вечера» («в 5») — может означать и 05:00, и 17:00. */
+    val ambiguousHour: Boolean = false,
 ) {
     val isEmpty: Boolean get() = date == null && time == null && offset == null && recurrence == null
 }
@@ -53,6 +55,10 @@ class RuDateTimeParser {
         if (spec.offset != null) return now.plus(spec.offset)
         val nowZ = now.atZone(zone)
         spec.recurrence?.let { rule ->
+            if (rule.frequency == Recurrence.Frequency.HOURLY && spec.time == null) {
+                // «каждый час» — первое срабатывание через интервал, а не прямо сейчас
+                return now.plusSeconds(3600L * rule.interval)
+            }
             val withTime = if (rule.time == null && rule.frequency != Recurrence.Frequency.HOURLY) {
                 rule.copy(time = spec.time ?: defaultTime)
             } else rule
@@ -64,6 +70,14 @@ class RuDateTimeParser {
         if (spec.date == null && spec.time == null) return null
         val date = spec.date ?: nowZ.toLocalDate()
         val time = spec.time ?: defaultTime
+        if (spec.date == null && spec.ambiguousHour && time.hour in 1..11) {
+            // «в 5» без даты — ближайшее будущее из 05:00 и 17:00
+            val options = listOf(
+                ZonedDateTime.of(date, time, zone), ZonedDateTime.of(date, time.plusHours(12), zone),
+                ZonedDateTime.of(date.plusDays(1), time, zone),
+            )
+            return options.filter { it.isAfter(nowZ) }.minOf { it }.toInstant()
+        }
         var candidate = ZonedDateTime.of(date, time, zone)
         if (spec.date == null && !candidate.isAfter(nowZ)) candidate = candidate.plusDays(1)
         return candidate.toInstant()
@@ -193,6 +207,12 @@ class RuDateTimeParser {
                 return Match(k - i + 1, spec.copy(date = date))
             }
             val day = tok.intValue
+            // «до 10 числа», «к 5-му числу», «15-го» — день текущего (или следующего) месяца
+            if (day != null && day in 1..31 && (at(k + 1) == "числа" || at(k + 1) == "число" || at(k + 1) == "го" || at(k + 1) == "числу")) {
+                var date = runCatching { today.withDayOfMonth(minOf(day, today.lengthOfMonth())) }.getOrNull() ?: return@run
+                if (date.isBefore(today)) date = today.plusMonths(1).let { it.withDayOfMonth(minOf(day, it.lengthOfMonth())) }
+                return Match(k - i + 2, spec.copy(date = date))
+            }
             val month = MONTHS[at(k + 1)]
             if (day != null && day in 1..31 && month != null) {
                 var count = k - i + 2
@@ -236,16 +256,32 @@ class RuDateTimeParser {
                 val minTok = t.getOrNull(i + count)
                 if (minTok?.intValue != null && minTok.intValue!! in 0..59 && at(i + count + 1)?.startsWith("мин") == true) {
                     minute = minTok.intValue!!; count += 2
+                } else if (hasPrep && minTok?.intValue != null && minTok.intValue!! in 10..59 && !minTok.text.contains(' ') &&
+                    at(i + count + 1) !in Money.currencyWords && at(i + count + 1)?.let { it.startsWith("час") || it.startsWith("дн") || it.startsWith("недел") } != true
+                ) {
+                    // «в десять тридцать», «в 8 45»
+                    minute = minTok.intValue!!; count += 1
+                } else if (hasPrep && minTok?.isNumber == true && minTok.text.contains(' ') && minTok.intValue in 10..59) {
+                    // «в восемь пятнадцать» → токен «пятнадцать» склеивается отдельно; «двадцать пять» — одним токеном
+                    minute = minTok.intValue!!; count += 1
                 }
                 val partOfDay = at(i + count)
                 // Без сильного предлога («в», «к») число считаем временем только с «утра/вечера/часов» —
                 // иначе это может быть сумма или количество («на 10 человек»).
                 val strongPrep = hasPrep && w in STRONG_TIME_PREPOSITIONS
                 if (!strongPrep && !hadHourWord && partOfDay !in PART_OF_DAY) return@run
+                // «до 10 числа» — это дата, а не время
+                if (at(i + count) == "числа" || at(i + count) == "число" || at(i + count) == "го" || at(i + count) == "числу") return@run
                 // «в 5 рублей» — не время.
                 if (at(i + count) in Money.currencyWords) return@run
             }
             val part = at(i + count)
+            var ambiguous = false
+            if (part !in PART_OF_DAY && hour in 1..11) {
+                // «вечером в 7», «днём в 3» — время суток названо раньше
+                val earlier = spec.time
+                if (earlier != null && earlier.hour >= 13) hour += 12 else ambiguous = !tok.isTime
+            }
             if (part in PART_OF_DAY) {
                 count++
                 hour = when (part) {
@@ -257,7 +293,7 @@ class RuDateTimeParser {
                 }
             }
             if (hour !in 0..23 || minute !in 0..59) return@run
-            return Match(count, spec.copy(time = LocalTime.of(hour, minute)))
+            return Match(count, spec.copy(time = LocalTime.of(hour, minute), ambiguousHour = ambiguous && part !in PART_OF_DAY))
         }
         // «в обед», «после обеда», «перед сном», «в конце дня», «с утра»
         TWO_WORD_TIMES["$w ${at(i + 1)}"]?.let { time ->
@@ -270,7 +306,10 @@ class RuDateTimeParser {
         }
         PART_OF_DAY_ADVERBS[w]?.let { time ->
             if (spec.time == null) return Match(1, spec.copy(time = time))
-            return Match(1, spec)
+            // «в 7 вечером» — сдвигаем уже названный час во вторую половину дня
+            val current = spec.time
+            if (time.hour >= 13 && current.hour in 1..11) return Match(1, spec.copy(time = current.plusHours(12), ambiguousHour = false))
+            return Match(1, spec.copy(ambiguousHour = false))
         }
         return null
     }

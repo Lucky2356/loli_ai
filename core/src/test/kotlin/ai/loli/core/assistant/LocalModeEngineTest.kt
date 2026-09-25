@@ -93,10 +93,10 @@ class LocalModeEngineTest {
 
     @Test fun unknownPhraseOfferedAsNote() = runTest {
         val env = env()
-        val offer = env.engine.handle("завтра у Пети концерт в филармонии")
+        val offer = env.engine.handle("у Пети отличный вкус на книги")
         assertTrue(offer.text.contains("Сохранить это как заметку"), offer.text)
         env.engine.handle("да")
-        assertTrue(env.store.notes.all().single().title.startsWith("Завтра у Пети концерт"))
+        assertTrue(env.store.notes.all().single().title.startsWith("У Пети отличный вкус"))
         val offer2 = env.engine.handle("у соседей опять шумный ремонт")
         assertTrue(offer2.awaitingAnswer)
         env.engine.handle("нет")
@@ -119,6 +119,26 @@ class LocalModeEngineTest {
         assertEquals(1, env.store.expenses.all().size)
         assertEquals("Позвонить в банк", env.store.tasks.all().single().title)
         assertEquals("Оплатить интернет", env.store.reminders.all().single().text)
+    }
+
+    @Test fun datedStatementBecomesTaskOrReminder() = runTest {
+        val env = env()
+        env.engine.handle("завтра у Пети концерт в филармонии")
+        assertEquals(LocalDate.of(2026, 9, 26), env.store.tasks.all().single().dueDate)
+        env.engine.handle("у меня завтра встреча с клиентом в 15:00")
+        assertEquals("Встреча с клиентом", env.store.reminders.all().single().text)
+    }
+
+    @Test fun expenseFollowUpQuestions() = runTest {
+        val env = env()
+        env.store.expenses.create(50_000, "RUB", "Кафе и рестораны", "", LocalDate.of(2026, 9, 20))
+        env.store.expenses.create(30_000, "RUB", "Транспорт", "", LocalDate.of(2026, 9, 21))
+        env.store.expenses.create(70_000, "RUB", "Транспорт", "", LocalDate.of(2026, 8, 10))
+        env.engine.handle("сколько я потратила на кафе в этом месяце")
+        val transport = env.engine.handle("а на транспорт?")
+        assertTrue(transport.text.contains("300"), transport.text)
+        val august = env.engine.handle("а в августе?")
+        assertTrue(august.text.contains("700"), august.text)
     }
 
     @Test fun helpAndIdentityUseAssistantName() = runTest {

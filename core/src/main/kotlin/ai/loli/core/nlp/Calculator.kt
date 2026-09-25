@@ -12,14 +12,17 @@ object Calculator {
         Regex("""\bразделить на\b|\bделить на\b|\bподелить на\b|\bразделенное на\b""") to "/",
         Regex("""\bплюс\b|\bприбавить\b""") to "+",
         Regex("""\bминус\b|\bотнять\b|\bвычесть\b""") to "-",
-        Regex("""\bна\b""") to "*",
     ).map { (r, op) -> Regex(Rx.unicode(r.pattern)) to op }
 
     /** Вычисляет выражение из фразы; null, если это не арифметика. */
     fun evaluate(text: String): Double? {
         var t = RuTokenizer.normalize(text)
             .replace(Regex("""^(сколько будет|посчитай|вычисли|подсчитай|реши|сколько)\s*"""), "")
-            .replace("×", "*").replace("÷", "/").replace("х", "*").trim().trimEnd('?', '.', '=')
+            .replace("×", "*").replace("÷", "/").trim().trimEnd('?', '.', '=')
+        val explicitCalc = Regex("""^(сколько будет|посчитай|вычисли|подсчитай|реши)""").containsMatchIn(RuTokenizer.normalize(text).trim())
+        // «x»/«х» и «на» считаем умножением только между числами: «3 х 4», «250 на 4» (последнее — только после «сколько будет»)
+        t = t.replace(Regex("""(?<=\d)\s*[хx]\s*(?=\d)"""), " * ")
+        if (explicitCalc) t = t.replace(Regex("""(?<=\d)\s+на\s+(?=\d)"""), " * ")
         // Проценты: «15 процентов от 2000» / «15% от 2000»
         Regex(Rx.unicode("""^(\d+(?:[.,]\d+)?)\s*(?:%|процент\w*)\s+от\s+(\d+(?:[.,]\d+)?)$""")).find(t)?.let { m ->
             val p = m.groupValues[1].replace(',', '.').toDouble()

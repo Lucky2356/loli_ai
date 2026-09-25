@@ -166,6 +166,7 @@ class ActionExecutor(
             }
 
             is AssistantAction.QueryExpenses -> {
+                ctx.lastExpenseQuery = action
                 val range = if (action.from != null) ExpenseAnalytics.customRange(action.from, action.to ?: today)
                 else ExpenseAnalytics.range(action.preset ?: PeriodPreset.THIS_MONTH, today)
                 val report = ExpenseAnalytics.report(expenses.between(range.from, range.to), range, action.category)
