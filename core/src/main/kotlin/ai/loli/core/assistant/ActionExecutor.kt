@@ -58,7 +58,11 @@ class ActionExecutor(
                 // Остальные действия подождут ответа пользователя — выполнять их вслепую нельзя.
                 val skipped = actions.size - index - 1
                 if (skipped > 0) outcomes += Outcome("Остальную часть команды выполню после уточнения.", Outcome.Kind.QUESTION)
-                return ExecutionResult(outcomes, confirmOps.takeIf { it.isNotEmpty() }?.let { PendingConfirmation(confirmQuestions.joinToString(" "), it) }, step.choice)
+                return ExecutionResult(
+                    outcomes,
+                    confirmOps.takeIf { it.isNotEmpty() }?.let { PendingConfirmation(confirmQuestions.joinToString(" "), it) },
+                    step.choice.copy(remaining = actions.drop(index + 1)),
+                )
             }
         }
         val confirmation = if (confirmOps.isEmpty()) null else PendingConfirmation(

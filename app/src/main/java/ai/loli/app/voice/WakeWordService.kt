@@ -71,11 +71,9 @@ class WakeWordService : LifecycleService() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val name = container.settings.settings.value.assistantName
-        matcher = WakeWordMatcher(name)
         try {
             ServiceCompat.startForeground(
-                this, Notifications.LISTENING_ID, notification(getString(R.string.wake_listening, name)),
+                this, Notifications.LISTENING_ID, notification(getString(R.string.wake_command_starting)),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0,
             )
         } catch (e: Exception) {
@@ -96,6 +94,9 @@ class WakeWordService : LifecycleService() {
     }
 
     private suspend fun startRecognition() {
+        val name = container.settings.current().assistantName
+        matcher = WakeWordMatcher(name)
+        updateNotification(getString(R.string.wake_listening, name))
         val model = withContext(Dispatchers.Default) { container.voskEngine.model() }
         if (model == null) {
             Logger.w(TAG, "Модель Vosk не загружена")
@@ -103,7 +104,13 @@ class WakeWordService : LifecycleService() {
             stopSelf()
             return
         }
-        recognizer = Recognizer(model, VoskSpeechProvider.SAMPLE_RATE)
+        recognizer = try {
+            Recognizer(model, VoskSpeechProvider.SAMPLE_RATE)
+        } catch (e: Exception) {
+            Logger.e(TAG, "Не удалось создать распознаватель", e)
+            stopSelf()
+            return
+        }
         startVosk()
     }
 

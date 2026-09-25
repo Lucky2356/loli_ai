@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -69,7 +70,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleIntent(intent)
+        // После пересоздания (поворот экрана) исходный intent не должен снова включать микрофон.
+        if (savedInstanceState == null) handleIntent(intent)
         setContent {
             LoliTheme {
                 Surface(Modifier.fillMaxSize()) { LoliRoot(container, listenRequest) }
@@ -85,8 +87,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Фоновое прослушивание можно (пере)запустить только когда приложение на экране (Android 14+).
-        val s = container.settings.settings.value
-        if (s.wakeWordEnabled && container.voskModels.isReady() && !WakeWordService.running) WakeWordService.start(this)
+        lifecycleScope.launch {
+            val s = container.settings.current() // не значение по умолчанию до загрузки DataStore
+            if (s.wakeWordEnabled && container.voskModels.isReady() && !WakeWordService.running) WakeWordService.start(this@MainActivity)
+        }
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -153,6 +157,7 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>) {
     val request by listenRequest.collectAsStateWithLifecycle()
     LaunchedEffect(request) {
         if (request > 0) {
+            listenRequest.value = 0 // запрос обработан — не повторять при возврате в композицию
             nav.navigate("home") { launchSingleTop = true }
             listen()
         }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -57,14 +58,24 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
     override fun isAvailable(): Boolean = models.isReady()
 
     override fun listen(options: ListenOptions): Flow<SpeechEvent> = callbackFlow {
-        val model = engine.model()
+        // Загрузка модели занимает до нескольких секунд — не в UI-потоке.
+        val model = withContext(Dispatchers.Default) { engine.model() }
         if (model == null) {
             trySend(SpeechEvent.Error(SpeechError.UNAVAILABLE, "Офлайн-модель речи не загружена (Настройки → Голос)."))
             close()
             return@callbackFlow
         }
-        val recognizer = Recognizer(model, SAMPLE_RATE)
-        val service = SpeechService(recognizer, SAMPLE_RATE)
+        var recognizer: Recognizer? = null
+        val service = try {
+            recognizer = Recognizer(model, SAMPLE_RATE)
+            SpeechService(recognizer, SAMPLE_RATE)
+        } catch (e: Exception) {
+            // Микрофон занят другим приложением или недоступен.
+            runCatching { recognizer?.close() }
+            trySend(SpeechEvent.Error(SpeechError.BUSY, "Микрофон занят. Попробуйте ещё раз."))
+            close()
+            return@callbackFlow
+        }
         var done = false
         service.startListening(object : RecognitionListener {
             override fun onPartialResult(hypothesis: String?) {
@@ -86,7 +97,7 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
         awaitClose {
             runCatching { service.stop() }
             runCatching { service.shutdown() }
-            runCatching { recognizer.close() }
+            runCatching { recognizer?.close() }
         }
     }.flowOn(Dispatchers.Main)
 

@@ -213,4 +213,37 @@ class AssistantEngineTest {
         val history = env.store.conversations.recent(10)
         assertEquals(2, history.size)
     }
+
+    @Test fun remainingActionsRunAfterClarification() = runTest {
+        val env = TestEnv()
+        env.store.notes.create(NoteKind.IDEA, "Приложение для склада", "")
+        env.store.notes.create(NoteKind.IDEA, "Приложение для кафе", "")
+        env.ai = ScriptedAI {
+            """{"actions":[{"type":"append_note","query":"приложение","kind":"idea","content":"тёмная тема"},
+               {"type":"create_expense","amount":500,"currency":"RUB","category":"Кафе и рестораны","description":"обед","date":"2026-09-25"}]}"""
+        }
+        val ask = env.engine.handle("добавь к идее приложения тёмную тему и запиши расход 500 на обед")
+        assertTrue(ask.awaitingAnswer)
+        assertTrue(env.store.expenses.all().isEmpty(), "до уточнения ничего не выполняется")
+        env.ai = null
+        env.engine.handle("первое")
+        assertEquals(50_000, env.store.expenses.all().single().amountMinor, "остаток команды выполнен после уточнения")
+    }
+
+    @Test fun confirmationSurvivesClarification() = runTest {
+        val env = TestEnv()
+        env.store.notes.create(NoteKind.IDEA, "Приложение для склада", "")
+        env.store.notes.create(NoteKind.IDEA, "Приложение для кафе", "")
+        env.store.tasks.create("Старая задача")
+        env.ai = ScriptedAI {
+            """{"actions":[{"type":"delete_task","query":"старая задача"},{"type":"append_note","query":"приложение","kind":"idea","content":"тёмная тема"}]}"""
+        }
+        val first = env.engine.handle("удали старую задачу и добавь к идее приложения тёмную тему")
+        assertTrue(first.awaitingAnswer)
+        env.ai = null
+        val afterChoice = env.engine.handle("второе")
+        assertTrue(afterChoice.awaitingConfirmation, afterChoice.text)
+        env.engine.handle("да")
+        assertTrue(env.store.tasks.all().isEmpty())
+    }
 }

@@ -3,6 +3,7 @@
     <string name="app_name">Лоли</string>
     <string name="wake_listening">Жду обращения «%1$s»</string>
     <string name="wake_model_missing">Офлайн-модель речи не загружена — откройте Настройки → Голос</string>
+    <string name="wake_command_starting">Включаю прослушивание…</string>
     <string name="wake_command">Слушаю команду…</string>
     <string name="wake_thinking">Выполняю…</string>
     <string name="wake_stop">Выключить</string>

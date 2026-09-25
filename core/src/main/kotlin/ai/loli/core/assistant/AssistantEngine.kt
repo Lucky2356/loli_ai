@@ -106,6 +106,7 @@ class AssistantEngine(
                     context.pendingConfirmation = null
                     return AssistantReply("Хорошо, ничего не удаляю.")
                 }
+                context.pendingChoice != null -> Unit // сначала ответ на «какую запись?», подтверждение ждёт
                 else -> context.pendingConfirmation = null // новая команда отменяет ожидание
             }
         }
@@ -117,8 +118,11 @@ class AssistantEngine(
             if (index != null) {
                 val chosen = choice.options[index]
                 context.touchRecord(chosen)
-                return execute(AssistantPlan("", listOf(withTarget(choice.action, chosen.id))), usedAI = false, offline = false)
+                val kept = context.pendingConfirmation
+                val actions = listOf(withTarget(choice.action, chosen.id)) + choice.remaining
+                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept)
             }
+            context.pendingConfirmation = null
         }
         // 3. Завершение диалогового режима.
         if (context.dialogMode && LocalCommandParser.isDialogEnd(text)) {
@@ -204,8 +208,19 @@ class AssistantEngine(
         RecordType.EXPENSE -> null
     }
 
-    private suspend fun execute(plan: AssistantPlan, usedAI: Boolean, offline: Boolean): AssistantReply {
-        val result = executor.execute(plan.actions, context)
+    private suspend fun execute(
+        plan: AssistantPlan,
+        usedAI: Boolean,
+        offline: Boolean,
+        carriedConfirmation: PendingConfirmation? = null,
+    ): AssistantReply {
+        val executed = executor.execute(plan.actions, context)
+        // Подтверждение, заданное до уточнения, не теряется — объединяем с новыми.
+        val result = if (carriedConfirmation == null) executed else executed.copy(
+            pendingConfirmation = executed.pendingConfirmation?.let {
+                PendingConfirmation(carriedConfirmation.question + " " + it.question, carriedConfirmation.operations + it.operations)
+            } ?: carriedConfirmation,
+        )
         context.pendingConfirmation = result.pendingConfirmation
         context.pendingChoice = result.pendingChoice
         val changed = result.outcomes.any { it.kind == Outcome.Kind.CHANGED }

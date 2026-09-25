@@ -34,6 +34,7 @@ import ai.loli.core.util.SystemTimeSource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -127,12 +128,17 @@ class AppContainer(private val context: Context) {
     val tts = AndroidTtsProvider(context) { settings.settings.value.speechRate }
     val voice = VoiceController(engine, settings.settings, systemStt, offlineStt, tts, appScope)
 
+    /** Завершается, когда сессия и настройки загружены (важно для холодного старта из WorkManager/Receiver). */
+    private val ready = CompletableDeferred<Unit>()
+    suspend fun awaitReady() = ready.await()
+
     init {
         // Любое локальное изменение → синхронизация вскоре (если пользователь вошёл).
         store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
         appScope.launch {
             auth.restore()
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()
+            ready.complete(Unit)
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

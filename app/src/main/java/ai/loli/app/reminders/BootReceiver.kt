@@ -21,6 +21,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         app.container.appScope.launch {
             try {
+                app.container.awaitReady()
                 app.container.rescheduleReminders()
                 if (intent.action == Intent.ACTION_BOOT_COMPLETED && app.container.settings.current().wakeWordEnabled) {
                     val open = PendingIntent.getActivity(

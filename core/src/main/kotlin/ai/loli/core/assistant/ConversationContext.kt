@@ -16,7 +16,13 @@ data class DestructiveOp(val type: RecordType, val id: String, val title: String
 data class PendingConfirmation(val question: String, val operations: List<DestructiveOp>)
 
 /** Уточнение «какую запись вы имели в виду» с вариантами. */
-data class PendingChoice(val question: String, val options: List<RecordRef>, val action: AssistantAction)
+data class PendingChoice(
+    val question: String,
+    val options: List<RecordRef>,
+    val action: AssistantAction,
+    /** Действия из той же фразы, которые выполнятся после уточнения. */
+    val remaining: List<AssistantAction> = emptyList(),
+)
 
 /**
  * Краткосрочный контекст диалога. Ограничен по числу реплик, объёму и времени бездействия,

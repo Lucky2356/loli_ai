@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val c = (applicationContext as LoliApp).container
+        c.awaitReady()
         if (c.auth.state.value !is AuthState.SignedIn) return Result.success()
         val report = c.syncEngine.sync()
         if (report.pulled > 0) c.rescheduleReminders()
