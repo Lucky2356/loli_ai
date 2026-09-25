@@ -127,6 +127,7 @@ class AppContainer(private val context: Context) {
     private val resolver by lazy { TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories) }
     /** Команды телефону (таймер, будильник, приложения, звонки…); запасной таймер — напоминание Лоли. */
     val launcher = ai.loli.app.device.BackgroundLauncher(context)
+    val systemAccess = ai.loli.app.device.SystemAccess(context)
     val updates = ai.loli.app.update.UpdateManager(context)
     val appLock = ai.loli.app.security.AppLock(context)
     val appAccess = ai.loli.app.device.AppAccess(context) { settings.settings.value }
@@ -140,7 +141,15 @@ class AppContainer(private val context: Context) {
     fun isLocked(): Boolean = keyguard?.isKeyguardLocked == true
 
     /** Правила для заблокированного экрана; если пользователь запретил Лоли на блокировке — всё закрыто. */
+    /** Включён «Вход по отпечатку», а приложение ещё не разблокировано — чужой с открытым телефоном не должен видеть записи. */
+    fun appLocked(): Boolean {
+        val s = settings.settings.value
+        return s.appLock && !appLock.unlocked.value && appLock.deviceSecure()
+    }
+
     fun lockPolicy(): ai.loli.core.assistant.LockPolicy? {
+        // Телефон разблокирован, но Лоли под паролем: записывать и управлять телефоном можно, смотреть и менять записи — нет.
+        if (!isLocked() && appLocked()) return ai.loli.core.assistant.LockPolicy(create = true, basicDevice = true, calls = true, view = false, edit = false, apps = true)
         if (!isLocked()) return null
         val s = settings.settings.value
         return if (s.lockScreenEnabled) s.lockPolicy
@@ -154,7 +163,7 @@ class AppContainer(private val context: Context) {
     val engine: AssistantEngine by lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
         conversations = store.conversations, search = search, executor = executor, time = time,
-        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked()) } },
+        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked()) } },
         aiProvider = { aiProvider() },
     ) }
 

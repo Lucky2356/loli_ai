@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.loli.app.AppContainer
 import ai.loli.app.device.InstalledApp
 import ai.loli.app.device.LoliAccessibilityService
+import androidx.compose.material.icons.rounded.PowerSettingsNew
 import ai.loli.app.settings.KeyTrigger
 import ai.loli.app.ui.components.Group
 import ai.loli.app.ui.components.GroupDivider
@@ -66,6 +67,27 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { c.appAccess.installed() } }
     val p = s.lockPolicy
+    var askA11y by remember { mutableStateOf(false) }
+    var guide by remember { mutableStateOf(false) }
+    if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
+    if (askA11y) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askA11y = false },
+            shape = RoundedCornerShape(24.dp),
+            icon = { androidx.compose.material3.Icon(Icons.Rounded.VolumeUp, contentDescription = null) },
+            title = { Text("Разрешить кнопки громкости?") },
+            text = {
+                Text(
+                    "Чтобы жест работал на всём телефоне, включите «${s.assistantName}» в спецвозможностях: откроется нужный экран, " +
+                        "там переключатель и «Разрешить». ${s.assistantName} видит только нажатия кнопок громкости — не экран и не то, что вы печатаете.\n\n" +
+                        "Если телефон пишет «Ограниченная настройка»: Настройки → Приложения → ${s.assistantName} → ⋮ → «Разрешить ограниченные настройки», затем повторите. " +
+                        "Или один раз настройте через Shizuku (Настройки ${s.assistantName} → Голос → Ассистент по умолчанию) — тогда всё включится само.",
+                )
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { askA11y = false; openAccessibility(context) }) { Text("Разрешить") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { askA11y = false }) { Text("Позже") } },
+        )
+    }
 
     LoliScreen(title = "Доступ", subtitle = "Что Лоли разрешено делать", onBack = onBack) {
         item(key = "lock") {
@@ -106,25 +128,39 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
 
         item(key = "keys") {
             SectionLabel("Вызов кнопками")
+            val assistant = remember(resumeTick) { isDefaultAssistant(context) == true }
             Group {
                 RowItem(
-                    title = if (a11y) "Спецвозможности включены" else "Включите «Лоли» в спецвозможностях",
-                    subtitle = if (a11y) "Кнопки громкости и системные команды голосом работают"
-                    else "Нужно для вызова кнопками громкости и команд «назад», «домой», «скриншот», «заблокируй экран». Лоли не читает экран.",
+                    title = "Долгое нажатие питания",
+                    subtitle = if (assistant) "Вызывает ${s.assistantName}" else "Сейчас вызывает другой ассистент — нажмите, чтобы выбрать ${s.assistantName}",
+                    icon = Icons.Rounded.PowerSettingsNew, chevron = !assistant,
+                    onClick = if (assistant) null else ({ guide = true }),
+                )
+                GroupDivider(inset = 66.dp)
+                RowItem(
+                    title = if (a11y) "Кнопки громкости: разрешено" else "Кнопки громкости: нет разрешения",
+                    subtitle = when {
+                        a11y && s.keyTrigger == KeyTrigger.NONE -> "Выберите жест ниже. Работает и на заблокированном экране"
+                        a11y -> "Работает: ${s.keyTrigger.title.lowercase()}"
+                        s.keyTrigger != KeyTrigger.NONE -> "Жест выбран, но выключен в настройках телефона (Спецвозможности → ${s.assistantName}). Нажмите, чтобы включить"
+                        else -> "Нужно включить ${s.assistantName} в спецвозможностях телефона. Экран Лоли не читает"
+                    },
                     icon = Icons.Rounded.VolumeUp, chevron = !a11y,
-                    onClick = if (a11y) null else ({ runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } }),
+                    onClick = if (a11y) null else ({ openAccessibility(context) }),
                 )
                 KeyTrigger.entries.forEach { t ->
                     GroupDivider(inset = 52.dp)
-                    RadioRow(t.title, t.hint, s.keyTrigger == t) {
+                    val hint = if (t != KeyTrigger.NONE && s.keyTrigger == t && !a11y) "Ждёт разрешения в настройках телефона" else t.hint
+                    RadioRow(t.title, hint, s.keyTrigger == t) {
                         scope.launch { c.settings.setKeyTrigger(t) }
-                        if (t != KeyTrigger.NONE && !a11y) runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        if (t != KeyTrigger.NONE && !a11y) askA11y = true
                     }
                 }
             }
             Hint(
-                "Кнопку питания Android приложениям перехватывать не даёт. Чтобы вызывать Лоли долгим нажатием питания — выберите её ассистентом по умолчанию " +
-                    "(Настройки Лоли → Голос). На Samsung: Настройки → Дополнительные функции → Боковая клавиша → Двойное нажатие → Лоли.",
+                "Настройки телефона и ${s.assistantName} связаны: если выключить ${s.assistantName} в спецвозможностях, жест перестанет работать и здесь это будет видно. " +
+                    "Во время звонка кнопки громкости работают как обычно. Если на телефоне тот же жест уже занят (например, двойное нажатие «−» для камеры) — выберите другой.\n\n" +
+                    "Ещё способ: в настройках телефона Спецвозможности → «Кнопка/жест спецвозможностей» или «Быстрое включение» (удержание обеих кнопок громкости) → ${s.assistantName}.",
             )
         }
 
@@ -177,6 +213,22 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
             }
         }
     }
+}
+
+/** Экран службы Лоли в спецвозможностях (Android 11+), иначе общий список спецвозможностей. */
+fun openAccessibility(context: android.content.Context) {
+    // Разрешение WRITE_SECURE_SETTINGS уже выдано (Shizuku/ADB) — включаем сами, без экрана настроек.
+    val system = ai.loli.app.device.SystemAccess(context)
+    if (system.canWriteSecureSettings() && system.enableAccessibility()) {
+        android.widget.Toast.makeText(context, "Кнопки громкости включены", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+    val component = android.content.ComponentName(context, LoliAccessibilityService::class.java).flattenToString()
+    val direct = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+        .putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (runCatching { context.startActivity(direct) }.isSuccess) return
+    runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 @Composable

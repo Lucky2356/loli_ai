@@ -26,3 +26,7 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
 -dontwarn java.lang.management.**
+
+# Shizuku: команды оболочки через newProcess (вызывается рефлексией)
+-keepclassmembers class rikka.shizuku.Shizuku { *** newProcess(...); }
+-keep class rikka.shizuku.ShizukuRemoteProcess { *; }

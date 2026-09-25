@@ -134,7 +134,7 @@ class ActionExecutor(
     private suspend fun runAction(action: AssistantAction, ctx: ConversationContext): Step {
         lockPolicy()?.let { policy ->
             if (!policy.allows(action)) {
-                return error("Разблокируйте телефон — ${lockedReason(action)} на заблокированном экране не разрешено (это меняется в настройках Лоли).")
+                return error("Разблокируйте — ${lockedReason(action)} без разблокировки не разрешено (это меняется в настройках Лоли).")
             }
         }
         val now = time.now()

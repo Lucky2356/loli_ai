@@ -98,7 +98,15 @@ class AssistActivity : ComponentActivity() {
                             finish()
                         }
                     },
-                    onUnlock = { unlockThen { } },
+                    onUnlock = {
+                        unlockThen {
+                            // Телефон разблокирован, но сама Лоли под отпечатком — вход в приложении.
+                            if (container.appLocked()) {
+                                startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                                finish()
+                            }
+                        }
+                    },
                 )
             }
         }
@@ -216,7 +224,7 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
                             r.text, style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp),
                         )
-                        if (locked && r.text.contains("Разблокируйте")) {
+                        if ((locked || c.appLocked()) && r.text.contains("Разблокируйте")) {
                             PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
                         }
                         if (r.awaitingConfirmation) {
@@ -233,7 +241,7 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
                         shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(56.dp),
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Icon(if (active) Icons.Rounded.Stop else Icons.Rounded.Mic, contentDescription = if (active) "Остановить" else "Говорить")
                         }
                     }

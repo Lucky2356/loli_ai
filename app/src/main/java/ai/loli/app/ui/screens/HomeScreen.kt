@@ -120,8 +120,10 @@ fun HomeScreen(
         else -> ""
     }
     val listState = rememberLazyListState()
+    // Пока есть шаги настройки, сфера поменьше — чтобы список с шагами было удобно листать.
+    var setupShown by remember { mutableStateOf(false) }
     // Новая реплика — прокрутка к ней (индекс 0 — карточки «Сегодня», дальше сообщения).
-    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size) }
+    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size + 2) }
 
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -138,15 +140,13 @@ fun HomeScreen(
             Pill(label, icon, onClick = { openSettings("settings/ai") })
             IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        UpdateCard(vm.c)
-        SetupCard(vm.c, settings.assistantName)
         // Сфера и статус всегда на виду — даже когда история разговора длинная.
         Column(Modifier.fillMaxWidth().padding(top = 4.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 Modifier.clip(CircleShape).clickable(
                     interactionSource = remember { MutableInteractionSource() }, indication = null,
                 ) { if (active) vm.stop() else onMic() },
-            ) { AssistantOrb(mode, level, size = if (history.isEmpty() && !active) 220.dp else 120.dp) }
+            ) { AssistantOrb(mode, level, size = if (history.isEmpty() && !active && !setupShown) 220.dp else 120.dp) }
             Text(
                 status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
                 color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -159,6 +159,9 @@ fun HomeScreen(
             }
         }
         LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 12.dp)) {
+            // Обновление и шаги настройки листаются вместе со всем экраном.
+            item(key = "update") { UpdateCard(vm.c) }
+            item(key = "setup") { SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it }) }
             item(key = "today") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Stat(Modifier.weight(1f), "Задачи", "${summary.activeTasks}", if (summary.overdueTasks > 0) "просрочено ${summary.overdueTasks}" else "активных") { openPlans(0) }
@@ -263,7 +266,7 @@ private fun Message(text: String, mine: Boolean) {
 
 @Composable
 private fun InputBar(value: String, onChange: (String) -> Unit, name: String, active: Boolean, onSend: () -> Unit, onMic: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
         Row(
             Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(groupColor()).padding(start = 18.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -294,8 +297,8 @@ private fun RoundButton(icon: ImageVector, description: String, onClick: () -> U
         interactionSource = interaction, modifier = Modifier.size(52.dp).pressScale(interaction),
     ) {
         // Микрофон ↔ стоп — плавная смена значка.
-        Crossfade(targetState = icon, label = "mic") { i ->
-            Box(contentAlignment = Alignment.Center) { Icon(i, contentDescription = description, modifier = Modifier.size(24.dp)) }
+        Crossfade(targetState = icon, label = "mic", modifier = Modifier.fillMaxSize()) { i ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(i, contentDescription = description, modifier = Modifier.size(24.dp)) }
         }
     }
 }

@@ -2,9 +2,7 @@ package ai.loli.app.ui.components
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -26,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,7 +43,7 @@ import ai.loli.app.ui.screens.isDefaultAssistant
 
 /** «Настройте Лоли»: чего не хватает для полной работы — каждый пункт включается одним нажатием. */
 @Composable
-fun SetupCard(c: AppContainer, name: String) {
+fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("loli_ui", Context.MODE_PRIVATE) }
     var dismissed by remember { mutableStateOf(prefs.getBoolean("setup_dismissed", false)) }
@@ -61,11 +60,13 @@ fun SetupCard(c: AppContainer, name: String) {
         if (!assistant) Triple(Icons.Rounded.TouchApp, "Сделать $name ассистентом") { guide = true } else null,
         if (!overlay) Triple(Icons.Rounded.Layers, "Работа поверх приложений") { runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) }; Unit } else null,
         if (!a11y) Triple(Icons.Rounded.VolumeUp, "Кнопки громкости и системные команды") {
-            runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }; Unit
+            ai.loli.app.ui.screens.openAccessibility(context)
         } else null,
     )
     if (guide) AssistantGuideDialog(name) { guide = false }
-    AnimatedVisibility(!dismissed && todo.isNotEmpty(), exit = shrinkVertically() + fadeOut()) {
+    val visible = !dismissed && todo.isNotEmpty()
+    LaunchedEffect(visible) { onVisible(visible) }
+    AnimatedVisibility(visible, exit = shrinkVertically() + fadeOut()) {
         Surface(shape = MaterialTheme.shapes.large, color = groupColor(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {

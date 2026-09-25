@@ -23,6 +23,15 @@ class LoliAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Системная «кнопка/жест спецвозможностей» и быстрое включение (удержание обеих кнопок громкости),
+        // если в настройках телефона они назначены на Лоли.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                accessibilityButtonController.registerAccessibilityButtonCallback(object : android.accessibilityservice.AccessibilityButtonController.AccessibilityButtonCallback() {
+                    override fun onClicked(controller: android.accessibilityservice.AccessibilityButtonController) = summon()
+                })
+            }
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
@@ -44,6 +53,9 @@ class LoliAccessibilityService : AccessibilityService() {
         val up = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
         val down = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
         if (!up && !down) return false
+        // Во время звонка и входящего вызова кнопки громкости — только для звонка (например, выключить звонок).
+        val audio = getSystemService(AudioManager::class.java)
+        if (audio != null && audio.mode != AudioManager.MODE_NORMAL) return false
         val pressed = event.action == KeyEvent.ACTION_DOWN
         val now = SystemClock.uptimeMillis()
         return when (trigger) {
@@ -60,6 +72,14 @@ class LoliAccessibilityService : AccessibilityService() {
             }
             KeyTrigger.DOUBLE_VOLUME_DOWN -> {
                 if (!down) return false
+                // Удержание «−» — обычное плавное уменьшение громкости.
+                if (pressed && event.repeatCount > 0) {
+                    pendingDown?.let { handler.removeCallbacks(it) }
+                    pendingDown = null
+                    lastDownTap = 0
+                    adjust(AudioManager.ADJUST_LOWER)
+                    return true
+                }
                 if (pressed && event.repeatCount == 0) {
                     if (now - lastDownTap < DOUBLE_MS) {
                         pendingDown?.let { handler.removeCallbacks(it) }

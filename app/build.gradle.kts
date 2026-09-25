@@ -18,7 +18,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "1.3.0"
+val APP_VERSION = "1.3.1"
 
 val releaseKeystoreFile = config("LOLI_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
@@ -147,6 +147,9 @@ dependencies {
     implementation(libs.androidx.sqlite)
 
     implementation(libs.vosk.android)
+    // Системный доступ через Shizuku (отладка по Wi-Fi): ассистент по умолчанию и спецвозможности на прошивках с ограничениями.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
     implementation(libs.jna) { artifact { type = "aar" } }
 
     testImplementation(libs.junit)

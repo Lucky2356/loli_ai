@@ -1,5 +1,7 @@
 package ai.loli.app.ui.screens
 
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.verticalScroll
 import android.Manifest
 import android.app.role.RoleManager
 import android.content.Context
@@ -628,31 +630,106 @@ fun assistantSteps(name: String): List<String> {
     }
 }
 
-/** Пошаговая инструкция и кнопка перехода в настройки телефона. */
+/**
+ * Пошаговая инструкция «Сделать ассистентом по умолчанию».
+ * Если прошивка не показывает Лоли в списке (realme, OPPO, OnePlus, Xiaomi…), Лоли назначает себя сама —
+ * через Shizuku прямо на телефоне или одной командой с компьютера.
+ */
 @Composable
 fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val access = remember { ai.loli.app.device.SystemAccess(context) }
+    val scope = rememberCoroutineScope()
+    val tick = ai.loli.app.ui.components.rememberResumeTick()
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var poll by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // Shizuku могут запустить, пока открыт диалог: тихо перепроверяем состояние.
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(1500); poll++ } }
+    val isAssistant = remember(tick, poll, result) { access.isAssistant() }
+    val installed = remember(tick, poll) { access.shizukuInstalled() }
+    val running = remember(tick, poll) { access.shizukuRunning() }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
         title = { Text("$name — ассистент по умолчанию") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                    color = if (isAssistant) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        if (isAssistant) "✓ Сейчас ассистент — $name" else "Сейчас ассистент — другое приложение",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
                 Text(
-                    "Сервисы Google при этом продолжат работать — меняется только приложение, которое открывается долгим нажатием «Домой» или кнопки питания.",
+                    "Сервисы Google продолжат работать — меняется только то, что открывается долгим нажатием «Домой» или кнопки питания.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text("Способ 1 — в настройках телефона", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                 assistantSteps(name).forEachIndexed { i, step ->
                     Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium)
                 }
+                TextButton(onClick = { openAssistantSettings(context) }) { Text("Открыть настройки телефона") }
+
+                Text("Способ 2 — если «$name» нет в списке", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                 Text(
-                    "Если «$name» нет в списке — обновите приложение до последней версии и перезагрузите телефон. " +
-                        "Вызвать $name можно и без этого: плитка в шторке, виджет на рабочем столе или слово «$name» в фоне.",
+                    "Некоторые прошивки (realme, OPPO, OnePlus, Xiaomi и др.) показывают в этом списке только Google. " +
+                        "$name может назначить себя сама через бесплатное приложение Shizuku — компьютер не нужен:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                val steps = listOf(
+                    "Установите Shizuku" to installed,
+                    "Запустите его: в Shizuku «Запуск через беспроводную отладку» → «Сопряжение», код появится в уведомлении" to running,
+                    "Нажмите «Настроить автоматически» и разрешите доступ" to isAssistant,
+                )
+                steps.forEachIndexed { i, (text, done) ->
+                    Text((if (done) "✓ " else "${i + 1}. ") + text, style = MaterialTheme.typography.bodyMedium,
+                        color = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
+                when {
+                    !installed -> PrimaryButton("Установить Shizuku", { runCatching { context.startActivity(access.shizukuDownload().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } })
+                    !running -> PrimaryButton("Открыть Shizuku", { access.openShizuku()?.let { runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } } })
+                    else -> PrimaryButton(if (busy) "Настраиваю…" else "Настроить автоматически", {
+                        if (!busy) scope.launch {
+                            busy = true
+                            result = access.setupWithShizuku().message
+                            busy = false
+                        }
+                    }, enabled = !busy)
+                }
+                result?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+                Text(
+                    "Заодно $name включит свои кнопки громкости и работу поверх приложений. Shizuku после этого можно закрыть; " +
+                        "после перезагрузки телефона настройки сохраняются.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Text("Способ 3 — с компьютера", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
+                Text(
+                    "Включите «Отладку по USB» (Настройки → О телефоне → 7 раз нажать «Номер сборки» → Для разработчиков), подключите телефон и выполните:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text(
+                        access.adbCommands, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    )
+                }
+                TextButton(onClick = {
+                    val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("adb", access.adbCommands))
+                    android.widget.Toast.makeText(context, "Команды скопированы", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("Скопировать команды") }
+                Text(
+                    "Пока ассистент не выбран, $name всё равно вызывается: слово «$name», кнопки громкости, плитка в шторке, виджет.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onDismiss(); openAssistantSettings(context) }) { Text("Открыть настройки") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
     )
 }
