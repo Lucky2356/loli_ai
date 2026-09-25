@@ -69,6 +69,8 @@ class VoiceController(
     val systemDialogRequests: SharedFlow<Unit> = _systemDialogRequests.asSharedFlow()
     /** Есть ли на устройстве системное окно распознавания (задаётся приложением). */
     var systemDialogAvailable: () -> Boolean = { false }
+    /** Вызывается после каждого голосового ответа (приложение показывает уведомление, если экран заблокирован или свёрнут). */
+    var onVoiceReply: (AssistantReply) -> Unit = {}
 
     /** Системное распознавание не сработало на этом устройстве — в режиме «Авто» сразу используем Vosk. */
     @Volatile private var systemBroken = false
@@ -238,6 +240,7 @@ class VoiceController(
         _state.value = VoiceState.Thinking(text)
         val reply = engine.handle(text, source)
         _lastReply.value = reply
+        if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
         if (speak && settings.value.ttsEnabled && reply.text.isNotBlank()) {
             _state.value = VoiceState.Speaking(reply.text)
             tts.speak(SpeechText.forSpeech(reply.text))

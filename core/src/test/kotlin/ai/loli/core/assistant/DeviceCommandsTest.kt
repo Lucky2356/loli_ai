@@ -54,11 +54,62 @@ class DeviceCommandsTest {
 
     @Test fun appsCallsSearchAndRoutes() {
         assertEquals(DeviceCommand.OpenApp("телеграм"), device("открой телеграм"))
-        assertEquals(DeviceCommand.OpenApp("камеру"), device("запусти камеру"))
+        assertEquals(DeviceCommand.OpenApp("калькулятор"), device("запусти калькулятор"))
         assertEquals(DeviceCommand.Call("маме"), device("позвони маме"))
         assertEquals(DeviceCommand.Message("саше", "я задержусь"), device("напиши саше что я задержусь"))
         assertEquals(DeviceCommand.WebSearch("рецепт борща"), device("найди в интернете рецепт борща"))
         assertEquals(DeviceCommand.Navigate("вокзала"), device("построй маршрут до вокзала"))
+    }
+
+    @Test fun moreVoiceCommands() {
+        assertEquals(DeviceCommand.Global(GlobalAction.SCREENSHOT), device("сделай скриншот"))
+        assertEquals(DeviceCommand.Global(GlobalAction.HOME), device("домой"))
+        assertEquals(DeviceCommand.Global(GlobalAction.LOCK), device("заблокируй экран"))
+        assertEquals(DeviceCommand.Global(GlobalAction.NOTIFICATIONS), device("открой уведомления"))
+        assertEquals(DeviceCommand.Camera(selfie = true), device("сделай селфи"))
+        assertEquals(DeviceCommand.Camera(video = true), device("сними видео"))
+        assertEquals(DeviceCommand.OpenUrl("https://habr.com"), device("открой сайт habr.com"))
+        assertEquals(DeviceCommand.Play("рецепт пиццы", youtube = true), device("найди на ютубе рецепт пиццы"))
+        assertEquals(DeviceCommand.Play("queen"), device("включи песню queen"))
+        assertEquals(DeviceCommand.DoNotDisturb(true), device("включи режим не беспокоить"))
+        assertEquals(DeviceCommand.Brightness(70), device("яркость на 70"))
+        assertEquals(DeviceCommand.OpenSettings(SettingsSection.AIRPLANE), device("включи режим полета"))
+        assertEquals(DeviceCommand.AddContact("Саша", "89001234567"), device("добавь контакт саша 8 900 123 45 67"))
+        assertEquals(DeviceCommand.Share("телеграм", "привет всем"), device("отправь в телеграм привет всем"))
+        val event = device("добавь в календарь встречу с машей завтра в 15:00") as DeviceCommand.CalendarEvent
+        assertEquals("Встречу с машей", event.title)
+        assertEquals(Instant.parse("2026-09-26T12:00:00Z"), event.start)
+        assertEquals(DeviceCommand.Media(MediaAction.PLAY), device("включи музыку"))
+    }
+
+    @Test fun worldTime() {
+        val a = DevicePhrases.answer("сколько времени в токио", LocalDate.of(2026, 9, 25))
+        assertTrue(a != null && a.startsWith("В Токио сейчас"), a)
+    }
+
+    @Test fun lockedScreenAllowsAddingButHidesData() = runTest {
+        var locked = true
+        val env = TestEnv(lockPolicy = { if (locked) LockPolicy() else null }).apply { settings = AssistantSettings(useAI = false) }
+        val add = env.engine.handle("потратила 500 рублей на такси")
+        assertEquals(1, env.store.expenses.all().size, add.text)
+        env.engine.handle("запомни что мой пин от домофона 1234")
+        val ask = env.engine.handle("сколько я потратила сегодня")
+        assertTrue(ask.text.contains("Разблокируйте"), ask.text)
+        val del = env.engine.handle("удали последний расход")
+        assertTrue(del.text.contains("Разблокируйте"), del.text)
+        assertEquals(1, env.store.expenses.all().size)
+        locked = false
+        assertTrue(env.engine.handle("сколько я потратила сегодня").text.contains("500"))
+    }
+
+    @Test fun lockPolicyIsConfigurable() {
+        val strict = LockPolicy(create = true, basicDevice = false, calls = false)
+        assertTrue(strict.allows(AssistantAction.CreateNote(ai.loli.core.model.NoteKind.NOTE, "Купить хлеб", "")))
+        assertTrue(!strict.allows(AssistantAction.Device(DeviceCommand.Call("маме"))))
+        assertTrue(!strict.allows(AssistantAction.Device(DeviceCommand.Timer(60))))
+        assertTrue(LockPolicy().allows(AssistantAction.Device(DeviceCommand.Call("маме"))))
+        assertTrue(!LockPolicy().allows(AssistantAction.Device(DeviceCommand.OpenApp("сбербанк"))))
+        assertTrue(LockPolicy(apps = true).allows(AssistantAction.Device(DeviceCommand.OpenApp("телеграм"))))
     }
 
     @Test fun recordsAreNotMistakenForDeviceCommands() {

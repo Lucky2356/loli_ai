@@ -128,16 +128,33 @@ class AppContainer(private val context: Context) {
     /** Команды телефону (таймер, будильник, приложения, звонки…); запасной таймер — напоминание Лоли. */
     val launcher = ai.loli.app.device.BackgroundLauncher(context)
     val updates = ai.loli.app.update.UpdateManager(context)
-    val device = AndroidDeviceController(context, launcher) { text, at ->
+    val appLock = ai.loli.app.security.AppLock(context)
+    val appAccess = ai.loli.app.device.AppAccess(context) { settings.settings.value }
+    val device = AndroidDeviceController(context, launcher, appAccess) { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
     }
-    private val executor by lazy { ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device) }
+    private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
+
+    /** Телефон заблокирован (экран блокировки показан). */
+    fun isLocked(): Boolean = keyguard?.isKeyguardLocked == true
+
+    /** Правила для заблокированного экрана; если пользователь запретил Лоли на блокировке — всё закрыто. */
+    fun lockPolicy(): ai.loli.core.assistant.LockPolicy? {
+        if (!isLocked()) return null
+        val s = settings.settings.value
+        return if (s.lockScreenEnabled) s.lockPolicy
+        else ai.loli.core.assistant.LockPolicy(create = false, basicDevice = false, calls = false, view = false, edit = false, apps = false)
+    }
+
+    private val executor by lazy {
+        ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device) { lockPolicy() }
+    }
 
     val engine: AssistantEngine by lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
         conversations = store.conversations, search = search, executor = executor, time = time,
-        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled) } },
+        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked()) } },
         aiProvider = { aiProvider() },
     ) }
 
@@ -151,6 +168,12 @@ class AppContainer(private val context: Context) {
     val tts: AndroidTtsProvider get() = ttsLazy.value
     val voice: VoiceController by lazy {
         VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope).also { v ->
+            v.onVoiceReply = { reply ->
+                // Экран заблокирован или приложение свёрнуто — результат придёт уведомлением.
+                if (reply.text.isNotBlank() && (isLocked() || !launcher.isForeground())) {
+                    ai.loli.app.reminders.Notifications.showResult(context, reply.text)
+                }
+            }
             v.systemDialogAvailable = {
                 android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).resolveActivity(context.packageManager) != null
             }

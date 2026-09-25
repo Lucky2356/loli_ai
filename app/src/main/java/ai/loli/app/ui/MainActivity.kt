@@ -222,6 +222,13 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
         return
     }
 
+    // Вход по отпечатку/PIN, если включён в «Доступ и безопасность».
+    val appUnlocked by c.appLock.unlocked.collectAsStateWithLifecycle()
+    if (settings.appLock && !appUnlocked && c.appLock.deviceSecure()) {
+        LockGate(c)
+        return
+    }
+
     val needsAuth = showAuth || (auth is AuthState.SignedOut && !settings.localOnly && c.supabaseConfig().isConfigured && !settings.onboardingDone)
     if (needsAuth) {
         BackHandler(enabled = showAuth) { showAuth = false }
@@ -359,5 +366,26 @@ private fun BottomBar(nav: Navigator) {
                 )
             }
         }
+    }
+}
+
+/** Экран «Лоли заблокирована»: системное окно отпечатка/PIN открывается сразу. */
+@Composable
+private fun LockGate(c: AppContainer) {
+    val activity = LocalContext.current as? Activity
+    val legacy = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == Activity.RESULT_OK) c.appLock.markUnlocked()
+    }
+    val ask = { activity?.let { a -> c.appLock.authenticate(a) { intent -> legacy.launch(intent) } } }
+    LaunchedEffect(Unit) { ask() }
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    ) {
+        ai.loli.app.ui.components.AssistantOrb(ai.loli.app.ui.components.OrbMode.IDLE, 0f, size = 140.dp)
+        Text("Лоли заблокирована", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 16.dp))
+        Text("Подтвердите, что это вы", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ai.loli.app.ui.components.PrimaryButton("Разблокировать", { ask() }, modifier = Modifier.padding(top = 24.dp))
     }
 }

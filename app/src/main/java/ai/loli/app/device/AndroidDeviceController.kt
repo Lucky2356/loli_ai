@@ -13,6 +13,10 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.MediaStore
+import android.app.NotificationManager
+import android.content.ContentValues
 import android.provider.ContactsContract
 import android.provider.Settings
 import android.view.KeyEvent
@@ -24,6 +28,7 @@ import ai.loli.core.assistant.DeviceCommand
 import ai.loli.core.assistant.DeviceController
 import ai.loli.core.assistant.DevicePhrases
 import ai.loli.core.assistant.DeviceResult
+import ai.loli.core.assistant.GlobalAction
 import ai.loli.core.assistant.MediaAction
 import ai.loli.core.assistant.RuFormat
 import ai.loli.core.assistant.SettingsSection
@@ -45,6 +50,7 @@ import java.time.LocalTime
 class AndroidDeviceController(
     private val context: Context,
     private val launcher: BackgroundLauncher,
+    private val access: AppAccess,
     /** Запасной таймер/будильник: напоминание Лоли на указанное время. */
     private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
 ) : DeviceController {
@@ -94,6 +100,9 @@ class AndroidDeviceController(
         DeviceCommand.Stopwatch -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю часы — секундомер там.", "Часы")
         is DeviceCommand.OpenApp -> {
             val app = findApp(c.name) ?: return DeviceResult("Не нашла приложение «${c.name}».", ok = false)
+            if (!access.isAllowed(app.first, app.second)) {
+                return DeviceResult("Открывать «${app.second}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
+            }
             val launch = context.packageManager.getLaunchIntentForPackage(app.first)
                 ?: return DeviceResult("Приложение «${app.second}» нельзя открыть.", ok = false)
             open(launch, "Открываю ${app.second}.", app.second)
@@ -165,19 +174,149 @@ class AndroidDeviceController(
             open(if (resolves(geo)) geo else web, "Строю маршрут: ${c.destination}.", "Маршрут")
         }
         is DeviceCommand.OpenSettings -> {
+            val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
             val action = when (c.section) {
-                SettingsSection.WIFI -> Settings.ACTION_WIFI_SETTINGS
+                // Android 10+ показывает компактную панель поверх экрана — включить Wi-Fi можно в одно касание.
+                SettingsSection.WIFI -> if (q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
+                SettingsSection.MOBILE_DATA -> if (q) Settings.Panel.ACTION_INTERNET_CONNECTIVITY else Settings.ACTION_WIRELESS_SETTINGS
+                SettingsSection.NFC -> if (q) Settings.Panel.ACTION_NFC else Settings.ACTION_NFC_SETTINGS
                 SettingsSection.BLUETOOTH -> Settings.ACTION_BLUETOOTH_SETTINGS
-                SettingsSection.SOUND -> Settings.ACTION_SOUND_SETTINGS
+                SettingsSection.SOUND -> if (q) Settings.Panel.ACTION_VOLUME else Settings.ACTION_SOUND_SETTINGS
                 SettingsSection.DISPLAY -> Settings.ACTION_DISPLAY_SETTINGS
                 SettingsSection.BATTERY -> Settings.ACTION_BATTERY_SAVER_SETTINGS
                 SettingsSection.LOCATION -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
                 SettingsSection.APPS -> Settings.ACTION_APPLICATION_SETTINGS
+                SettingsSection.AIRPLANE -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
+                SettingsSection.HOTSPOT -> Settings.ACTION_WIRELESS_SETTINGS
+                SettingsSection.NOTIFICATIONS -> "android.settings.NOTIFICATION_SETTINGS"
+                SettingsSection.SECURITY -> Settings.ACTION_SECURITY_SETTINGS
+                SettingsSection.ACCESSIBILITY -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+                SettingsSection.DATE_TIME -> Settings.ACTION_DATE_SETTINGS
+                SettingsSection.STORAGE -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
                 SettingsSection.MAIN -> Settings.ACTION_SETTINGS
             }
-            // Android 10+ не даёт приложениям включать Wi-Fi и Bluetooth — открываем нужный экран.
-            open(Intent(action), "Открываю настройки.", "Настройки")
+            // Android 10+ не даёт приложениям самим включать Wi-Fi, Bluetooth и режим полёта — открываем нужный экран.
+            val intent = Intent(action)
+            open(if (resolves(intent)) intent else Intent(Settings.ACTION_SETTINGS), "Открываю настройки.", "Настройки")
         }
+        is DeviceCommand.Camera -> {
+            val intent = Intent(if (c.video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+            if (c.selfie) {
+                // Разные камеры понимают разные ключи — передаём все известные.
+                intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
+                    .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                    .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+            }
+            open(intent, if (c.video) "Открываю видеокамеру." else if (c.selfie) "Открываю фронтальную камеру." else "Открываю камеру.", "Камера")
+        }
+        is DeviceCommand.OpenUrl -> open(Intent(Intent.ACTION_VIEW, Uri.parse(c.url)), "Открываю ${Uri.parse(c.url).host ?: c.url}.", "Сайт")
+        is DeviceCommand.Play -> {
+            if (c.youtube) {
+                val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
+                open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
+            } else {
+                val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+                    .putExtra(SearchManager.QUERY, c.query)
+                    .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(c.query)))
+                open(if (resolves(music)) music else web, "Включаю ${c.query}.", "Музыка")
+            }
+        }
+        is DeviceCommand.CalendarEvent -> addEvent(c)
+        is DeviceCommand.AddContact -> {
+            val intent = Intent(ContactsContract.Intents.Insert.ACTION).setType(ContactsContract.RawContacts.CONTENT_TYPE)
+                .putExtra(ContactsContract.Intents.Insert.NAME, c.name)
+            c.phone?.let { intent.putExtra(ContactsContract.Intents.Insert.PHONE, it) }
+            open(intent, "Проверьте и сохраните контакт «${c.name}».", "Новый контакт")
+        }
+        is DeviceCommand.Share -> {
+            val pkg = SHARE_APPS.entries.firstOrNull { c.app.startsWith(it.key) }?.value
+            if (pkg != null && !access.isAllowed(pkg, c.app)) {
+                return DeviceResult("Отправлять в «${c.app}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
+            }
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, c.text)
+            if (pkg != null) send.setPackage(pkg)
+            val intent = if (pkg != null && resolves(send)) send else Intent.createChooser(send.setPackage(null), "Отправить")
+            open(intent, "Выберите, кому отправить.", "Отправить")
+        }
+        is DeviceCommand.DoNotDisturb -> {
+            val nm = context.getSystemService(NotificationManager::class.java)
+            if (!nm.isNotificationPolicyAccessGranted) {
+                open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Лоли управлять режимом «Не беспокоить» — и повторите команду.", "Не беспокоить")
+            } else {
+                nm.setInterruptionFilter(if (c.on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
+                DeviceResult(if (c.on) "Режим «Не беспокоить» включён." else "Режим «Не беспокоить» выключен.")
+            }
+        }
+        is DeviceCommand.Brightness -> {
+            if (!Settings.System.canWrite(context)) {
+                open(
+                    Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")),
+                    "Разрешите Лоли менять системные настройки — и повторите команду.", "Яркость",
+                )
+            } else {
+                val cr = context.contentResolver
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                val current = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128) * 100 / 255
+                val target = (c.percent ?: (current + c.delta)).coerceIn(1, 100)
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
+                DeviceResult("Яркость $target%.")
+            }
+        }
+        is DeviceCommand.Global -> {
+            when (LoliAccessibilityService.perform(c.action)) {
+                true -> DeviceResult(
+                    when (c.action) {
+                        GlobalAction.SCREENSHOT -> "Скриншот сделан."
+                        GlobalAction.LOCK -> "Блокирую экран."
+                        else -> "Готово."
+                    },
+                )
+                false -> DeviceResult("На этой версии Android так нельзя.", ok = false)
+                null -> if (c.action == GlobalAction.HOME) {
+                    open(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "Готово.", "Домой")
+                } else {
+                    DeviceResult("Включите «Лоли» в спецвозможностях (Настройки Лоли → Разрешения) — тогда смогу нажимать системные кнопки.", ok = false)
+                }
+            }
+        }
+    }
+
+    /** Событие в календарь: сразу (если разрешён доступ к календарю) или через экран календаря. */
+    private fun addEvent(c: DeviceCommand.CalendarEvent): DeviceResult {
+        val start = c.start ?: java.time.ZonedDateTime.now().plusHours(1).withMinute(0).toInstant()
+        val begin = start.toEpochMilli()
+        val end = begin + if (c.allDay) 24 * 3600_000L else 3600_000L
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            val calendarId = context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                arrayOf(CalendarContract.Calendars._ID, CalendarContract.Calendars.IS_PRIMARY),
+                "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR} AND ${CalendarContract.Calendars.VISIBLE} = 1",
+                null, "${CalendarContract.Calendars.IS_PRIMARY} DESC",
+            )?.use { cur -> if (cur.moveToFirst()) cur.getLong(0) else null }
+            if (calendarId != null) {
+                val values = ContentValues().apply {
+                    put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                    put(CalendarContract.Events.TITLE, c.title)
+                    put(CalendarContract.Events.DTSTART, begin)
+                    put(CalendarContract.Events.DTEND, end)
+                    put(CalendarContract.Events.ALL_DAY, if (c.allDay) 1 else 0)
+                    put(CalendarContract.Events.EVENT_TIMEZONE, if (c.allDay) "UTC" else java.util.TimeZone.getDefault().id)
+                }
+                context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+                val whenText = ai.loli.core.assistant.RuFormat.dateTime(start, java.time.ZoneId.systemDefault(), Instant.now())
+                return DeviceResult("Добавила в календарь: «${c.title}», $whenText.")
+            }
+        }
+        val intent = Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI)
+            .putExtra(CalendarContract.Events.TITLE, c.title)
+            .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+            .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+            .putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, c.allDay)
+        return open(intent, "Проверьте и сохраните событие «${c.title}».", "Календарь")
     }
 
     // ------------------------------------------------------------------ Вспомогательное
@@ -265,6 +404,13 @@ class AndroidDeviceController(
 
     companion object {
         private const val TAG = "Device"
+        private const val YOUTUBE = "com.google.android.youtube"
+        private val SHARE_APPS = mapOf(
+            "телеграм" to "org.telegram.messenger", "telegram" to "org.telegram.messenger",
+            "ватсап" to "com.whatsapp", "вотсап" to "com.whatsapp", "whatsapp" to "com.whatsapp",
+            "вк" to "com.vkontakte.android", "вконтакте" to "com.vkontakte.android",
+            "viber" to "com.viber.voip", "вайбер" to "com.viber.voip", "gmail" to "com.google.android.gm", "почту" to "com.google.android.gm",
+        )
         private const val ACTION_NOTIFICATION_ID = 1003
 
         /** Как популярные приложения называют вслух. */

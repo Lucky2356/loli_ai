@@ -10,6 +10,7 @@ import java.time.MonthDay
 import java.time.ZoneId
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import ai.loli.core.nlp.RuDateTimeParser
 import kotlin.random.Random
 
 /** Команды самому телефону. Выполняются платформой ([DeviceController]) без интернета. */
@@ -28,11 +29,24 @@ sealed interface DeviceCommand {
     data class OpenSettings(val section: SettingsSection) : DeviceCommand
     data object Stopwatch : DeviceCommand
     data object ShowAlarms : DeviceCommand
+    data class Camera(val video: Boolean = false, val selfie: Boolean = false) : DeviceCommand
+    data class OpenUrl(val url: String) : DeviceCommand
+    /** Музыка/видео по запросу: «включи Queen», «найди на ютубе рецепт пиццы». */
+    data class Play(val query: String, val youtube: Boolean = false) : DeviceCommand
+    data class CalendarEvent(val title: String, val start: Instant?, val allDay: Boolean = false) : DeviceCommand
+    data class AddContact(val name: String, val phone: String?) : DeviceCommand
+    data class Share(val app: String, val text: String) : DeviceCommand
+    data class DoNotDisturb(val on: Boolean) : DeviceCommand
+    data class Brightness(val percent: Int?, val delta: Int = 0) : DeviceCommand
+    /** Системные действия через спецвозможности: назад, домой, скриншот, блокировка… */
+    data class Global(val action: GlobalAction) : DeviceCommand
 }
+
+enum class GlobalAction { BACK, HOME, RECENTS, NOTIFICATIONS, QUICK_SETTINGS, LOCK, SCREENSHOT, POWER_MENU, SPLIT_SCREEN }
 
 enum class MediaAction { PLAY, PAUSE, NEXT, PREVIOUS }
 enum class VolumeChange { UP, DOWN, MUTE, UNMUTE, MAX, SET }
-enum class SettingsSection { WIFI, BLUETOOTH, SOUND, DISPLAY, BATTERY, LOCATION, APPS, MAIN }
+enum class SettingsSection { WIFI, BLUETOOTH, SOUND, DISPLAY, BATTERY, LOCATION, APPS, MAIN, AIRPLANE, NFC, HOTSPOT, MOBILE_DATA, NOTIFICATIONS, SECURITY, ACCESSIBILITY, DATE_TIME, STORAGE }
 
 data class DeviceResult(val text: String, val ok: Boolean = true)
 
@@ -97,6 +111,76 @@ object DevicePhrases {
         }
         if (re("""^(?:покажи|какие|мои)\s+будильник""").containsMatchIn(t)) return cmd(DeviceCommand.ShowAlarms)
 
+        // Системные действия (через спецвозможности).
+        val global = when {
+            re("""^(?:назад|вернись назад|шаг назад)$""").containsMatchIn(t) -> GlobalAction.BACK
+            re("""^(?:домой|на главный экран|главный экран|сверни всё|сверни все|на рабочий стол)$""").containsMatchIn(t) -> GlobalAction.HOME
+            re("""^(?:(?:покажи|открой)\s+)?(?:недавние|последние)\s+приложения$|^переключи приложение$""").containsMatchIn(t) -> GlobalAction.RECENTS
+            re("""^(?:открой|покажи|опусти)\s+(?:шторку|уведомления)$""").containsMatchIn(t) -> GlobalAction.NOTIFICATIONS
+            re("""^(?:открой|покажи)\s+быстрые настройки$""").containsMatchIn(t) -> GlobalAction.QUICK_SETTINGS
+            re("""^(?:заблокируй|выключи)\s+(?:экран|телефон)$|^заблокируй$""").containsMatchIn(t) -> GlobalAction.LOCK
+            re("""^(?:сделай|сними)\s+(?:скриншот|снимок экрана)|^скриншот$""").containsMatchIn(t) -> GlobalAction.SCREENSHOT
+            re("""^(?:меню|кнопки)\s+питания$|^(?:выключи|перезагрузи)\s+телефон$""").containsMatchIn(t) -> GlobalAction.POWER_MENU
+            re("""^(?:раздели экран|разделённый экран|разделенный экран|два окна)$""").containsMatchIn(t) -> GlobalAction.SPLIT_SCREEN
+            else -> null
+        }
+        if (global != null) return cmd(DeviceCommand.Global(global))
+
+        // Камера.
+        when {
+            re("""^(?:сделай|сними)\s+селфи""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(selfie = true))
+            re("""^(?:сделай|сними)\s+(?:фото|фотографию|снимок)|^(?:открой|включи|запусти)\s+камеру$|^сфотографируй""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera())
+            re("""^(?:сними|запиши)\s+видео|^(?:включи|начни)\s+(?:запись видео|видеозапись)""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(video = true))
+        }
+
+        // Не беспокоить, яркость.
+        re("""^(?:включи|активируй)\s+(?:режим\s+)?не беспокоить""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(true)) }
+        re("""^(?:выключи|отключи)\s+(?:режим\s+)?не беспокоить""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(false)) }
+        re("""^(?:сделай\s+)?яркость\s+(?:на\s+)?(\d+)""").find(digitize(t))?.let { return cmd(DeviceCommand.Brightness(it.groupValues[1].toInt().coerceIn(0, 100))) }
+        when {
+            re("""^(?:сделай\s+)?(?:ярче|поярче|прибавь яркость|увеличь яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, 20))
+            re("""^(?:сделай\s+)?(?:темнее|потемнее|убавь яркость|уменьши яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, -20))
+            re("""^(?:максимальная яркость|яркость на максимум)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(100))
+        }
+
+        // Сайты: «открой сайт habr.com», «открой youtube.com».
+        re("""^(?:открой|зайди на|перейди на)\s+(?:сайт\s+)?([a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/\S*)?)$""").find(t)?.let { m ->
+            val u = m.groupValues[1]
+            return cmd(DeviceCommand.OpenUrl(if (u.startsWith("http")) u else "https://$u"))
+        }
+
+        // Музыка и видео по запросу.
+        re("""^(?:найди|включи|открой|покажи|поставь)\s+(?:на\s+)?(?:ютубе|youtube)\s+(.+)$|^(?:включи|найди|покажи)\s+(.+?)\s+(?:на\s+)?(?:ютубе|youtube)$""").find(t)?.let { m ->
+            val q = m.groupValues[1].ifBlank { m.groupValues[2] }.trim()
+            if (q.isNotEmpty()) return cmd(DeviceCommand.Play(q, youtube = true))
+        }
+        re("""^(?:включи|поставь|сыграй|воспроизведи)\s+(?:песню|трек|музыку|альбом|плейлист|группу|исполнителя)\s+(.+)$""").find(t)?.let {
+            return cmd(DeviceCommand.Play(it.groupValues[1].trim()))
+        }
+
+        // Календарь: «добавь в календарь встречу с Машей завтра в 15:00».
+        re("""^(?:добавь|запиши|создай|поставь)\s+(?:в\s+календарь|событие(?:\s+в\s+календарь)?|встречу\s+в\s+календарь)\s+(.+)$""").find(t)?.let { m ->
+            val today = now.atZone(zone).toLocalDate()
+            val dt = RuDateTimeParser()
+            val parsed = dt.parse(m.groupValues[1], today)
+            val title = parsed.remainder.ifBlank { m.groupValues[1] }.trim().replaceFirstChar { it.uppercase() }
+            val start = if (parsed.spec.isEmpty) null else dt.resolveTrigger(parsed.spec, now, zone)
+            return cmd(DeviceCommand.CalendarEvent(title, start, allDay = parsed.spec.time == null && parsed.spec.date != null))
+        }
+
+        // Новый контакт: «добавь контакт Саша 8 900 123 45 67».
+        re("""^(?:добавь|создай|сохрани)\s+(?:новый\s+)?контакт\s+(.+)$""").find(t)?.let { m ->
+            val rest = m.groupValues[1]
+            val phone = re("""(\+?[\d][\d\s()-]{5,}\d)""").find(rest)?.value?.filter { it.isDigit() || it == '+' }
+            val name = rest.replace(re("""(?:\s+(?:номер|телефон))?\s*\+?[\d][\d\s()-]{5,}\d"""), "").trim().replaceFirstChar { it.uppercase() }
+            if (name.isNotEmpty()) return cmd(DeviceCommand.AddContact(name, phone))
+        }
+
+        // Поделиться текстом в приложении: «отправь в телеграм привет всем».
+        re("""^(?:отправь|перешли|поделись)\s+в\s+(телеграм\w*|ватсап\w*|вотсап\w*|whatsapp|telegram|вк|вконтакте|viber|вайбер|почту|gmail)\s+(.+)$""").find(t)?.let {
+            return cmd(DeviceCommand.Share(it.groupValues[1], it.groupValues[2].trim()))
+        }
+
         // Фонарик.
         if (re("""^(?:включи|зажги|вруби)\s+(?:фонарик|фонарь|вспышку|свет на телефоне)""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(true))
         if (re("""^(?:выключи|погаси|выруби)\s+(?:фонарик|фонарь|вспышку)""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(false))
@@ -127,9 +211,18 @@ object DevicePhrases {
         }
 
         // Настройки телефона.
-        re("""^(?:открой|включи|выключи|покажи)\s+(?:настройки\s+)?(wi-?fi|вай-?фай|блютуз|bluetooth|звук|экран|яркость|батаре\w*|геолокаци\w*|местоположени\w*|gps|приложения|настройки)$""").find(t)?.let { m ->
+        re("""^(?:открой|включи|выключи|покажи)\s+(?:настройки\s+)?(wi-?fi|вай-?фай|блютуз|bluetooth|звук|экран|яркость|батаре\w*|геолокаци\w*|местоположени\w*|gps|приложения|настройки|режим полета|режим полёта|авиарежим|nfc|нфс|точку доступа|модем|мобильный интернет|мобильные данные|уведомлени\w*|безопасность|спецвозможности|специальные возможности|дату и время|память|хранилище)$""").find(t)?.let { m ->
             val s = m.groupValues[1]
             val section = when {
+                s.startsWith("режим пол") || s == "авиарежим" -> SettingsSection.AIRPLANE
+                s == "nfc" || s == "нфс" -> SettingsSection.NFC
+                s == "точку доступа" || s == "модем" -> SettingsSection.HOTSPOT
+                s.startsWith("мобильн") -> SettingsSection.MOBILE_DATA
+                s.startsWith("уведомлени") -> SettingsSection.NOTIFICATIONS
+                s == "безопасность" -> SettingsSection.SECURITY
+                s.contains("возможности") -> SettingsSection.ACCESSIBILITY
+                s == "дату и время" -> SettingsSection.DATE_TIME
+                s == "память" || s == "хранилище" -> SettingsSection.STORAGE
                 s.contains("fi") || s.contains("фай") -> SettingsSection.WIFI
                 s.contains("блют") || s.contains("bluetooth") -> SettingsSection.BLUETOOTH
                 s == "звук" -> SettingsSection.SOUND
@@ -250,7 +343,32 @@ object DevicePhrases {
             val dow = target.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale("ru"))
             return "${RuFormat.date(target, today).replaceFirstChar { it.uppercase() }} — $dow."
         }
+        worldTime(t)?.let { return it }
         return convert(digitize(t))
+    }
+
+    private val cities = mapOf(
+        "москв" to "Europe/Moscow", "питер" to "Europe/Moscow", "петербург" to "Europe/Moscow", "калининград" to "Europe/Kaliningrad",
+        "самар" to "Europe/Samara", "екатеринбург" to "Asia/Yekaterinburg", "омск" to "Asia/Omsk", "новосибирск" to "Asia/Novosibirsk",
+        "красноярск" to "Asia/Krasnoyarsk", "иркутск" to "Asia/Irkutsk", "якутск" to "Asia/Yakutsk", "владивосток" to "Asia/Vladivostok",
+        "магадан" to "Asia/Magadan", "камчатк" to "Asia/Kamchatka", "минск" to "Europe/Minsk", "киев" to "Europe/Kyiv", "астан" to "Asia/Almaty",
+        "алмат" to "Asia/Almaty", "ташкент" to "Asia/Tashkent", "тбилиси" to "Asia/Tbilisi", "ереван" to "Asia/Yerevan", "баку" to "Asia/Baku",
+        "лондон" to "Europe/London", "париж" to "Europe/Paris", "берлин" to "Europe/Berlin", "рим" to "Europe/Rome", "мадрид" to "Europe/Madrid",
+        "стамбул" to "Europe/Istanbul", "дубай" to "Asia/Dubai", "дели" to "Asia/Kolkata", "пекин" to "Asia/Shanghai", "шанха" to "Asia/Shanghai",
+        "токио" to "Asia/Tokyo", "сеул" to "Asia/Seoul", "бангкок" to "Asia/Bangkok", "сингапур" to "Asia/Singapore", "сидне" to "Australia/Sydney",
+        "нью-йорк" to "America/New_York", "нью йорк" to "America/New_York", "вашингтон" to "America/New_York", "чикаго" to "America/Chicago",
+        "лос-анджелес" to "America/Los_Angeles", "лос анджелес" to "America/Los_Angeles", "сан-франциско" to "America/Los_Angeles",
+        "торонто" to "America/Toronto", "мехико" to "America/Mexico_City", "рио" to "America/Sao_Paulo", "буэнос" to "America/Argentina/Buenos_Aires",
+        "каир" to "Africa/Cairo", "анталь" to "Europe/Istanbul", "пхукет" to "Asia/Bangkok", "бали" to "Asia/Makassar",
+    )
+
+    /** «Сколько времени в Токио», «который час в Нью-Йорке». */
+    private fun worldTime(t: String): String? {
+        val m = re("""(?:сколько\s+(?:сейчас\s+)?времени|который\s+(?:сейчас\s+)?час|какое\s+время)\s+(?:сейчас\s+)?(?:в|во)\s+(.+)$""").find(t) ?: return null
+        val place = m.groupValues[1].trim()
+        val zone = cities.entries.firstOrNull { place.startsWith(it.key) || place.contains(it.key) }?.value ?: return null
+        val time = java.time.ZonedDateTime.now(ZoneId.of(zone))
+        return "В ${place.replaceFirstChar { it.uppercase() }} сейчас ${RuFormat.time(time.toLocalTime())}."
     }
 
     private fun targetDate(s: String, today: LocalDate): LocalDate? {

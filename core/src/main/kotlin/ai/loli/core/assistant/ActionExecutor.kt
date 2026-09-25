@@ -45,6 +45,11 @@ class ActionExecutor(
     private val scheduler: ReminderScheduler,
     private val time: TimeSource,
     private val device: DeviceController = UnsupportedDevice,
+    /**
+     * Правила для заблокированного экрана или null, если телефон разблокирован.
+     * Что разрешено — решает пользователь в настройках; по умолчанию личные данные скрыты.
+     */
+    private val lockPolicy: () -> LockPolicy? = { null },
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -126,6 +131,11 @@ class ActionExecutor(
     }
 
     private suspend fun runAction(action: AssistantAction, ctx: ConversationContext): Step {
+        lockPolicy()?.let { policy ->
+            if (!policy.allows(action)) {
+                return error("Разблокируйте телефон — ${lockedReason(action)} на заблокированном экране не разрешено (это меняется в настройках Лоли).")
+            }
+        }
         val now = time.now()
         val zone = time.zone()
         val today = time.today()
@@ -308,6 +318,19 @@ class ActionExecutor(
                 changed("Исправила: ${Money.format(updated.amountMinor, updated.currency)} — ${updated.category} (${RuFormat.date(updated.occurredOn, today)}).")
             }
         }
+    }
+
+    private fun lockedReason(action: AssistantAction): String = when (action) {
+        is AssistantAction.Device -> when (action.command) {
+            is DeviceCommand.Call, is DeviceCommand.Message -> "звонить и писать"
+            is DeviceCommand.OpenApp -> "открывать приложения"
+            else -> "это действие"
+        }
+        is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
+        is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote -> "добавлять записи"
+        is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
+        is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> "смотреть записи"
+        else -> "изменять и удалять записи"
     }
 
     private suspend fun appendNote(action: AssistantAction.AppendNote, ctx: ConversationContext): Step {

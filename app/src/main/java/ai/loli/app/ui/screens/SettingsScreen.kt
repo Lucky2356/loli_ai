@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Alarm
@@ -100,6 +101,7 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     ASSISTANT("settings/assistant", "Ассистент", "Имя, диалог, голос ответов", Icons.Rounded.Face),
     VOICE("settings/voice", "Голос и распознавание", "Микрофон, офлайн-модель, «Лоли» в фоне", Icons.Rounded.Mic),
     AI("settings/ai", "AI-провайдеры", "Несколько сервисов с автоматическим резервом", Icons.Rounded.AutoAwesome),
+    ACCESS("settings/access", "Доступ и безопасность", "Экран блокировки, приложения, кнопки, вход по отпечатку", Icons.Rounded.Shield),
     APPEARANCE("settings/appearance", "Оформление", "Тема и цвета", Icons.Rounded.Palette),
     ACCOUNT("settings/account", "Аккаунт и синхронизация", "Supabase, резервная копия в облаке", Icons.Rounded.Cloud),
     PERMISSIONS("settings/permissions", "Разрешения", "Микрофон, уведомления, будильники", Icons.Rounded.Lock),
@@ -121,6 +123,7 @@ fun SettingsScreen(
         SettingsPage.VOICE -> VoicePage(c, onBack)
         SettingsPage.AI -> AiPage(c, onBack, openProvider = { type -> openRoute("settings/ai/${type.id}") })
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
+        SettingsPage.ACCESS -> AccessPage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
         SettingsPage.PERMISSIONS -> PermissionsPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
@@ -544,7 +547,7 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
 // ------------------------------------------------------------------ Общие
 
 @Composable
-private fun RadioRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+fun RadioRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
     RowItem(
         title = title, subtitle = subtitle, onClick = onClick,
         leading = {

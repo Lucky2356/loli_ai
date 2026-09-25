@@ -15,6 +15,8 @@ object Notifications {
     const val CHANNEL_REMINDERS = "reminders"
     const val CHANNEL_LISTENING = "listening"
     const val CHANNEL_SYSTEM = "system"
+    const val CHANNEL_RESULTS = "results"
+    const val RESULT_ID = 1005
     const val LISTENING_ID = 1001
     const val REACTIVATE_ID = 1002
 
@@ -36,6 +38,12 @@ object Notifications {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_SYSTEM, context.getString(R.string.channel_system), NotificationManager.IMPORTANCE_DEFAULT),
         )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_RESULTS, context.getString(R.string.result_channel), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                // Содержимое на экране блокировки — по системной настройке «скрывать личное».
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
+        )
     }
 
     fun canPost(context: Context): Boolean =
@@ -53,4 +61,31 @@ object Notifications {
     }
 
     fun cancel(context: Context, id: Int) = NotificationManagerCompat.from(context).cancel(id)
+
+    /** Результат голосовой команды, выполненной на заблокированном экране или в фоне. */
+    fun showResult(context: Context, text: String) {
+        val open = android.app.PendingIntent.getActivity(
+            context, RESULT_ID,
+            android.content.Intent(context, ai.loli.app.ui.MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        // Публичная версия для экрана блокировки, если пользователь скрывает личное содержимое.
+        val public = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_RESULTS)
+            .setSmallIcon(R.drawable.ic_stat_loli)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(context.getString(R.string.result_hidden))
+            .build()
+        val n = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_RESULTS)
+            .setSmallIcon(R.drawable.ic_stat_loli)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(text)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(text))
+            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(public)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .setTimeoutAfter(10 * 60_000L)
+            .build()
+        notifySafely(context, RESULT_ID, n)
+    }
 }

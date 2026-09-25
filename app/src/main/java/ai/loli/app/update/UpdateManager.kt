@@ -40,7 +40,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
-data class UpdateInfo(val version: String, val apkUrl: String, val size: Long, val notes: String)
+/** [sha256] — контрольная сумма из GitHub (поле digest ассета); скачанный файл обязан с ней совпасть. */
+data class UpdateInfo(val version: String, val apkUrl: String, val size: Long, val notes: String, val sha256: String? = null)
 
 sealed interface UpdateState {
     data object Idle : UpdateState
@@ -139,6 +140,7 @@ class UpdateManager(private val context: Context) {
                 apkUrl = asset["browser_download_url"]?.jsonPrimitive?.contentOrNull ?: return null,
                 size = asset["size"]?.jsonPrimitive?.longOrNull ?: 0,
                 notes = json["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                sha256 = asset["digest"]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase(),
             )
         } finally {
             conn.disconnect()
@@ -149,7 +151,7 @@ class UpdateManager(private val context: Context) {
         dir.mkdirs()
         dir.listFiles()?.forEach { if (!it.name.contains(info.version)) it.delete() }
         val target = File(dir, "loli-${info.version}.apk")
-        if (target.exists() && info.size > 0 && target.length() == info.size) return target
+        if (target.exists() && info.size > 0 && target.length() == info.size && runCatching { verify(target, info) }.isSuccess) return target
         val part = File(dir, target.name + ".part")
         val conn = (URL(info.apkUrl).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
@@ -179,9 +181,29 @@ class UpdateManager(private val context: Context) {
             conn.disconnect()
         }
         if (info.size > 0 && part.length() != info.size) { part.delete(); error("файл скачан не полностью") }
+        verify(part, info)
         target.delete()
         part.renameTo(target)
         return target
+    }
+
+    /** Файл должен совпасть с контрольной суммой из GitHub — иначе он повреждён или подменён. */
+    private fun verify(file: File, info: UpdateInfo) {
+        val expected = info.sha256 ?: return
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        if (actual != expected) {
+            file.delete()
+            error("контрольная сумма не совпала — файл повреждён или подменён, установка отменена")
+        }
     }
 
     private fun install(apk: File) {

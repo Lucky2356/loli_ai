@@ -1,7 +1,10 @@
 package ai.loli.app.assist
 
 import android.content.Intent
+import android.app.KeyguardManager
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -73,17 +76,41 @@ class AssistActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Окно ассистента доступно и на экране блокировки: что можно делать без разблокировки, решает пользователь.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
         enableEdgeToEdge()
         if (savedInstanceState == null) startListening++
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle()
             LoliTheme(settings.themeMode, settings.dynamicColor) {
-                AssistPanel(container, startListening, onClose = { finish() }, onOpenApp = {
-                    startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
-                    finish()
-                })
+                AssistPanel(
+                    container, startListening, onClose = { finish() },
+                    onOpenApp = {
+                        // Приложение целиком — только после разблокировки.
+                        unlockThen {
+                            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                            finish()
+                        }
+                    },
+                    onUnlock = { unlockThen { } },
+                )
             }
         }
+    }
+
+    /** Просит систему показать экран разблокировки; после успешной разблокировки выполняет [then]. */
+    private fun unlockThen(then: () -> Unit) {
+        val km = getSystemService(KeyguardManager::class.java)
+        if (km == null || !km.isKeyguardLocked) { then(); return }
+        km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() = then()
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -103,7 +130,7 @@ class AssistActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit, onOpenApp: () -> Unit) {
+private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit, onOpenApp: () -> Unit, onUnlock: () -> Unit) {
     val voice by c.voice.state.collectAsStateWithLifecycle()
     val reply by c.voice.lastReply.collectAsStateWithLifecycle()
     val settings by c.settings.settings.collectAsStateWithLifecycle()
@@ -113,8 +140,11 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
     var shown by remember { mutableStateOf(false) }
     val initialReply = remember { reply }
 
+    val locked = remember(voice) { c.isLocked() }
+    val blocked = locked && !settings.lockScreenEnabled
     LaunchedEffect(startRequest) {
-        if (startRequest > 0) { answered = false; listen() }
+        // Пользователь запретил Лоли на заблокированном экране — сначала разблокировка.
+        if (startRequest > 0 && !blocked) { answered = false; listen() }
     }
     LaunchedEffect(Unit) { shown = true }
     LaunchedEffect(reply) { if (reply != null && reply !== initialReply) answered = true }
@@ -166,7 +196,14 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
                             if (active) c.voice.stop() else listen()
                         },
                     ) { AssistantOrb(mode, (voice as? VoiceState.Listening)?.level ?: 0f, size = 130.dp) }
-                    if (status.isNotBlank()) {
+                    if (blocked) {
+                        Text("Лоли выключена на заблокированном экране. Разблокируйте телефон.", style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (locked) {
+                        Text("🔒 Телефон заблокирован — личные данные скрыты", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+                    }
+                    if (status.isNotBlank() && !blocked) {
                         Text(status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
                             color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -179,6 +216,9 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
                             r.text, style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp),
                         )
+                        if (locked && r.text.contains("Разблокируйте")) {
+                            PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                        }
                         if (r.awaitingConfirmation) {
                             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 PrimaryButton("Да", { c.voice.confirm(true) }, modifier = Modifier.weight(1f))
@@ -187,7 +227,8 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
                         }
                     }
                     Spacer(Modifier.size(12.dp))
-                    Surface(
+                    if (blocked) PrimaryButton("Разблокировать", onUnlock, modifier = Modifier.fillMaxWidth())
+                    else Surface(
                         onClick = { if (active) c.voice.stop() else listen() },
                         shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(56.dp),

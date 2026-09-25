@@ -71,6 +71,7 @@ import ai.loli.app.ui.components.Pill
 import ai.loli.app.ui.components.PrimaryButton
 import ai.loli.app.ui.components.SecondaryButton
 import ai.loli.app.ui.components.UpdateCard
+import ai.loli.app.ui.components.SetupCard
 import ai.loli.app.ui.components.groupColor
 import ai.loli.app.ui.components.pressScale
 import ai.loli.app.voice.VoiceState
@@ -138,6 +139,7 @@ fun HomeScreen(
             IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         UpdateCard(vm.c)
+        SetupCard(vm.c, settings.assistantName)
         // Сфера и статус всегда на виду — даже когда история разговора длинная.
         Column(Modifier.fillMaxWidth().padding(top = 4.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(

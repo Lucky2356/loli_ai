@@ -31,6 +31,8 @@ data class AssistantSettings(
     val useAI: Boolean = false,
     /** Разрешён ли диалоговый режим (продолжать разговор без обращения по имени). */
     val dialogMode: Boolean = true,
+    /** Телефон заблокирован: облачному AI не передаются память и записи пользователя. */
+    val locked: Boolean = false,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -221,9 +223,10 @@ class AssistantEngine(
     }
 
     private suspend fun planWithAI(provider: AIProvider, text: String, cfg: AssistantSettings): AssistantPlan {
-        val candidates = gatherCandidates(text)
+        // На экране блокировки модель не видит личных данных — ответ не сможет их раскрыть.
+        val candidates = if (cfg.locked) emptyList() else gatherCandidates(text)
         val handles = candidates.associate { it.handle to it.id }
-        val memoryItems = memories.all().take(25)
+        val memoryItems = if (cfg.locked) emptyList() else memories.all().take(25)
         val system = PromptBuilder.build(
             cfg.assistantName, time.now(), time.zone(), memoryItems, candidates, context.focus, context.topic, context.dialogMode,
         )

@@ -40,6 +40,18 @@ enum class SttMode(val id: String, val title: String, val hint: String) {
     }
 }
 
+/** Вызов Лоли кнопками громкости (через спецвозможности). */
+enum class KeyTrigger(val id: String, val title: String, val hint: String) {
+    NONE("none", "Выключено", "Кнопки громкости работают как обычно"),
+    HOLD_VOLUME_UP("hold_up", "Удерживать «Громкость +»", "Полсекунды — и Лоли слушает"),
+    DOUBLE_VOLUME_DOWN("double_down", "Дважды «Громкость −»", "Два быстрых нажатия"),
+    BOTH_VOLUME("both", "Обе кнопки громкости", "Нажать «+» и «−» одновременно");
+
+    companion object {
+        fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: NONE
+    }
+}
+
 enum class ThemeMode(val id: String, val title: String) {
     SYSTEM("system", "Как в системе"), LIGHT("light", "Светлая"), DARK("dark", "Тёмная");
 
@@ -73,6 +85,16 @@ data class AppSettings(
     val dynamicColor: Boolean = false,
     /** Сама скачивать и ставить новые версии. */
     val autoUpdate: Boolean = true,
+    /** Разрешено ли вообще пользоваться Лоли на заблокированном экране. */
+    val lockScreenEnabled: Boolean = true,
+    val lockPolicy: ai.loli.core.assistant.LockPolicy = ai.loli.core.assistant.LockPolicy(),
+    /** Явные решения пользователя: пакет → можно ли Лоли открывать приложение. */
+    val appAccess: Map<String, Boolean> = emptyMap(),
+    /** Обычные (не финансовые и не личные) приложения разрешены, пока пользователь не запретит. */
+    val autoAllowApps: Boolean = true,
+    val keyTrigger: KeyTrigger = KeyTrigger.NONE,
+    /** Вход в приложение по отпечатку/лицу/PIN-коду телефона. */
+    val appLock: Boolean = false,
     val supabaseUrlOverride: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
@@ -112,6 +134,18 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val theme = stringPreferencesKey("theme")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val autoUpdate = booleanPreferencesKey("auto_update")
+        val lockEnabled = booleanPreferencesKey("lock_enabled")
+        val lockCreate = booleanPreferencesKey("lock_create")
+        val lockBasic = booleanPreferencesKey("lock_basic")
+        val lockCalls = booleanPreferencesKey("lock_calls")
+        val lockView = booleanPreferencesKey("lock_view")
+        val lockEdit = booleanPreferencesKey("lock_edit")
+        val lockApps = booleanPreferencesKey("lock_apps")
+        val appsAllowed = stringPreferencesKey("apps_allowed")
+        val appsBlocked = stringPreferencesKey("apps_blocked")
+        val autoAllowApps = booleanPreferencesKey("apps_auto_allow")
+        val keyTrigger = stringPreferencesKey("key_trigger")
+        val appLock = booleanPreferencesKey("app_lock")
         val supabaseUrl = stringPreferencesKey("supabase_url")
         val localOnly = booleanPreferencesKey("local_only")
         val onboarding = booleanPreferencesKey("onboarding_done")
@@ -168,6 +202,16 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             themeMode = ThemeMode.fromId(p[K.theme]),
             dynamicColor = p[K.dynamicColor] ?: false,
             autoUpdate = p[K.autoUpdate] ?: true,
+            lockScreenEnabled = p[K.lockEnabled] ?: true,
+            lockPolicy = ai.loli.core.assistant.LockPolicy(
+                create = p[K.lockCreate] ?: true, basicDevice = p[K.lockBasic] ?: true, calls = p[K.lockCalls] ?: true,
+                view = p[K.lockView] ?: false, edit = p[K.lockEdit] ?: false, apps = p[K.lockApps] ?: false,
+            ),
+            appAccess = p[K.appsAllowed].orEmpty().split('|').filter { it.isNotBlank() }.associateWith { true } +
+                p[K.appsBlocked].orEmpty().split('|').filter { it.isNotBlank() }.associateWith { false },
+            autoAllowApps = p[K.autoAllowApps] ?: true,
+            keyTrigger = KeyTrigger.fromId(p[K.keyTrigger]),
+            appLock = p[K.appLock] ?: false,
             supabaseUrlOverride = p[K.supabaseUrl].orEmpty(),
             localOnly = p[K.localOnly] ?: false,
             onboardingDone = p[K.onboarding] ?: false,
@@ -240,6 +284,21 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setTheme(v: ThemeMode) = store.edit { it[K.theme] = v.id }
     suspend fun setDynamicColor(v: Boolean) = store.edit { it[K.dynamicColor] = v }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
+    suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }
+    suspend fun setLockPolicy(v: ai.loli.core.assistant.LockPolicy) = store.edit {
+        it[K.lockCreate] = v.create; it[K.lockBasic] = v.basicDevice; it[K.lockCalls] = v.calls
+        it[K.lockView] = v.view; it[K.lockEdit] = v.edit; it[K.lockApps] = v.apps
+    }
+    suspend fun setAppAccess(pkg: String, allowed: Boolean) = store.edit { p ->
+        val allowedSet = p[K.appsAllowed].orEmpty().split('|').filter { it.isNotBlank() }.toMutableSet()
+        val blockedSet = p[K.appsBlocked].orEmpty().split('|').filter { it.isNotBlank() }.toMutableSet()
+        if (allowed) { allowedSet += pkg; blockedSet -= pkg } else { blockedSet += pkg; allowedSet -= pkg }
+        p[K.appsAllowed] = allowedSet.joinToString("|")
+        p[K.appsBlocked] = blockedSet.joinToString("|")
+    }
+    suspend fun setAutoAllowApps(v: Boolean) = store.edit { it[K.autoAllowApps] = v }
+    suspend fun setKeyTrigger(v: KeyTrigger) = store.edit { it[K.keyTrigger] = v.id }
+    suspend fun setAppLock(v: Boolean) = store.edit { it[K.appLock] = v }
     suspend fun setSupabaseUrl(v: String) = store.edit { it[K.supabaseUrl] = v.trim() }
     suspend fun setLocalOnly(v: Boolean) = store.edit { it[K.localOnly] = v }
     suspend fun setOnboardingDone(v: Boolean) = store.edit { it[K.onboarding] = v }

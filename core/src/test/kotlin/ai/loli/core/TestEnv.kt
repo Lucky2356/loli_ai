@@ -24,6 +24,7 @@ import java.time.ZoneId
 class TestEnv(
     val time: FixedTimeSource = FixedTimeSource(Instant.parse("2026-09-25T09:00:00Z"), ZoneId.of("Europe/Moscow")),
     device: ai.loli.core.assistant.DeviceController = ai.loli.core.assistant.UnsupportedDevice,
+    lockPolicy: () -> ai.loli.core.assistant.LockPolicy? = { null },
 ) {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { LoliDatabase.Schema.create(it) }
     val store = LocalStore(driver, time, Dispatchers.Unconfined)
@@ -31,7 +32,7 @@ class TestEnv(
     var embeddings: EmbeddingProvider? = null
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
-    val executor = ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device)
+    val executor = ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy)
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
 
