@@ -10,6 +10,7 @@ import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -372,7 +373,7 @@ private fun BottomBar(nav: Navigator) {
 /** Экран «Лоли заблокирована»: системное окно отпечатка/PIN открывается сразу. */
 @Composable
 private fun LockGate(c: AppContainer) {
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     val legacy = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) c.appLock.markUnlocked()
     }
