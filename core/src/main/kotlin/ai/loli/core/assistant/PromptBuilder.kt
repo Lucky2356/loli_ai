@@ -55,6 +55,9 @@ object PromptBuilder {
             - forget_memory {target|query}
             - query_memories {query?}
             - search {query, keywords:[синонимы и близкие по смыслу слова], types?:["note","idea","task","reminder","memory"]}
+            - agenda {date:"YYYY-MM-DD"} — «что у меня на сегодня/завтра»: задачи, напоминания и расходы за день.
+            - delete_last {record_type?:"expense"|"task"|"note"|"idea"|"reminder"|"memory"} — «отмени последнее», «удали последний расход».
+            - update_last_expense {amount?, category?} — «исправь последний расход на 900», «не 850, а 950».
             - clarify {question} — уточняющий вопрос.
 
             Правила:

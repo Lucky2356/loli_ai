@@ -8,6 +8,7 @@ import ai.loli.core.domain.ReminderRepository
 import ai.loli.core.domain.TaskRepository
 import ai.loli.core.model.NoteKind
 import ai.loli.core.model.RecordType
+import ai.loli.core.nlp.Synonyms
 import ai.loli.core.nlp.TextAnalysis
 import ai.loli.core.util.Logger
 import kotlinx.coroutines.CancellationException
@@ -57,10 +58,13 @@ class SearchService(
         limit: Int = 10,
         minScore: Double = 0.2,
         useEmbeddings: Boolean = true,
+        useSynonyms: Boolean = true,
     ): List<SearchHit> {
         val docs = documents(types)
         if (docs.isEmpty() || (query.isBlank() && extraKeywords.isEmpty())) return emptyList()
-        val lexical = docs.associate { it.id to lexicalScore(query, extraKeywords, it) }
+        // Без AI синонимы берутся из встроенного словаря — поиск «по смыслу» работает офлайн.
+        val keywords = extraKeywords.ifEmpty { if (useSynonyms) Synonyms.expand(query) else emptyList() }
+        val lexical = docs.associate { it.id to lexicalScore(query, keywords, it) }
         val semantic = if (useEmbeddings) semanticScores(query, docs) else null
         return docs.map { d ->
             val lex = lexical.getValue(d.id)

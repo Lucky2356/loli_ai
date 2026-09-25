@@ -162,7 +162,7 @@ class AssistantEngineTest {
         assertEquals("Купить продукты", env.store.tasks.all().single().title)
         assertEquals(1, env.scheduler.scheduled.size)
         assertEquals("Я люблю зелёный чай", env.store.memories.all().single().content)
-        val unknown = env.engine.handle("расскажи анекдот")
+        val unknown = env.engine.handle("абракадабра")
         assertTrue(unknown.text.contains("AI не настроен"))
     }
 

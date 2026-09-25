@@ -53,6 +53,11 @@ class ActionExecutor(
             val step = runAction(action, context)
             outcomes += step.outcomes
             step.record?.let { context.touchRecord(it) }
+            if (action is AssistantAction.CreateNote || action is AssistantAction.CreateExpense || action is AssistantAction.CreateTask ||
+                action is AssistantAction.CreateReminder || action is AssistantAction.Remember
+            ) {
+                step.created?.let { context.lastCreated = it } ?: step.record?.let { context.lastCreated = it }
+            }
             step.confirm?.let { confirmOps += it.operations; confirmQuestions += it.question }
             if (step.choice != null) {
                 // Остальные действия подождут ответа пользователя — выполнять их вслепую нельзя.
@@ -105,6 +110,8 @@ class ActionExecutor(
         val record: RecordRef? = null,
         val confirm: PendingConfirmation? = null,
         val choice: PendingChoice? = null,
+        /** Созданная запись, которая не должна становиться фокусом разговора (например, расход). */
+        val created: RecordRef? = null,
     )
 
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
@@ -152,7 +159,10 @@ class ActionExecutor(
                 val e = expenses.create(action.amountMinor, action.currency, action.category, action.description, action.date)
                 val whenText = if (e.occurredOn == today) "" else " (${RuFormat.date(e.occurredOn, today)})"
                 val desc = if (e.description.isNotBlank() && !e.description.equals(e.category, true)) ", ${e.description}" else ""
-                changed("Записала расход: ${Money.format(e.amountMinor, e.currency)} — ${e.category}$desc$whenText.")
+                Step(
+                    listOf(Outcome("Записала расход: ${Money.format(e.amountMinor, e.currency)} — ${e.category}$desc$whenText.", Outcome.Kind.CHANGED)),
+                    created = RecordRef(RecordType.EXPENSE, e.id, "${Money.format(e.amountMinor, e.currency)} — ${e.category}"),
+                )
             }
 
             is AssistantAction.QueryExpenses -> {
@@ -241,9 +251,19 @@ class ActionExecutor(
             }
 
             is AssistantAction.QueryMemories -> {
-                val items = if (action.query.isNullOrBlank()) memories.all().take(10).map { it.content }
-                else search.search(action.query, setOf(RecordType.MEMORY), limit = 10).map { it.doc.title }
-                query(if (items.isEmpty()) "Пока ничего не помню по этому поводу." else "Вот что я помню:\n" + items.joinToString("\n") { "• $it" })
+                if (action.query.isNullOrBlank()) {
+                    val items = memories.all().take(10).map { it.content }
+                    query(if (items.isEmpty()) "Пока ничего не помню о вас. Скажите, например: «запомни, что я люблю зелёный чай»." else "Вот что я помню:\n" + items.joinToString("\n") { "• $it" })
+                } else {
+                    val hits = search.search(action.query, setOf(RecordType.MEMORY), limit = 3, minScore = 0.3)
+                    query(
+                        when {
+                            hits.isEmpty() -> "Вы мне об этом не рассказывали. Скажите «запомни, что…», и я запомню."
+                            hits.size == 1 || hits[0].score - hits[1].score > 0.2 -> "Вы говорили: ${RuFormat.quote(hits[0].doc.title)}."
+                            else -> "Вот что я помню:\n" + hits.joinToString("\n") { "• ${it.doc.title}" }
+                        },
+                    )
+                }
             }
 
             is AssistantAction.Search -> {
@@ -262,6 +282,24 @@ class ActionExecutor(
             }
 
             is AssistantAction.Clarify -> Step(listOf(Outcome(action.question, Outcome.Kind.QUESTION)))
+
+            is AssistantAction.Agenda -> query(agenda(action.date))
+
+            is AssistantAction.DeleteLast -> {
+                val target = lastRecord(action.type, ctx) ?: return query("Не нашла, что удалить.")
+                Step(emptyList(), confirm = PendingConfirmation(
+                    "Удалить ${target.type.titleRu.lowercase()} ${RuFormat.quote(target.title)}?",
+                    listOf(DestructiveOp(target.type, target.id, target.title, cancelOnly = false)),
+                ))
+            }
+
+            is AssistantAction.UpdateLastExpense -> {
+                val lastId = ctx.lastCreated?.takeIf { it.type == RecordType.EXPENSE }?.id
+                val e = (lastId?.let { expenses.get(it) } ?: expenses.all().maxByOrNull { it.createdAt })
+                    ?: return query("Расходов пока нет — нечего исправлять.")
+                val updated = expenses.update(e.copy(amountMinor = action.amountMinor ?: e.amountMinor, category = action.category ?: e.category))
+                changed("Исправила: ${Money.format(updated.amountMinor, updated.currency)} — ${updated.category} (${RuFormat.date(updated.occurredOn, today)}).")
+            }
         }
     }
 
@@ -307,6 +345,53 @@ class ActionExecutor(
         }
         if (bestK == 0 || bestScore < TargetResolver.MIN_SCORE) return null to text
         return words.take(bestK).joinToString(" ") to words.drop(bestK).joinToString(" ")
+    }
+
+    private suspend fun lastRecord(type: RecordType?, ctx: ConversationContext): RecordRef? {
+        if (type == null) return ctx.lastCreated?.let { ref -> ref.takeIf { exists(it) } }
+        ctx.lastCreated?.takeIf { it.type == type && exists(it) }?.let { return it }
+        return when (type) {
+            RecordType.EXPENSE -> expenses.all().maxByOrNull { it.createdAt }?.let { RecordRef(type, it.id, "${Money.format(it.amountMinor, it.currency)} — ${it.category}") }
+            RecordType.TASK -> tasks.all().maxByOrNull { it.createdAt }?.let { RecordRef(type, it.id, it.title) }
+            RecordType.NOTE, RecordType.IDEA -> notes.all(if (type == RecordType.IDEA) NoteKind.IDEA else NoteKind.NOTE).maxByOrNull { it.createdAt }?.let { RecordRef(type, it.id, it.title) }
+            RecordType.REMINDER -> reminders.all().filter { it.active }.maxByOrNull { it.createdAt }?.let { RecordRef(type, it.id, it.text) }
+            RecordType.MEMORY -> memories.all().maxByOrNull { it.createdAt }?.let { RecordRef(type, it.id, it.content) }
+        }
+    }
+
+    private suspend fun exists(ref: RecordRef): Boolean = when (ref.type) {
+        RecordType.EXPENSE -> expenses.get(ref.id) != null
+        RecordType.TASK -> tasks.get(ref.id) != null
+        RecordType.NOTE, RecordType.IDEA -> notes.get(ref.id) != null
+        RecordType.REMINDER -> reminders.get(ref.id) != null
+        RecordType.MEMORY -> memories.get(ref.id) != null
+    }
+
+    /** Сводка дня: задачи (и просроченные — для сегодня), напоминания, расходы. */
+    private suspend fun agenda(date: java.time.LocalDate): String {
+        val today = time.today()
+        val zone = time.zone()
+        val now = time.now()
+        val nowTime = time.zonedNow().toLocalTime()
+        val all = tasks.all()
+        val dayTasks = all.filter { !it.done && it.dueDate == date }
+        val overdue = if (date == today) all.filter { it.isOverdue(today, nowTime) && it.dueDate != today } else emptyList()
+        val dayReminders = reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == date }
+        val spent = if (!date.isAfter(today)) expenses.between(date, date) else emptyList()
+        val dayName = RuFormat.date(date, today)
+        if (dayTasks.isEmpty() && overdue.isEmpty() && dayReminders.isEmpty() && spent.isEmpty()) {
+            val undated = all.count { !it.done && it.dueDate == null }
+            return "На $dayName ничего не запланировано." + if (undated > 0) " Задач без срока: $undated." else ""
+        }
+        val sb = StringBuilder("План на $dayName:")
+        if (dayTasks.isNotEmpty()) sb.append("\nЗадачи:\n" + dayTasks.joinToString("\n") { t -> "• ${t.title}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") })
+        if (overdue.isNotEmpty()) sb.append("\nПросрочено:\n" + overdue.joinToString("\n") { "! ${it.title}" })
+        if (dayReminders.isNotEmpty()) sb.append("\nНапоминания:\n" + dayReminders.joinToString("\n") { "• ${it.text} — ${RuFormat.time(it.triggerAt.atZone(zone).toLocalTime())}" })
+        if (spent.isNotEmpty()) {
+            val sum = spent.groupBy { it.currency }.entries.joinToString(", ") { (c, l) -> Money.format(l.sumOf { it.amountMinor }, c) }
+            sb.append("\nПотрачено: $sum")
+        }
+        return sb.toString()
     }
 
     private fun describeTasks(all: List<TaskItem>, filter: TaskFilter): String {

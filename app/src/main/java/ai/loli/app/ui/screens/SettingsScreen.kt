@@ -91,8 +91,14 @@ fun SettingsScreen(c: AppContainer, onOpenAuth: () -> Unit) {
             }
 
             // ---------- AI ----------
-            Section("Искусственный интеллект") {
-                SwitchRow("Использовать облачный AI", "Без AI работают простые команды офлайн", s.useAI) { v -> scope.launch { c.settings.setUseAI(v) } }
+            Section("Облачный AI (необязательно)") {
+                Text(
+                    "По умолчанию ${s.assistantName} понимает команды прямо на телефоне — без интернета и без API-ключей. " +
+                        "Облачный AI можно включить для свободного разговора и сложных формулировок; " +
+                        "если он недоступен, команды всё равно выполнятся локально.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SwitchRow("Использовать облачный AI", if (s.useAI) "Включено: нужен интернет и API-ключ" else "Выключено: всё работает локально", s.useAI) { v -> scope.launch { c.settings.setUseAI(v) } }
                 var providerMenu by remember { mutableStateOf(false) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Провайдер", modifier = Modifier.weight(1f))

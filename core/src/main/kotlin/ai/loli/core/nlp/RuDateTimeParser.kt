@@ -259,6 +259,15 @@ class RuDateTimeParser {
             if (hour !in 0..23 || minute !in 0..59) return@run
             return Match(count, spec.copy(time = LocalTime.of(hour, minute)))
         }
+        // «в обед», «после обеда», «перед сном», «в конце дня», «с утра»
+        TWO_WORD_TIMES["$w ${at(i + 1)}"]?.let { time ->
+            return Match(2, if (spec.time == null) spec.copy(time = time) else spec)
+        }
+        // «на выходных», «в выходные» — ближайшая суббота
+        if ((w == "на" && at(i + 1) == "выходных") || (w == "в" && at(i + 1) == "выходные")) {
+            val sat = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SATURDAY)).let { if (it == today) it else it }
+            return Match(2, spec.copy(date = sat))
+        }
         PART_OF_DAY_ADVERBS[w]?.let { time ->
             if (spec.time == null) return Match(1, spec.copy(time = time))
             return Match(1, spec)
@@ -310,6 +319,11 @@ class RuDateTimeParser {
             "утром" to LocalTime.of(9, 0), "днем" to LocalTime.of(13, 0),
             "вечером" to LocalTime.of(19, 0), "ночью" to LocalTime.of(23, 0),
         )
+        private val TWO_WORD_TIMES = mapOf(
+            "в обед" to LocalTime.of(13, 0), "после обеда" to LocalTime.of(14, 0), "перед сном" to LocalTime.of(22, 0),
+            "в конце" to null, "с утра" to LocalTime.of(9, 0), "рано утром" to LocalTime.of(7, 0),
+            "поздно вечером" to LocalTime.of(22, 0),
+        ).filterValues { it != null }.mapValues { it.value!! }
         private val RELATIVE_DAYS = mapOf("сегодня" to 0, "завтра" to 1, "послезавтра" to 2, "вчера" to -1, "позавчера" to -2)
         private val WORKDAYS = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
 

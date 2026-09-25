@@ -31,7 +31,8 @@ data class AppSettings(
     val aiProvider: AIProviderType = AIProviderType.OPENAI,
     val aiModel: String = "",
     val aiEndpoint: String = "",
-    val useAI: Boolean = true,
+    /** Облачный AI выключен по умолчанию: команды понимаются локально, без интернета. */
+    val useAI: Boolean = false,
     val embeddingsEnabled: Boolean = true,
     val ttsEnabled: Boolean = true,
     val speechRate: Float = 1.0f,
@@ -84,7 +85,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             aiProvider = AIProviderType.fromId(p[K.provider]),
             aiModel = p[K.model].orEmpty(),
             aiEndpoint = p[K.endpoint].orEmpty(),
-            useAI = p[K.useAI] ?: true,
+            useAI = p[K.useAI] ?: false,
             embeddingsEnabled = p[K.embeddings] ?: true,
             ttsEnabled = p[K.tts] ?: true,
             speechRate = p[K.rate] ?: 1.0f,

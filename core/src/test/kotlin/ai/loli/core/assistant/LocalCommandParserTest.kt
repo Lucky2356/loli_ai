@@ -63,7 +63,9 @@ class LocalCommandParserTest {
     }
 
     @Test fun reminderWithoutTimeAsksWhen() {
-        assertIs<AssistantAction.Clarify>(action("напомни купить молоко"))
+        val plan = assertNotNull(p.parse("напомни купить молоко", now, zone))
+        assertTrue(plan.actions.isEmpty())
+        assertEquals("Купить молоко", assertIs<SlotRequest.ReminderTime>(plan.slot).text)
     }
 
     @Test fun tasks() {
@@ -86,7 +88,7 @@ class LocalCommandParserTest {
         val note = assertIs<AssistantAction.CreateNote>(action("создай заметку «Идеи для дня рождения»"))
         assertEquals("Идеи для дня рождения", note.title)
         val append = assertIs<AssistantAction.AppendNote>(action("добавь туда игру Secret Identity"))
-        assertEquals("игру Secret Identity", append.content)
+        assertEquals("Игру Secret Identity", append.content)
         assertTrue(append.target.isEmpty)
         val toIdea = assertIs<AssistantAction.AppendNote>(action("добавь к идее холодильника возможность сканировать штрихкоды"))
         assertTrue(toIdea.splitQueryFromContent)
@@ -99,7 +101,7 @@ class LocalCommandParserTest {
     }
 
     @Test fun unknownReturnsNull() {
-        assertNull(p.parse("расскажи анекдот про программистов", now, zone))
+        assertNull(p.parse("абракадабра кукареку", now, zone))
     }
 
     @Test fun confirmationWords() {

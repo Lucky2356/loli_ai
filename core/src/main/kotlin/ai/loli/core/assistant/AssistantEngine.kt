@@ -26,8 +26,8 @@ enum class InputSource { TEXT, VOICE, WAKE_WORD }
 
 data class AssistantSettings(
     val assistantName: String = "Лоли",
-    /** false — работать только офлайн-парсером, не обращаясь к облачному AI. */
-    val useAI: Boolean = true,
+    /** Облачный AI необязателен: по умолчанию всё понимается локально, без интернета. */
+    val useAI: Boolean = false,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -120,11 +120,19 @@ class AssistantEngine(
                 context.touchRecord(chosen)
                 val kept = context.pendingConfirmation
                 val actions = listOf(withTarget(choice.action, chosen.id)) + choice.remaining
-                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept)
+                return execute(AssistantPlan("", actions), usedAI = false, offline = false, carriedConfirmation = kept, name = cfg.assistantName)
             }
             context.pendingConfirmation = null
         }
-        // 3. Завершение диалогового режима.
+        // 3. Дозаполнение недостающих данных («Сколько потратили?» → «500»).
+        context.pendingSlot?.let { slot ->
+            context.pendingSlot = null
+            if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote) return AssistantReply("Хорошо, отменила.")
+            localParser.fillSlot(slot, text, time.now(), time.zone())?.let { filled ->
+                return execute(filled, usedAI = false, offline = false, name = cfg.assistantName)
+            }
+        }
+        // 4. Завершение диалогового режима.
         if (context.dialogMode && LocalCommandParser.isDialogEnd(text)) {
             context.dialogMode = false
             return AssistantReply("Хорошо! Если что — зовите.")
@@ -136,7 +144,7 @@ class AssistantEngine(
             if (provider != null) {
                 try {
                     val plan = planWithAI(provider, text, cfg)
-                    return execute(plan, usedAI = true, offline = false)
+                    return execute(plan, usedAI = true, offline = false, name = cfg.assistantName)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: AIException) {
@@ -145,9 +153,9 @@ class AssistantEngine(
                 }
             }
         }
-        val local = localParser.parse(text, time.now(), time.zone())
+        val local = localParser.parse(text, time.now(), time.zone()) ?: localFallback(text, cfg)
         if (local != null) {
-            val reply = execute(local, usedAI = false, offline = cfg.useAI)
+            val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
             val note = when (aiError) {
                 is AIException.Unauthorized -> " (AI: ключ не принят — выполнено офлайн)"
                 null -> ""
@@ -156,14 +164,14 @@ class AssistantEngine(
             return reply.copy(text = reply.text + note)
         }
         val reason = when {
-            !cfg.useAI -> "Облачный AI выключен в настройках."
-            aiError is AIException.NotConfigured || aiError == null -> "AI не настроен — добавьте API-ключ в настройках."
-            else -> aiError?.message ?: "AI недоступен."
+            !cfg.useAI -> "Не совсем поняла."
+            aiError is AIException.NotConfigured || aiError == null -> "Не поняла, а облачный AI не настроен."
+            else -> "Не поняла, а облачный AI недоступен: ${aiError?.message}"
         }
         return AssistantReply(
-            "$reason Без AI я понимаю простые команды: «потратила 500 рублей на продукты», «добавь задачу…», " +
-                "«напомни завтра в 10 утра…», «запиши идею…», «запомни, что…», «сколько я потратила в этом месяце».",
-            offline = true,
+            "$reason Попробуйте сказать иначе, например: «потратила 500 рублей на продукты», «добавь задачу…», " +
+                "«напомни завтра в 10 утра…», «что у меня на сегодня». Скажите «что ты умеешь» — расскажу подробнее.",
+            offline = cfg.useAI,
         )
     }
 
@@ -213,6 +221,7 @@ class AssistantEngine(
         usedAI: Boolean,
         offline: Boolean,
         carriedConfirmation: PendingConfirmation? = null,
+        name: String = "Лоли",
     ): AssistantReply {
         val executed = executor.execute(plan.actions, context)
         // Подтверждение, заданное до уточнения, не теряется — объединяем с новыми.
@@ -234,11 +243,19 @@ class AssistantEngine(
         }
         result.pendingConfirmation?.let { parts += it.question }
         if (plan.rejected.isNotEmpty()) parts += "Часть команды не выполнила: ${plan.rejected.joinToString("; ")}."
-        val awaitingAnswer = result.pendingChoice != null || result.outcomes.any { it.kind == Outcome.Kind.QUESTION }
-        val followUp = plan.expectFollowUp || awaitingAnswer || result.pendingConfirmation != null
+        if (plan.preface.isNotBlank()) parts.add(0, plan.preface)
+        // Недостающие данные спрашиваем после выполненного (если уточнений по записям не требуется).
+        plan.slot?.takeIf { result.pendingChoice == null }?.let { slot ->
+            context.pendingSlot = slot
+            if (plan.actions.isEmpty()) parts.clear()
+            parts += slot.question
+        }
+        val awaitingAnswer = result.pendingChoice != null || plan.slot != null || result.outcomes.any { it.kind == Outcome.Kind.QUESTION }
         if (plan.expectFollowUp) context.dialogMode = true
+        // В диалоге продолжаем слушать, пока пользователь не скажет «хватит» (или не замолчит).
+        val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
         return AssistantReply(
-            text = parts.filter { it.isNotBlank() }.joinToString("\n").trim(),
+            text = parts.filter { it.isNotBlank() }.joinToString("\n").trim().replace("{name}", name),
             outcomes = result.outcomes,
             awaitingConfirmation = result.pendingConfirmation != null,
             awaitingAnswer = awaitingAnswer,
@@ -247,6 +264,28 @@ class AssistantEngine(
             offline = offline,
             changedData = changed,
         )
+    }
+
+    /**
+     * Фраза не распознана локальными правилами:
+     *  - в диалоге о записи (мозговой штурм) — дописываем сказанное в неё;
+     *  - повествовательная фраза — предлагаем сохранить заметкой (не теряем мысль);
+     *  - иначе — null (подсказка, что умею).
+     */
+    private fun localFallback(text: String, cfg: AssistantSettings): AssistantPlan? {
+        val focus = context.focus
+        if (context.dialogMode && focus != null && (focus.type == RecordType.NOTE || focus.type == RecordType.IDEA)) {
+            return AssistantPlan(
+                "", listOf(AssistantAction.AppendNote(TargetRef(focus.id, null, setOf(focus.type)), text.trim().replaceFirstChar { it.uppercase() })),
+                expectFollowUp = true,
+            )
+        }
+        val words = text.trim().split(Regex("\\s+")).size
+        val question = text.trim().endsWith("?")
+        if (!cfg.useAI && words >= 3 && !question) {
+            return AssistantPlan("", emptyList(), slot = SlotRequest.SaveAsNote(text.trim(), "Не совсем поняла команду. Сохранить это как заметку?"))
+        }
+        return null
     }
 
     private fun matchOptionByTitle(text: String, options: List<RecordRef>): Int? {

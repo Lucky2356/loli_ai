@@ -20,7 +20,7 @@ object TextAnalysis {
     fun stems(text: String): List<String> = words(text).filter { it !in stopWords && it.length > 1 }.map { w ->
         // Для коротких слов Snowball срезает слишком много («идеи» → «ид»), оставляем минимум 3 буквы.
         val s = RuStemmer.stem(w)
-        if (s.length < 3 && w.length >= 3) w.take(3) else s
+        if (s.length < 3 && w.length >= 4) w.take(3) else s
     }
 
     fun levenshtein(a: String, b: String): Int {

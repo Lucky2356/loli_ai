@@ -31,7 +31,7 @@ class TestEnv(
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
     val executor = ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time)
-    var settings = AssistantSettings()
+    var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
 
     val engine = AssistantEngine(

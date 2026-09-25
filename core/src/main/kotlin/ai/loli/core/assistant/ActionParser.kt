@@ -148,6 +148,14 @@ class ActionParser(
                 AssistantAction.Search(query, keywords, types)
             }
             "clarify" -> AssistantAction.Clarify(text(a.s("question"), 500).ifEmpty { throw ValidationException("пустой уточняющий вопрос") })
+            "agenda" -> AssistantAction.Agenda(a.s("date")?.let { parseDate(it) } ?: today)
+            "delete_last", "undo" -> AssistantAction.DeleteLast(RecordType.fromWire(a.s("record_type")))
+            "update_last_expense" -> {
+                val amount = a.d("amount")?.takeIf { it > 0 && it <= 1_000_000_000 }?.let { Money.toMinor(it) }
+                val category = a.s("category")?.takeIf { it.isNotBlank() }?.let { ExpenseCategories.normalize(it) }
+                if (amount == null && category == null) throw ValidationException("нечего исправить в расходе")
+                AssistantAction.UpdateLastExpense(amount, category)
+            }
             "none", "reply", "answer" -> null
             else -> throw ValidationException("неизвестное действие «$type»")
         }

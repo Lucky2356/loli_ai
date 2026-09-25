@@ -28,6 +28,8 @@ data class PendingChoice(
  * Краткосрочный контекст диалога. Ограничен по числу реплик, объёму и времени бездействия,
  * чтобы история не росла бесконечно и старая тема не «прилипала» к новым командам.
  */
+private val DIALOG_IDLE: Duration = Duration.ofMinutes(3)
+
 class ConversationContext(
     private val time: TimeSource,
     private val maxMessages: Int = 12,
@@ -42,6 +44,10 @@ class ConversationContext(
     var pendingConfirmation: PendingConfirmation? = null
     var pendingChoice: PendingChoice? = null
     var dialogMode: Boolean = false
+    /** Ожидаем дозаполнения (сумма расхода, время напоминания, «сохранить как заметку?»). */
+    var pendingSlot: SlotRequest? = null
+    /** Последняя созданная в разговоре запись — для «отмени последнее». */
+    var lastCreated: RecordRef? = null
     private var lastActivity: Instant = time.now()
 
     val messages: List<ChatMessage> get() = turns.toList()
@@ -50,8 +56,11 @@ class ConversationContext(
     /** Сбрасывает контекст, если пользователь долго молчал. Возвращает true при сбросе. */
     fun touch(): Boolean {
         val now = time.now()
-        val expired = Duration.between(lastActivity, now) > ttl
+        val idle = Duration.between(lastActivity, now)
+        val expired = idle > ttl
         if (expired) reset()
+        // Диалог (мозговой штурм) завершается сам после короткой паузы.
+        if (dialogMode && idle > DIALOG_IDLE) dialogMode = false
         lastActivity = now
         return expired
     }
@@ -80,7 +89,8 @@ class ConversationContext(
         conversationId = Ids.newId()
         turns.clear(); recentRecords.clear()
         focus = null; topic = null
-        pendingConfirmation = null; pendingChoice = null
+        pendingConfirmation = null; pendingChoice = null; pendingSlot = null
+        lastCreated = null
         dialogMode = false
     }
 }

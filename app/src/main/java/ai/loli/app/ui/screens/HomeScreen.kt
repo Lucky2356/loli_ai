@@ -98,7 +98,12 @@ fun HomeScreen(vm: HomeViewModel, onOpen: (String) -> Unit, onMicClick: () -> Un
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     StatusChip(if (online) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff, if (online) "Онлайн" else "Офлайн") {}
-                    StatusChip(Icons.Outlined.Psychology, if (vm.aiConfigured() && settings.useAI) "AI: ${settings.effectiveModel}" else "AI не настроен") { onOpen("settings") }
+                    val aiText = when {
+                        !settings.useAI -> "Локальный режим"
+                        vm.aiConfigured() -> "AI: ${settings.effectiveModel}"
+                        else -> "AI: нет ключа"
+                    }
+                    StatusChip(Icons.Outlined.Psychology, aiText) { onOpen("settings") }
                     val syncText = when {
                         auth !is AuthState.SignedIn -> "Только на устройстве"
                         sync is SyncStatus.Running -> "Синхронизация…"
@@ -137,8 +142,8 @@ fun HomeScreen(vm: HomeViewModel, onOpen: (String) -> Unit, onMicClick: () -> Un
                     ElevatedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Column(Modifier.padding(16.dp)) {
                             Text(r.text, style = MaterialTheme.typography.bodyLarge)
-                            if (r.offline) {
-                                Text("Выполнено без облачного AI", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (r.offline && settings.useAI) {
+                                Text("AI недоступен — выполнено локально", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(top = 6.dp))
                             }
                             if (r.awaitingConfirmation) {

@@ -25,13 +25,21 @@ object RuNumbers {
         "сто" to 100, "двести" to 200, "триста" to 300, "четыреста" to 400, "пятьсот" to 500,
         "шестьсот" to 600, "семьсот" to 700, "восемьсот" to 800, "девятьсот" to 900,
     )
-    private val thousandWords = setOf("тысяча", "тысячи", "тысяч", "тысячу", "тыс", "тысячей", "к")
+    private val thousandWords = setOf(
+        "тысяча", "тысячи", "тысяч", "тысячу", "тыс", "тысячей", "к",
+        "тыща", "тыщи", "тыщ", "тыщу", "косарь", "косаря", "косарей", "косарю",
+    )
+    /** Разговорные суммы: «полтинник», «сотка», «пятихатка». */
+    private val slang = mapOf(
+        "полтинник" to 50, "полтос" to 50, "сотка" to 100, "сотку" to 100, "сотню" to 100, "сотни" to 100,
+        "пятихатка" to 500, "пятихатку" to 500, "пятисотка" to 500, "пятисотку" to 500,
+    )
     private val millionWords = setOf("миллион", "миллиона", "миллионов", "млн")
     private val halfWords = setOf("полторы", "полтора")
     private val pairWords = setOf("пару", "пара", "пары")
 
     fun isNumberWord(w: String): Boolean =
-        w in units || w in teens || w in tens || w in hundreds || w in halfWords || w in pairWords ||
+        w in units || w in teens || w in tens || w in hundreds || w in halfWords || w in pairWords || w in slang ||
             w in thousandWords.minus("к") || w in millionWords
 
     /** Объединяет подряд идущие числительные (и цифры с множителями «тысяч») в один числовой токен. */
@@ -80,6 +88,7 @@ object RuNumbers {
                 w in units -> { if (hasU || hasDigits) break@loop; group += units.getValue(w); hasU = true }
                 w in halfWords -> { if (anyInGroup) break@loop; group = 1.5; hasDigits = true }
                 w in pairWords -> { if (anyInGroup) break@loop; group = 2.0; hasDigits = true }
+                w in slang -> { if (anyInGroup) break@loop; group = slang.getValue(w).toDouble(); hasDigits = true }
                 w in thousandWords || w in millionWords -> {
                     if (lastWasMultiplier) break@loop
                     if (w == "к" && (!anyInGroup || i == 0 || t.start != tokens[i - 1].end)) break@loop // «2к» — только слитно

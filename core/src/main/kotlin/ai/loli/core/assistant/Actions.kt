@@ -88,6 +88,32 @@ sealed interface AssistantAction {
     data class Search(val query: String, val keywords: List<String>, val types: Set<RecordType>?) : AssistantAction
 
     data class Clarify(val question: String) : AssistantAction
+
+    /** «Что у меня на сегодня/завтра»: задачи, напоминания и расходы за день. */
+    data class Agenda(val date: LocalDate) : AssistantAction
+
+    /** «Отмени последнее», «удали последний расход». [type] = null — последняя созданная в разговоре запись. */
+    data class DeleteLast(val type: RecordType?) : AssistantAction { override val isDestructive = true }
+
+    /** «Исправь последний расход на 900», «поменяй категорию на кафе». */
+    data class UpdateLastExpense(val amountMinor: Long?, val category: String?) : AssistantAction
+}
+
+/** Недостающие данные, которые ассистент спросит у пользователя и дозаполнит следующей репликой. */
+sealed interface SlotRequest {
+    val question: String
+
+    data class ExpenseAmount(
+        val category: String,
+        val description: String,
+        val date: LocalDate,
+        override val question: String,
+    ) : SlotRequest
+
+    data class ReminderTime(val text: String, override val question: String) : SlotRequest
+
+    /** Фраза не распознана — предложить сохранить её заметкой. */
+    data class SaveAsNote(val text: String, override val question: String) : SlotRequest
 }
 
 enum class TaskFilter(val wire: String) {
@@ -106,4 +132,8 @@ data class AssistantPlan(
     val topic: String? = null,
     /** Действия, отброшенные валидатором, с причинами (для честного ответа пользователю). */
     val rejected: List<String> = emptyList(),
+    /** Недостающие данные, о которых нужно спросить. */
+    val slot: SlotRequest? = null,
+    /** Текст перед результатами («Доброе утро!»). */
+    val preface: String = "",
 )
