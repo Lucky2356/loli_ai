@@ -19,18 +19,22 @@ data class Recurrence(
     val daysOfWeek: Set<DayOfWeek> = emptySet(),
     val time: LocalTime? = null,
     val dayOfMonth: Int? = null,
+    /** Месяц для ежегодного правила (дни рождения, годовщины). */
+    val month: Int? = null,
 ) {
-    enum class Frequency { HOURLY, DAILY, WEEKLY, MONTHLY }
+    enum class Frequency { HOURLY, DAILY, WEEKLY, MONTHLY, YEARLY }
 
     init {
         require(interval in 1..366) { "interval out of range" }
         require(dayOfMonth == null || dayOfMonth in 1..31) { "dayOfMonth out of range" }
+        require(month == null || month in 1..12) { "month out of range" }
     }
 
     fun encode(): String = buildList {
         add("FREQ=${frequency.name}")
         add("INTERVAL=$interval")
         if (daysOfWeek.isNotEmpty()) add("BYDAY=" + daysOfWeek.sorted().joinToString(",") { DAY_CODES.getValue(it) })
+        if (month != null) add("BYMONTH=$month")
         if (dayOfMonth != null) add("BYMONTHDAY=$dayOfMonth")
         if (time != null) add("TIME=%02d:%02d".format(time.hour, time.minute))
     }.joinToString(";")
@@ -96,6 +100,20 @@ data class Recurrence(
                 }
                 at(base.toLocalDate().plusMonths(interval.toLong()), t, zone).toInstant()
             }
+            Frequency.YEARLY -> {
+                val anchorZ = anchor.atZone(zone)
+                val t = time ?: anchorZ.toLocalTime()
+                val m = month ?: anchorZ.monthValue
+                val dom = dayOfMonth ?: anchorZ.dayOfMonth
+                var year = base.year
+                repeat(interval + 2) {
+                    val ym = java.time.YearMonth.of(year, m)
+                    val candidate = at(ym.atDay(minOf(dom, ym.lengthOfMonth())), t, zone)
+                    if (candidate.isAfter(base) && (year - anchorZ.year).mod(interval) == 0) return candidate.toInstant()
+                    year++
+                }
+                at(base.toLocalDate().plusYears(interval.toLong()), t, zone).toInstant()
+            }
         }
     }
 
@@ -117,6 +135,8 @@ data class Recurrence(
             }
             Frequency.MONTHLY -> (if (interval == 1) "каждый месяц" else "каждые $interval мес.") +
                 (dayOfMonth?.let { " $it-го числа" } ?: "") + timePart
+            Frequency.YEARLY -> (if (interval == 1) "каждый год" else "раз в $interval г.") +
+                (if (month != null && dayOfMonth != null) " $dayOfMonth ${MONTHS_GEN[month - 1]}" else "") + timePart
         }
     }
 
@@ -125,6 +145,7 @@ data class Recurrence(
             DayOfWeek.MONDAY to "MO", DayOfWeek.TUESDAY to "TU", DayOfWeek.WEDNESDAY to "WE",
             DayOfWeek.THURSDAY to "TH", DayOfWeek.FRIDAY to "FR", DayOfWeek.SATURDAY to "SA", DayOfWeek.SUNDAY to "SU",
         )
+        private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
         private val CODE_DAYS = DAY_CODES.entries.associate { (k, v) -> v to k }
         private val EVERY_DAY_RU = mapOf(
             DayOfWeek.MONDAY to "каждый понедельник", DayOfWeek.TUESDAY to "каждый вторник",
@@ -151,6 +172,7 @@ data class Recurrence(
                     daysOfWeek = parts["BYDAY"]?.split(",")?.mapNotNull(::dayFromCode)?.toSet() ?: emptySet(),
                     time = parts["TIME"]?.let { LocalTime.parse(it) },
                     dayOfMonth = parts["BYMONTHDAY"]?.toIntOrNull(),
+                    month = parts["BYMONTH"]?.toIntOrNull(),
                 )
             }.getOrNull()
         }

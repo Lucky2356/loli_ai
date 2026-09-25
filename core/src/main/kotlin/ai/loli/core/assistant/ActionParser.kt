@@ -199,6 +199,7 @@ class ActionParser(
             "daily" -> Recurrence.Frequency.DAILY
             "weekly" -> Recurrence.Frequency.WEEKLY
             "monthly" -> Recurrence.Frequency.MONTHLY
+            "yearly", "annually" -> Recurrence.Frequency.YEARLY
             else -> throw ValidationException("неизвестная периодичность напоминания")
         }
         val interval = (r.d("interval") ?: 1.0).toInt()

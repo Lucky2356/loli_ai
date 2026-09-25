@@ -1,6 +1,7 @@
 package ai.loli.core.finance
 
 import ai.loli.core.model.Expense
+import ai.loli.core.nlp.ExpenseCategories
 import ai.loli.core.nlp.Money
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -63,8 +64,11 @@ object ExpenseAnalytics {
     }
 
     fun report(expenses: List<Expense>, range: DateRange, category: String? = null, preferredCurrency: String = "RUB"): ExpenseReport {
+        val incomeReport = category == ExpenseCategories.INCOME
         val inRange = expenses.filter { !it.occurredOn.isBefore(range.from) && !it.occurredOn.isAfter(range.to) }
-            .filter { category == null || matchesCategory(it, category) }
+            // Доходы — отдельно: в отчёт о тратах не попадают, а отчёт о доходах содержит только их.
+            .filter { (it.category == ExpenseCategories.INCOME) == incomeReport }
+            .filter { category == null || incomeReport || matchesCategory(it, category) }
         val byCurrency = inRange.groupBy { it.currency }
         val main = if (byCurrency.containsKey(preferredCurrency) || byCurrency.isEmpty()) preferredCurrency
         else byCurrency.maxBy { it.value.size }.key
@@ -93,6 +97,11 @@ object ExpenseAnalytics {
     /** Текст ответа на русском для голоса и чата. */
     fun describe(report: ExpenseReport, mode: ReportMode): String {
         val period = report.range.label
+        if (report.category == ExpenseCategories.INCOME) {
+            if (report.count == 0) return "Доходов ${report.range.label} не записано."
+            return "${period.replaceFirstChar { it.uppercase() }} доходы: ${Money.format(report.totalMinor, report.currency)} — " +
+                plural(report.count, "поступление", "поступления", "поступлений") + "."
+        }
         val cat = report.category?.let { " на «$it»" } ?: ""
         if (report.count == 0) return "Расходов$cat $period не нашла."
         val total = Money.format(report.totalMinor, report.currency)

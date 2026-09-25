@@ -109,7 +109,7 @@ object DevicePhrases {
         re("""^(?:разбуди(?:\s+меня)?|поставь будильник|заведи будильник|установи будильник|будильник|подними меня)\s*(?:на|в|к)?\s*(.+)$""").find(t)?.let { m ->
             alarmTime(m.groupValues[1])?.let { (time, days) -> return cmd(DeviceCommand.Alarm(time, "", days)) }
         }
-        if (re("""^(?:покажи|какие|мои)\s+будильник""").containsMatchIn(t)) return cmd(DeviceCommand.ShowAlarms)
+        if (re("""^(?:покажи|какие|мои)\s+будильник|^(?:выключи|отключи|удали|отмени|убери)\s+(?:все\s+)?будильник""").containsMatchIn(t)) return cmd(DeviceCommand.ShowAlarms)
 
         // Системные действия (через спецвозможности).
         val global = when {
@@ -245,6 +245,13 @@ object DevicePhrases {
                 return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
             }
         }
+        // «напиши Саше привет» — без запятой, как пишет распознавание речи. Кому — слово в дательном падеже.
+        re("""^(?:напиши|отправь\s+(?:смс|сообщение))\s+(\S+[еуюиам])\s+(.+)$""").find(t)?.let {
+            val who = it.groupValues[1]
+            if (who !in NOT_RECIPIENTS && !re("""^(?:заметк|иде|задач|список|списк|себе|мне|письм|текст|сообщени|смс|отзыв|пост|стих|сочинени|код)""").containsMatchIn(who)) {
+                return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
+            }
+        }
 
         // Маршрут.
         re("""^(?:построй\s+маршрут|проложи\s+маршрут|как\s+(?:доехать|добраться|пройти)|маршрут|навигатор|поехали)\s+(?:до|к|в|на)\s+(.+)$""").find(t)?.let {
@@ -257,15 +264,24 @@ object DevicePhrases {
             if (q.isNotEmpty()) return cmd(DeviceCommand.WebSearch(q))
         }
 
+        // Погода, курсы валют, новости, пробки — нужны свежие данные: открываем поиск.
+        if (re("""^(?:какая|какой|что с|что по)\s+(?:сегодня\s+|завтра\s+|сейчас\s+)?(?:погод|курс|пробк)|^погода\b|^курс\s+(?:доллар|евро|юан|рубл|биткоин)|^(?:какие|последние)\s+новости|^новости$|^(?:будет ли|пойд[её]т ли)\s+(?:сегодня\s+|завтра\s+)?(?:дождь|снег)""").containsMatchIn(t)) {
+            return cmd(DeviceCommand.WebSearch(t))
+        }
+
         // Открыть приложение: «открой телеграм», «запусти камеру». Разделы самого ассистента — не приложения.
         re("""^(?:открой|запусти|включи)\s+(?:приложение\s+)?(.+)$""").find(t)?.let { m ->
             val name = m.groupValues[1].trim()
+            // «открой телеграм и напиши Саше» — это две команды: имя приложения не может содержать союз.
+            if (re("""\s(?:и|а|потом|затем|но)\s|,""").containsMatchIn(name)) return null
             if (name.isNotEmpty() && name !in OWN_SECTIONS && !re("""^(?:заметк|иде|задач|расход|напоминани|список|памят|музык)""").containsMatchIn(name)) {
                 return cmd(DeviceCommand.OpenApp(name))
             }
         }
         return null
     }
+
+    private val NOT_RECIPIENTS = setOf("мне", "нам", "все", "всем", "что", "про", "это", "по")
 
     private val OWN_SECTIONS = setOf("заметки", "идеи", "задачи", "расходы", "напоминания", "историю", "память", "настройки ассистента")
 
@@ -364,11 +380,12 @@ object DevicePhrases {
 
     /** «Сколько времени в Токио», «который час в Нью-Йорке». */
     private fun worldTime(t: String): String? {
-        val m = re("""(?:сколько\s+(?:сейчас\s+)?времени|который\s+(?:сейчас\s+)?час|какое\s+время)\s+(?:сейчас\s+)?(?:в|во)\s+(.+)$""").find(t) ?: return null
+        val m = re("""(?:сколько\s+(?:сейчас\s+)?времени|который\s+(?:сейчас\s+)?час|какое\s+(?:сейчас\s+)?время|^время)\s+(?:сейчас\s+)?(?:в|во)\s+(.+)$""").find(t) ?: return null
         val place = m.groupValues[1].trim()
         val zone = cities.entries.firstOrNull { place.startsWith(it.key) || place.contains(it.key) }?.value ?: return null
         val time = java.time.ZonedDateTime.now(ZoneId.of(zone))
-        return "В ${place.replaceFirstChar { it.uppercase() }} сейчас ${RuFormat.time(time.toLocalTime())}."
+        val title = place.split(" ").joinToString(" ") { w -> w.split("-").joinToString("-") { it.replaceFirstChar { c -> c.uppercase() } } }
+        return "В $title сейчас ${RuFormat.time(time.toLocalTime())}."
     }
 
     private fun targetDate(s: String, today: LocalDate): LocalDate? {

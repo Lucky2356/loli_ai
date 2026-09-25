@@ -6,6 +6,8 @@ package ai.loli.core.nlp
  */
 object ExpenseCategories {
     const val OTHER = "Другое"
+    /** Доходы хранятся вместе с операциями, но в траты не входят. */
+    const val INCOME = "Доходы"
 
     private val categories: List<Pair<String, List<String>>> = listOf(
         "Продукты" to listOf("продукт", "продуктов", "магаз", "дикси", "азбук", "метро кэш", "самокат", "бахрома", "фрукты", "мясо", "рыб", "сыр", "яйц", "круп", "бакале", "продукты", "еда домой", "магазин", "супермаркет", "пятерочк", "перекрест", "магнит", "ашан", "лент", "вкусвилл", "овощ", "фрукт", "молок", "хлеб", "мяс", "grocer", "food", "groceries", "продуктов"),
@@ -28,7 +30,7 @@ object ExpenseCategories {
         "Электроника" to listOf("электроник", "ноутбук", "смартфон", "наушник", "гаджет", "компьютер"),
     )
 
-    val all: List<String> = categories.map { it.first } + OTHER
+    val all: List<String> = categories.map { it.first } + OTHER + INCOME
 
     /** Определяет категорию по свободному тексту описания. */
     fun categorize(text: String): String {

@@ -67,217 +67,219 @@ class AndroidDeviceController(
         }
     }
 
-    private suspend fun run(c: DeviceCommand): DeviceResult = when (c) {
-        is DeviceCommand.Timer -> {
-            val what = DevicePhrases.describeDuration(c.seconds)
-            val intent = Intent(AlarmClock.ACTION_SET_TIMER)
-                .putExtra(AlarmClock.EXTRA_LENGTH, c.seconds)
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Лоли" })
-            if (launcher.launch(intent)) DeviceResult("Таймер на $what запущен.")
-            else {
-                fallbackReminder("Таймер: $what прошло", Instant.now().plusSeconds(c.seconds.toLong()))
-                DeviceResult("Засекла $what — напомню, когда время выйдет.")
+    private suspend fun run(c: DeviceCommand): DeviceResult {
+        return when (c) {
+            is DeviceCommand.Timer -> {
+                val what = DevicePhrases.describeDuration(c.seconds)
+                val intent = Intent(AlarmClock.ACTION_SET_TIMER)
+                    .putExtra(AlarmClock.EXTRA_LENGTH, c.seconds)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Лоли" })
+                if (launcher.launch(intent)) DeviceResult("Таймер на $what запущен.")
+                else {
+                    fallbackReminder("Таймер: $what прошло", Instant.now().plusSeconds(c.seconds.toLong()))
+                    DeviceResult("Засекла $what — напомню, когда время выйдет.")
+                }
             }
-        }
-        is DeviceCommand.Alarm -> {
-            val time = RuFormat.time(c.time)
-            val intent = Intent(AlarmClock.ACTION_SET_ALARM)
-                .putExtra(AlarmClock.EXTRA_HOUR, c.time.hour)
-                .putExtra(AlarmClock.EXTRA_MINUTES, c.time.minute)
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Лоли" })
-            if (c.days.isNotEmpty()) {
-                intent.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, ArrayList(c.days.map { (it.value % 7) + 1 }))
+            is DeviceCommand.Alarm -> {
+                val time = RuFormat.time(c.time)
+                val intent = Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, c.time.hour)
+                    .putExtra(AlarmClock.EXTRA_MINUTES, c.time.minute)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, c.label.ifBlank { "Лоли" })
+                if (c.days.isNotEmpty()) {
+                    intent.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, ArrayList(c.days.map { (it.value % 7) + 1 }))
+                }
+                if (launcher.launch(intent)) DeviceResult("Будильник на $time поставлен${if (c.days.isNotEmpty()) ", с повтором" else ""}.")
+                else {
+                    fallbackReminder("Будильник $time", nextOccurrence(c.time))
+                    DeviceResult("Поставила напоминание-будильник на $time.")
+                }
             }
-            if (launcher.launch(intent)) DeviceResult("Будильник на $time поставлен${if (c.days.isNotEmpty()) ", с повтором" else ""}.")
-            else {
-                fallbackReminder("Будильник $time", nextOccurrence(c.time))
-                DeviceResult("Поставила напоминание-будильник на $time.")
+            DeviceCommand.ShowAlarms -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю будильники.", "Будильники")
+            DeviceCommand.Stopwatch -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю часы — секундомер там.", "Часы")
+            is DeviceCommand.OpenApp -> {
+                val app = findApp(c.name) ?: return DeviceResult("Не нашла приложение «${c.name}».", ok = false)
+                if (!access.isAllowed(app.first, app.second)) {
+                    return DeviceResult("Открывать «${app.second}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
+                }
+                val launch = context.packageManager.getLaunchIntentForPackage(app.first)
+                    ?: return DeviceResult("Приложение «${app.second}» нельзя открыть.", ok = false)
+                open(launch, "Открываю ${app.second}.", app.second)
             }
-        }
-        DeviceCommand.ShowAlarms -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю будильники.", "Будильники")
-        DeviceCommand.Stopwatch -> open(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Открываю часы — секундомер там.", "Часы")
-        is DeviceCommand.OpenApp -> {
-            val app = findApp(c.name) ?: return DeviceResult("Не нашла приложение «${c.name}».", ok = false)
-            if (!access.isAllowed(app.first, app.second)) {
-                return DeviceResult("Открывать «${app.second}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
+            is DeviceCommand.Call -> {
+                val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
+                open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))), "Набираю ${name ?: number} — нажмите вызов.", "Звонок")
             }
-            val launch = context.packageManager.getLaunchIntentForPackage(app.first)
-                ?: return DeviceResult("Приложение «${app.second}» нельзя открыть.", ok = false)
-            open(launch, "Открываю ${app.second}.", app.second)
-        }
-        is DeviceCommand.Call -> {
-            val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
-            open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))), "Набираю ${name ?: number} — нажмите вызов.", "Звонок")
-        }
-        is DeviceCommand.Message -> {
-            val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
-            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", c.text)
-            open(intent, "Сообщение для ${name ?: number} готово — осталось отправить.", "Сообщение")
-        }
-        is DeviceCommand.Flashlight -> {
-            val cm = context.getSystemService(CameraManager::class.java)
-            val id = cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
-                ?: return DeviceResult("На этом телефоне нет вспышки.", ok = false)
-            cm.setTorchMode(id, c.on)
-            DeviceResult(if (c.on) "Фонарик включён." else "Фонарик выключен.")
-        }
-        DeviceCommand.Battery -> {
-            val bm = context.getSystemService(BatteryManager::class.java)
-            val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            val charging = bm.isCharging
-            DeviceResult("Заряд $level%${if (charging) ", телефон заряжается" else ""}.")
-        }
-        is DeviceCommand.Media -> {
-            val code = when (c.action) {
-                MediaAction.PLAY -> KeyEvent.KEYCODE_MEDIA_PLAY
-                MediaAction.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
-                MediaAction.NEXT -> KeyEvent.KEYCODE_MEDIA_NEXT
-                MediaAction.PREVIOUS -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            is DeviceCommand.Message -> {
+                val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", c.text)
+                open(intent, "Сообщение для ${name ?: number} готово — осталось отправить.", "Сообщение")
             }
-            val am = context.getSystemService(AudioManager::class.java)
-            am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
-            am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
-            DeviceResult(
-                when (c.action) {
-                    MediaAction.PLAY -> "Включаю."
-                    MediaAction.PAUSE -> "Пауза."
-                    MediaAction.NEXT -> "Следующий трек."
-                    MediaAction.PREVIOUS -> "Предыдущий трек."
-                },
-            )
-        }
-        is DeviceCommand.Volume -> {
-            val am = context.getSystemService(AudioManager::class.java)
-            val stream = AudioManager.STREAM_MUSIC
-            val max = am.getStreamMaxVolume(stream)
-            when (c.change) {
-                VolumeChange.UP -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
-                VolumeChange.DOWN -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
-                VolumeChange.MUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
-                VolumeChange.UNMUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
-                VolumeChange.MAX -> am.setStreamVolume(stream, max, AudioManager.FLAG_SHOW_UI)
-                VolumeChange.SET -> am.setStreamVolume(stream, (max * (c.percent ?: 50) / 100.0).toInt().coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
+            is DeviceCommand.Flashlight -> {
+                val cm = context.getSystemService(CameraManager::class.java)
+                val id = cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
+                    ?: return DeviceResult("На этом телефоне нет вспышки.", ok = false)
+                cm.setTorchMode(id, c.on)
+                DeviceResult(if (c.on) "Фонарик включён." else "Фонарик выключен.")
             }
-            val percent = am.getStreamVolume(stream) * 100 / max.coerceAtLeast(1)
-            DeviceResult(if (c.change == VolumeChange.MUTE) "Звук выключен." else "Громкость $percent%.")
-        }
-        is DeviceCommand.WebSearch -> {
-            val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, c.query)
-            val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
-            open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
-        }
-        is DeviceCommand.Navigate -> {
-            val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination)))
-            val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(c.destination)))
-            open(if (resolves(geo)) geo else web, "Строю маршрут: ${c.destination}.", "Маршрут")
-        }
-        is DeviceCommand.OpenSettings -> {
-            val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-            val action = when (c.section) {
-                // Android 10+ показывает компактную панель поверх экрана — включить Wi-Fi можно в одно касание.
-                SettingsSection.WIFI -> if (q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
-                SettingsSection.MOBILE_DATA -> if (q) Settings.Panel.ACTION_INTERNET_CONNECTIVITY else Settings.ACTION_WIRELESS_SETTINGS
-                SettingsSection.NFC -> if (q) Settings.Panel.ACTION_NFC else Settings.ACTION_NFC_SETTINGS
-                SettingsSection.BLUETOOTH -> Settings.ACTION_BLUETOOTH_SETTINGS
-                SettingsSection.SOUND -> if (q) Settings.Panel.ACTION_VOLUME else Settings.ACTION_SOUND_SETTINGS
-                SettingsSection.DISPLAY -> Settings.ACTION_DISPLAY_SETTINGS
-                SettingsSection.BATTERY -> Settings.ACTION_BATTERY_SAVER_SETTINGS
-                SettingsSection.LOCATION -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
-                SettingsSection.APPS -> Settings.ACTION_APPLICATION_SETTINGS
-                SettingsSection.AIRPLANE -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
-                SettingsSection.HOTSPOT -> Settings.ACTION_WIRELESS_SETTINGS
-                SettingsSection.NOTIFICATIONS -> "android.settings.NOTIFICATION_SETTINGS"
-                SettingsSection.SECURITY -> Settings.ACTION_SECURITY_SETTINGS
-                SettingsSection.ACCESSIBILITY -> Settings.ACTION_ACCESSIBILITY_SETTINGS
-                SettingsSection.DATE_TIME -> Settings.ACTION_DATE_SETTINGS
-                SettingsSection.STORAGE -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
-                SettingsSection.MAIN -> Settings.ACTION_SETTINGS
+            DeviceCommand.Battery -> {
+                val bm = context.getSystemService(BatteryManager::class.java)
+                val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                val charging = bm.isCharging
+                DeviceResult("Заряд $level%${if (charging) ", телефон заряжается" else ""}.")
             }
-            // Android 10+ не даёт приложениям самим включать Wi-Fi, Bluetooth и режим полёта — открываем нужный экран.
-            val intent = Intent(action)
-            open(if (resolves(intent)) intent else Intent(Settings.ACTION_SETTINGS), "Открываю настройки.", "Настройки")
-        }
-        is DeviceCommand.Camera -> {
-            val intent = Intent(if (c.video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-            if (c.selfie) {
-                // Разные камеры понимают разные ключи — передаём все известные.
-                intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
-                    .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
-                    .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
-            }
-            open(intent, if (c.video) "Открываю видеокамеру." else if (c.selfie) "Открываю фронтальную камеру." else "Открываю камеру.", "Камера")
-        }
-        is DeviceCommand.OpenUrl -> open(Intent(Intent.ACTION_VIEW, Uri.parse(c.url)), "Открываю ${Uri.parse(c.url).host ?: c.url}.", "Сайт")
-        is DeviceCommand.Play -> {
-            if (c.youtube) {
-                val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
-                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
-                open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
-            } else {
-                val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-                    .putExtra(SearchManager.QUERY, c.query)
-                    .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(c.query)))
-                open(if (resolves(music)) music else web, "Включаю ${c.query}.", "Музыка")
-            }
-        }
-        is DeviceCommand.CalendarEvent -> addEvent(c)
-        is DeviceCommand.AddContact -> {
-            val intent = Intent(ContactsContract.Intents.Insert.ACTION).setType(ContactsContract.RawContacts.CONTENT_TYPE)
-                .putExtra(ContactsContract.Intents.Insert.NAME, c.name)
-            c.phone?.let { intent.putExtra(ContactsContract.Intents.Insert.PHONE, it) }
-            open(intent, "Проверьте и сохраните контакт «${c.name}».", "Новый контакт")
-        }
-        is DeviceCommand.Share -> {
-            val pkg = SHARE_APPS.entries.firstOrNull { c.app.startsWith(it.key) }?.value
-            if (pkg != null && !access.isAllowed(pkg, c.app)) {
-                return DeviceResult("Отправлять в «${c.app}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
-            }
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, c.text)
-            if (pkg != null) send.setPackage(pkg)
-            val intent = if (pkg != null && resolves(send)) send else Intent.createChooser(send.setPackage(null), "Отправить")
-            open(intent, "Выберите, кому отправить.", "Отправить")
-        }
-        is DeviceCommand.DoNotDisturb -> {
-            val nm = context.getSystemService(NotificationManager::class.java)
-            if (!nm.isNotificationPolicyAccessGranted) {
-                open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Лоли управлять режимом «Не беспокоить» — и повторите команду.", "Не беспокоить")
-            } else {
-                nm.setInterruptionFilter(if (c.on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
-                DeviceResult(if (c.on) "Режим «Не беспокоить» включён." else "Режим «Не беспокоить» выключен.")
-            }
-        }
-        is DeviceCommand.Brightness -> {
-            if (!Settings.System.canWrite(context)) {
-                open(
-                    Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")),
-                    "Разрешите Лоли менять системные настройки — и повторите команду.", "Яркость",
-                )
-            } else {
-                val cr = context.contentResolver
-                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-                val current = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128) * 100 / 255
-                val target = (c.percent ?: (current + c.delta)).coerceIn(1, 100)
-                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
-                DeviceResult("Яркость $target%.")
-            }
-        }
-        is DeviceCommand.Global -> {
-            when (LoliAccessibilityService.perform(c.action)) {
-                true -> DeviceResult(
+            is DeviceCommand.Media -> {
+                val code = when (c.action) {
+                    MediaAction.PLAY -> KeyEvent.KEYCODE_MEDIA_PLAY
+                    MediaAction.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
+                    MediaAction.NEXT -> KeyEvent.KEYCODE_MEDIA_NEXT
+                    MediaAction.PREVIOUS -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                }
+                val am = context.getSystemService(AudioManager::class.java)
+                am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+                am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+                DeviceResult(
                     when (c.action) {
-                        GlobalAction.SCREENSHOT -> "Скриншот сделан."
-                        GlobalAction.LOCK -> "Блокирую экран."
-                        else -> "Готово."
+                        MediaAction.PLAY -> "Включаю."
+                        MediaAction.PAUSE -> "Пауза."
+                        MediaAction.NEXT -> "Следующий трек."
+                        MediaAction.PREVIOUS -> "Предыдущий трек."
                     },
                 )
-                false -> DeviceResult("На этой версии Android так нельзя.", ok = false)
-                null -> if (c.action == GlobalAction.HOME) {
-                    open(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "Готово.", "Домой")
+            }
+            is DeviceCommand.Volume -> {
+                val am = context.getSystemService(AudioManager::class.java)
+                val stream = AudioManager.STREAM_MUSIC
+                val max = am.getStreamMaxVolume(stream)
+                when (c.change) {
+                    VolumeChange.UP -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
+                    VolumeChange.DOWN -> repeat(2) { am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, if (it == 1) AudioManager.FLAG_SHOW_UI else 0) }
+                    VolumeChange.MUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.UNMUTE -> am.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.MAX -> am.setStreamVolume(stream, max, AudioManager.FLAG_SHOW_UI)
+                    VolumeChange.SET -> am.setStreamVolume(stream, (max * (c.percent ?: 50) / 100.0).toInt().coerceIn(0, max), AudioManager.FLAG_SHOW_UI)
+                }
+                val percent = am.getStreamVolume(stream) * 100 / max.coerceAtLeast(1)
+                DeviceResult(if (c.change == VolumeChange.MUTE) "Звук выключен." else "Громкость $percent%.")
+            }
+            is DeviceCommand.WebSearch -> {
+                val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, c.query)
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(c.query)))
+                open(if (resolves(search)) search else web, "Ищу «${c.query}».", "Поиск: ${c.query}")
+            }
+            is DeviceCommand.Navigate -> {
+                val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(c.destination)))
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?text=" + Uri.encode(c.destination)))
+                open(if (resolves(geo)) geo else web, "Строю маршрут: ${c.destination}.", "Маршрут")
+            }
+            is DeviceCommand.OpenSettings -> {
+                val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                val action = when (c.section) {
+                    // Android 10+ показывает компактную панель поверх экрана — включить Wi-Fi можно в одно касание.
+                    SettingsSection.WIFI -> if (q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS
+                    SettingsSection.MOBILE_DATA -> if (q) Settings.Panel.ACTION_INTERNET_CONNECTIVITY else Settings.ACTION_WIRELESS_SETTINGS
+                    SettingsSection.NFC -> if (q) Settings.Panel.ACTION_NFC else Settings.ACTION_NFC_SETTINGS
+                    SettingsSection.BLUETOOTH -> Settings.ACTION_BLUETOOTH_SETTINGS
+                    SettingsSection.SOUND -> if (q) Settings.Panel.ACTION_VOLUME else Settings.ACTION_SOUND_SETTINGS
+                    SettingsSection.DISPLAY -> Settings.ACTION_DISPLAY_SETTINGS
+                    SettingsSection.BATTERY -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+                    SettingsSection.LOCATION -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                    SettingsSection.APPS -> Settings.ACTION_APPLICATION_SETTINGS
+                    SettingsSection.AIRPLANE -> Settings.ACTION_AIRPLANE_MODE_SETTINGS
+                    SettingsSection.HOTSPOT -> Settings.ACTION_WIRELESS_SETTINGS
+                    SettingsSection.NOTIFICATIONS -> "android.settings.NOTIFICATION_SETTINGS"
+                    SettingsSection.SECURITY -> Settings.ACTION_SECURITY_SETTINGS
+                    SettingsSection.ACCESSIBILITY -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+                    SettingsSection.DATE_TIME -> Settings.ACTION_DATE_SETTINGS
+                    SettingsSection.STORAGE -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+                    SettingsSection.MAIN -> Settings.ACTION_SETTINGS
+                }
+                // Android 10+ не даёт приложениям самим включать Wi-Fi, Bluetooth и режим полёта — открываем нужный экран.
+                val intent = Intent(action)
+                open(if (resolves(intent)) intent else Intent(Settings.ACTION_SETTINGS), "Открываю настройки.", "Настройки")
+            }
+            is DeviceCommand.Camera -> {
+                val intent = Intent(if (c.video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                if (c.selfie) {
+                    // Разные камеры понимают разные ключи — передаём все известные.
+                    intent.putExtra("android.intent.extras.CAMERA_FACING", 1)
+                        .putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+                        .putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+                }
+                open(intent, if (c.video) "Открываю видеокамеру." else if (c.selfie) "Открываю фронтальную камеру." else "Открываю камеру.", "Камера")
+            }
+            is DeviceCommand.OpenUrl -> open(Intent(Intent.ACTION_VIEW, Uri.parse(c.url)), "Открываю ${Uri.parse(c.url).host ?: c.url}.", "Сайт")
+            is DeviceCommand.Play -> {
+                if (c.youtube) {
+                    val app = Intent(Intent.ACTION_SEARCH).setPackage(YOUTUBE).putExtra("query", c.query)
+                    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(c.query)))
+                    open(if (resolves(app)) app else web, "Ищу на YouTube: ${c.query}.", "YouTube")
                 } else {
-                    DeviceResult("Включите «Лоли» в спецвозможностях (Настройки Лоли → Разрешения) — тогда смогу нажимать системные кнопки.", ok = false)
+                    val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+                        .putExtra(SearchManager.QUERY, c.query)
+                        .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                    val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(c.query)))
+                    open(if (resolves(music)) music else web, "Включаю ${c.query}.", "Музыка")
+                }
+            }
+            is DeviceCommand.CalendarEvent -> addEvent(c)
+            is DeviceCommand.AddContact -> {
+                val intent = Intent(ContactsContract.Intents.Insert.ACTION).setType(ContactsContract.RawContacts.CONTENT_TYPE)
+                    .putExtra(ContactsContract.Intents.Insert.NAME, c.name)
+                c.phone?.let { intent.putExtra(ContactsContract.Intents.Insert.PHONE, it) }
+                open(intent, "Проверьте и сохраните контакт «${c.name}».", "Новый контакт")
+            }
+            is DeviceCommand.Share -> {
+                val pkg = SHARE_APPS.entries.firstOrNull { c.app.startsWith(it.key) }?.value
+                if (pkg != null && !access.isAllowed(pkg, c.app)) {
+                    return DeviceResult("Отправлять в «${c.app}» мне не разрешено. Разрешить можно в Настройки Лоли → Доступ.", ok = false)
+                }
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, c.text)
+                if (pkg != null) send.setPackage(pkg)
+                val intent = if (pkg != null && resolves(send)) send else Intent.createChooser(send.setPackage(null), "Отправить")
+                open(intent, "Выберите, кому отправить.", "Отправить")
+            }
+            is DeviceCommand.DoNotDisturb -> {
+                val nm = context.getSystemService(NotificationManager::class.java)
+                if (!nm.isNotificationPolicyAccessGranted) {
+                    open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Лоли управлять режимом «Не беспокоить» — и повторите команду.", "Не беспокоить")
+                } else {
+                    nm.setInterruptionFilter(if (c.on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
+                    DeviceResult(if (c.on) "Режим «Не беспокоить» включён." else "Режим «Не беспокоить» выключен.")
+                }
+            }
+            is DeviceCommand.Brightness -> {
+                if (!Settings.System.canWrite(context)) {
+                    open(
+                        Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")),
+                        "Разрешите Лоли менять системные настройки — и повторите команду.", "Яркость",
+                    )
+                } else {
+                    val cr = context.contentResolver
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                    val current = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128) * 100 / 255
+                    val target = (c.percent ?: (current + c.delta)).coerceIn(1, 100)
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
+                    DeviceResult("Яркость $target%.")
+                }
+            }
+            is DeviceCommand.Global -> {
+                when (LoliAccessibilityService.perform(c.action)) {
+                    true -> DeviceResult(
+                        when (c.action) {
+                            GlobalAction.SCREENSHOT -> "Скриншот сделан."
+                            GlobalAction.LOCK -> "Блокирую экран."
+                            else -> "Готово."
+                        },
+                    )
+                    false -> DeviceResult("На этой версии Android так нельзя.", ok = false)
+                    null -> if (c.action == GlobalAction.HOME) {
+                        open(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), "Готово.", "Домой")
+                    } else {
+                        DeviceResult("Включите «Лоли» в спецвозможностях (Настройки Лоли → Разрешения) — тогда смогу нажимать системные кнопки.", ok = false)
+                    }
                 }
             }
         }

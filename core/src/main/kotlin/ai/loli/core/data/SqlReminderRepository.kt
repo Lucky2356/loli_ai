@@ -36,6 +36,9 @@ class SqlReminderRepository(
         @Suppress("NAME_SHADOWING")
         val recurrence = if (recurrence?.frequency == Recurrence.Frequency.MONTHLY && recurrence.dayOfMonth == null) {
             recurrence.copy(dayOfMonth = triggerAt.atZone(zone).dayOfMonth, time = recurrence.time ?: triggerAt.atZone(zone).toLocalTime())
+        } else if (recurrence?.frequency == Recurrence.Frequency.YEARLY && (recurrence.month == null || recurrence.dayOfMonth == null)) {
+            val z = triggerAt.atZone(zone)
+            recurrence.copy(month = recurrence.month ?: z.monthValue, dayOfMonth = recurrence.dayOfMonth ?: z.dayOfMonth, time = recurrence.time ?: z.toLocalTime())
         } else recurrence
         val row = ReminderRow(Ids.newId(), text.trim(), triggerAt.toEpochMilli(), recurrence?.encode(), timeZone, 1, null, now, now, 0, 1, null)
         io { q.upsert(row) }

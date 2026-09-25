@@ -110,6 +110,7 @@ class RuDateTimeParser {
                 "вечер" -> return Match(2, spec.copy(recurrence = Recurrence(Recurrence.Frequency.DAILY), time = spec.time ?: LocalTime.of(20, 0)))
                 "неделю" -> return Match(2, spec.copy(recurrence = Recurrence(Recurrence.Frequency.WEEKLY)))
                 "месяц" -> return Match(2, spec.copy(recurrence = Recurrence(Recurrence.Frequency.MONTHLY)))
+                "год" -> return Match(2, spec.copy(recurrence = Recurrence(Recurrence.Frequency.YEARLY)))
                 "час" -> return Match(2, spec.copy(recurrence = Recurrence(Recurrence.Frequency.HOURLY)))
             }
             val n = t.getOrNull(i + 1)?.intValue
@@ -128,6 +129,7 @@ class RuDateTimeParser {
             "ежедневно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.DAILY)))
             "еженедельно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.WEEKLY)))
             "ежемесячно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.MONTHLY)))
+            "ежегодно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.YEARLY)))
             "ежечасно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.HOURLY)))
         }
         if (w == "по") {

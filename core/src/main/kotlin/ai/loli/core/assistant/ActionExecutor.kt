@@ -10,6 +10,7 @@ import ai.loli.core.finance.PeriodPreset
 import ai.loli.core.model.NoteKind
 import ai.loli.core.model.RecordType
 import ai.loli.core.model.TaskItem
+import ai.loli.core.nlp.ExpenseCategories
 import ai.loli.core.nlp.Money
 import ai.loli.core.nlp.TextAnalysis
 import ai.loli.core.search.SearchService
@@ -171,7 +172,11 @@ class ActionExecutor(
                 val whenText = if (e.occurredOn == today) "" else " (${RuFormat.date(e.occurredOn, today)})"
                 val desc = if (e.description.isNotBlank() && !e.description.equals(e.category, true)) ", ${e.description}" else ""
                 Step(
-                    listOf(Outcome("Записала расход: ${Money.format(e.amountMinor, e.currency)} — ${e.category}$desc$whenText.", Outcome.Kind.CHANGED)),
+                    listOf(Outcome(
+                        if (e.category == ExpenseCategories.INCOME) "Записала доход: +${Money.format(e.amountMinor, e.currency)}$desc$whenText."
+                        else "Записала расход: ${Money.format(e.amountMinor, e.currency)} — ${e.category}$desc$whenText.",
+                        Outcome.Kind.CHANGED,
+                    )),
                     created = RecordRef(RecordType.EXPENSE, e.id, "${Money.format(e.amountMinor, e.currency)} — ${e.category}"),
                 )
             }
