@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Лоли</string>
+    <string name="wake_listening">Жду обращения «%1$s»</string>
+    <string name="wake_model_missing">Офлайн-модель речи не загружена — откройте Настройки → Голос</string>
+    <string name="wake_command">Слушаю команду…</string>
+    <string name="wake_thinking">Выполняю…</string>
+    <string name="wake_stop">Выключить</string>
+    <string name="wake_reactivate">Телефон перезагружен. Нажмите, чтобы снова включить прослушивание.</string>
+    <string name="channel_reminders">Напоминания</string>
+    <string name="channel_reminders_desc">Напоминания, созданные ассистентом</string>
+    <string name="channel_listening">Фоновое прослушивание</string>
+    <string name="channel_listening_desc">Уведомление, пока ассистент ждёт своё имя</string>
+    <string name="channel_system">Системные</string>
+    <string name="reminder_title">Напоминание</string>
+    <string name="reminder_done">Готово</string>
+    <string name="reminder_snooze">Через 10 минут</string>
+    <string name="tile_label">Спросить Лоли</string>
+    <string name="shortcut_listen_short">Говорить</string>
+    <string name="shortcut_listen_long">Спросить Лоли голосом</string>
+</resources>

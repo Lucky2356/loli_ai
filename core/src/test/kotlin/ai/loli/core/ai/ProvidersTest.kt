@@ -116,3 +116,18 @@ class ProvidersTest {
         assertFalse(AIConfig(AIProviderType.OPENAI, null, null, "sk-very-secret").toString().contains("very-secret"))
     }
 }
+
+class EndpointSecurityTest {
+    @Test fun httpOnlyForLocalNetwork() {
+        fun secure(url: String) = AIConfig(AIProviderType.CUSTOM, url, "m", "").isSecureEndpoint
+        assertTrue(secure("https://api.example.com/v1"))
+        assertTrue(secure("http://192.168.1.10:11434/v1"))
+        assertTrue(secure("http://localhost:1234/v1"))
+        assertTrue(secure("http://172.20.0.5/v1"))
+        assertFalse(secure("http://api.example.com/v1"))
+        assertFalse(secure("http://172.40.0.5/v1"))
+        assertFailsWith<AIException.InsecureEndpoint> {
+            AIProviderFactory.create(io.ktor.client.HttpClient(MockEngine { error("no") }), AIConfig(AIProviderType.CUSTOM, "http://evil.com/v1", "m", "k"))
+        }
+    }
+}

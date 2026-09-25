@@ -39,6 +39,7 @@ sealed class AIException(message: String, cause: Throwable? = null) : Exception(
     class Server(code: Int, detail: String) : AIException("AI-сервис вернул ошибку $code: $detail")
     class InvalidResponse(detail: String) : AIException("AI вернул ответ в неожиданном формате: $detail")
     class Refused : AIException("Модель отказалась отвечать на этот запрос.")
+    class InsecureEndpoint : AIException("Незашифрованный адрес (http://) разрешён только для серверов в локальной сети. Используйте https://.")
 }
 
 enum class AIProviderType(
@@ -88,6 +89,16 @@ class AIConfig(
 ) {
     val endpoint: String = (endpoint?.takeIf { it.isNotBlank() } ?: type.defaultEndpoint).trim().trimEnd('/')
     val model: String = (model?.takeIf { it.isNotBlank() } ?: type.defaultModel).trim()
+
+    /** http:// допускается только для локальной сети (свой сервер Ollama/LM Studio); в интернет — только https://. */
+    val isSecureEndpoint: Boolean get() {
+        val lower = endpoint.lowercase()
+        if (lower.startsWith("https://")) return true
+        if (!lower.startsWith("http://")) return false
+        val host = lower.removePrefix("http://").substringBefore('/').substringBefore(':')
+        return host == "localhost" || host.endsWith(".local") || host.startsWith("127.") || host.startsWith("10.") ||
+            host.startsWith("192.168.") || Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(host)
+    }
 
     val isComplete: Boolean get() = model.isNotBlank() && endpoint.isNotBlank() && (apiKey.isNotBlank() || type == AIProviderType.CUSTOM)
 
