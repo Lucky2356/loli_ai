@@ -43,6 +43,18 @@ data class LockPolicy(
         }
     }
 
+    /** Хоть что-то разрешено: иначе на блокировке Лоли не отвечает вообще. */
+    val any: Boolean get() = create || basicDevice || calls || view || edit || apps
+
+    /** Навыки: погода и справка — если Лоли вообще разрешена на блокировке; имя, место — как запись; радио и таймеры — как телефон. */
+    fun allowsSkill(access: SkillAccess): Boolean = when (access) {
+        SkillAccess.PUBLIC -> any
+        SkillAccess.CREATE -> create
+        SkillAccess.DEVICE -> basicDevice
+        SkillAccess.VIEW -> view
+        SkillAccess.PRIVATE -> false
+    }
+
     fun allows(action: AssistantAction): Boolean = when (action) {
         is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote,
@@ -62,3 +74,6 @@ data class LockPolicy(
         else -> edit
     }
 }
+
+/** Насколько личное действие навыка — для правил экрана блокировки. */
+enum class SkillAccess { PUBLIC, CREATE, DEVICE, VIEW, PRIVATE }

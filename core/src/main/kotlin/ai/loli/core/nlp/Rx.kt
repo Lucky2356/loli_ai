@@ -11,5 +11,8 @@ object Rx {
 
     fun unicode(pattern: String): String = pattern.replace("\\b", BOUNDARY).replace("\\w", WORD)
 
-    fun of(pattern: String): Regex = Regex(unicode(pattern))
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    /** Скомпилированные выражения кэшируются: разбор фразы вызывает их десятки раз. */
+    fun of(pattern: String): Regex = cache.getOrPut(pattern) { Regex(unicode(pattern)) }
 }

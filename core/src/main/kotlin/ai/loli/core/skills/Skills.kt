@@ -4,7 +4,10 @@ import ai.loli.core.assistant.AssistantAction
 import ai.loli.core.assistant.AssistantPlan
 import ai.loli.core.assistant.AssistantSettings
 import ai.loli.core.assistant.DeviceCommand
+import ai.loli.core.assistant.DevicePhrases
 import ai.loli.core.assistant.LocalCommandParser
+import ai.loli.core.assistant.LockPolicy
+import ai.loli.core.assistant.SkillAccess
 import ai.loli.core.assistant.RuFormat
 import ai.loli.core.nlp.RuStemmer
 import ai.loli.core.nlp.RuTokenizer
@@ -24,6 +27,8 @@ sealed interface SkillOutcome {
         val followUp: Boolean = false,
         val permission: Permission? = null,
         val speakLanguage: String? = null,
+        /** Личное (сообщения, экран, контакты, календарь, места): не пересказывать AI. */
+        val sensitive: Boolean = false,
     ) : SkillOutcome
 
     /** Выполнить обычные действия (открыть ссылку, поиск в интернете). */
@@ -61,12 +66,33 @@ class Skills(
     private var stations: List<RadioStation> = emptyList()
     private var stationIndex = 0
     private var lastTale: String? = null
+    private var lastTurn = time.now()
 
-    /** Навык ждёт ответа — движок передаёт следующую фразу сюда. */
-    val busy: Boolean get() = game != null || awaitGameChoice || awaitCity != null
+    /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
+    val busy: Boolean get() {
+        val waiting = game != null || awaitGameChoice || awaitCity != null
+        if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
+        return game != null || awaitGameChoice || awaitCity != null
+    }
 
     fun reset() {
         game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null
+    }
+
+    /**
+     * Фраза, пока навык ждёт ответа, — это новая команда, а не ход в игре или название города?
+     * «запиши расход 300» во время «Угадай число» — расход, а не число 300.
+     */
+    fun interruptedBy(text: String, cfg: AssistantSettings, isCommand: (String) -> Boolean): Boolean {
+        if (!busy) return false
+        val t = SkillPhrases.norm(text)
+        if (game == null && (LocalCommandParser.isDialogEnd(t) || LocalCommandParser.isNo(t) || t in setOf("спасибо", "не надо", "отмена", "отмени"))) return true
+        if (t.split(' ').size < 2) return false
+        return when (val cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName)) {
+            null -> isCommand(text)
+            is SkillCommand.StartGame -> false
+            else -> cmd !is SkillCommand.Weather || awaitCity == null
+        }
     }
 
     /** Понимает ли навык фразу (для выбора варианта распознавания). */
@@ -74,12 +100,18 @@ class Skills(
 
     suspend fun handle(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
         try {
+            lastTurn = time.now()
             continuation(text, cfg, ai)?.let { return it }
             val cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
+            val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (cfg.locked && private(cmd)) {
                 return SkillOutcome.Say("Разблокируйте телефон — ${privateWhat(cmd)} без разблокировки не показываю.")
             }
-            return execute(cmd, cfg, ai)
+            if (policy != null && !policy.allowsSkill(access(cmd))) {
+                return SkillOutcome.Say("Разблокируйте телефон — это без разблокировки не разрешено (меняется в настройках Лоли).")
+            }
+            val out = execute(cmd, cfg, ai)
+            return if (out is SkillOutcome.Say && private(cmd)) out.copy(sensitive = true) else out
         } catch (e: CancellationException) {
             throw e
         } catch (e: NeedsPermission) {
@@ -131,6 +163,20 @@ class Skills(
     private fun private(cmd: SkillCommand) = cmd is SkillCommand.ReadMessages || cmd is SkillCommand.ReplyMessage || cmd is SkillCommand.Screen ||
         cmd is SkillCommand.ContactNumber || cmd is SkillCommand.Calendar || cmd is SkillCommand.ListPlaces || cmd is SkillCommand.SavePlace
 
+    /** Что можно на экране блокировки: см. [LockPolicy.allowsSkill]. */
+    private fun access(cmd: SkillCommand): SkillAccess = when (cmd) {
+        is SkillCommand.Weather -> if (cmd.query.place == "дом") SkillAccess.VIEW else SkillAccess.PUBLIC
+        is SkillCommand.Rates, is SkillCommand.News, is SkillCommand.Fact, is SkillCommand.StartGame, is SkillCommand.Tale -> SkillAccess.PUBLIC
+        // «Подробнее» открывает браузер — как открытие сайта.
+        is SkillCommand.NewsDetails -> SkillAccess.PRIVATE
+        is SkillCommand.SetName, is SkillCommand.SetCity, is SkillCommand.PlaceRemind -> SkillAccess.CREATE
+        is SkillCommand.RadioPlay, SkillCommand.RadioStop, SkillCommand.RadioNext, SkillCommand.FindPhone,
+        SkillCommand.TimersLeft, is SkillCommand.TimersCancel -> SkillAccess.DEVICE
+        SkillCommand.AskName -> SkillAccess.VIEW
+        is SkillCommand.ReadMessages, is SkillCommand.ReplyMessage, is SkillCommand.Screen, is SkillCommand.ContactNumber,
+        is SkillCommand.Calendar, SkillCommand.ListPlaces, is SkillCommand.SavePlace -> SkillAccess.PRIVATE
+    }
+
     private fun privateWhat(cmd: SkillCommand) = when (cmd) {
         is SkillCommand.ReadMessages, is SkillCommand.ReplyMessage -> "сообщения"
         is SkillCommand.Screen -> "содержимое экрана"
@@ -165,7 +211,13 @@ class Skills(
         SkillCommand.FindPhone -> SkillOutcome.Say(if (host.ringPhone()) "Я здесь! Звоню погромче — коснитесь уведомления, чтобы остановить." else "Я здесь!")
         SkillCommand.TimersLeft -> timersLeft()
         is SkillCommand.TimersCancel -> {
-            val n = host.cancelTimers(cmd.label)
+            // «Отмени таймер на 5 минут» — ищем таймер по длительности, а не по названию.
+            val seconds = cmd.label?.let { DevicePhrases.duration(it) }
+            val n = if (seconds != null) {
+                val active = host.timers().filter { it.endsAt.isAfter(time.now()) }
+                val byLength = active.filter { it.seconds == seconds }.ifEmpty { active.takeIf { it.size == 1 && it.single().seconds == 0 }.orEmpty() }
+                byLength.count { host.cancelTimer(it.id) }
+            } else host.cancelTimers(cmd.label)
             SkillOutcome.Say(if (n > 0) "Отменила ${if (n == 1) "таймер" else RuFormat.count(n, "таймер", "таймера", "таймеров")}." else "Активных таймеров нет.")
         }
         is SkillCommand.SavePlace -> {
@@ -180,13 +232,22 @@ class Skills(
         }
         SkillCommand.AskName -> SkillOutcome.Say(cfg.userName?.let { "Вас зовут $it." } ?: "Вы ещё не сказали, как вас зовут. Скажите: «называй меня …».")
         is SkillCommand.SetCity -> {
-            val resolved = runCatching { weatherService?.findPlace(cmd.city)?.name }.getOrNull() ?: cmd.city
+            val resolved = orNull { weatherService?.findPlace(cmd.city)?.name } ?: cmd.city
             host.setCity(resolved)
             SkillOutcome.Say("Запомнила: ваш город — $resolved. Буду говорить погоду для него, если геолокация выключена.")
         }
         is SkillCommand.StartGame -> cmd.game?.let { startGame(it) } ?: askGame()
         is SkillCommand.Tale -> tale(cmd.request, ai)
         }
+    }
+
+    /** Как runCatching, но отмену корутины не глотает. */
+    private inline fun <T> orNull(block: () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     private fun offline(what: String) = SkillOutcome.Say("Чтобы узнать $what, нужен интернет.")
@@ -216,7 +277,7 @@ class Skills(
                 name = p.name
                 GeoPoint(p.lat, p.lon, p.name)
             }
-            else -> runCatching { host.location() }.getOrNull()
+            else -> orNull { host.location() }
                 ?: cfg.city?.let { c -> w.findPlace(c)?.let { p -> name = p.name; GeoPoint(p.lat, p.lon, p.name) } }
         }
         if (point == null) {
@@ -229,7 +290,7 @@ class Skills(
     }
 
     /** Строка погоды для утренней сводки. */
-    suspend fun weatherLine(cfg: AssistantSettings): String? = runCatching {
+    suspend fun weatherLine(cfg: AssistantSettings): String? = orNull {
         val w = weatherService ?: return null
         var name: String? = null
         val point = host.location() ?: cfg.city?.let { c -> w.findPlace(c)?.let { name = it.name; GeoPoint(it.lat, it.lon) } } ?: return null
@@ -242,13 +303,13 @@ class Skills(
             if (WeatherService.isRain(d.code) || (d.rainChance ?: 0) >= 60) append(" — возьмите зонт")
             append(".")
         }
-    }.getOrNull()
+    }
 
     suspend fun agendaExtras(date: LocalDate, cfg: AssistantSettings): AgendaExtras {
         val zone = time.zone()
-        val events = if (cfg.locked) emptyList() else runCatching {
+        val events = if (cfg.locked) emptyList() else (orNull {
             host.calendar(date.atStartOfDay(zone).toInstant(), date.plusDays(1).atStartOfDay(zone).toInstant())
-        }.getOrDefault(emptyList()).map { formatEvent(it, zone, withDate = false) }
+        } ?: emptyList()).map { formatEvent(it, zone, withDate = false) }
         val weather = if (date == time.today()) weatherLine(cfg) else null
         return AgendaExtras(weather, events)
     }
@@ -257,7 +318,7 @@ class Skills(
 
     private suspend fun fact(query: String, cfg: AssistantSettings): SkillOutcome? {
         val wiki = wikiService
-        val article = if (wiki != null) runCatching { wiki.lookup(query) }.getOrNull() else null
+        val article = if (wiki != null) orNull { wiki.lookup(query) } else null
         if (article != null) return SkillOutcome.Say(article.extract)
         // С AI — пусть ответит он; без AI — откроем поиск.
         if (cfg.useAI) return null
@@ -292,13 +353,20 @@ class Skills(
 
     private suspend fun replyMessage(cmd: SkillCommand.ReplyMessage): SkillOutcome {
         val all = host.messages()
-        val pronouns = setOf("ему", "ей", "им", "ему:", "ей:")
+        val pronouns = setOf("ему", "ей", "им", "ней", "нему", "им всем")
         var target: IncomingMessage? = null
         var text = cmd.text
-        if (cmd.to != null && RuTokenizer.normalize(cmd.to) !in pronouns) {
-            target = all.firstOrNull { it.canReply && matches(it.sender, cmd.to) }
-            // «ответь буду через 10 минут» — первое слово не имя: весь текст — ответ.
-            if (target == null) text = cmd.raw
+        val to = cmd.to?.let { RuTokenizer.normalize(it).trim(' ', ',', ':', '.', '!') }?.takeIf { it.isNotEmpty() && it !in pronouns }
+        if (to != null) {
+            target = all.firstOrNull { it.canReply && matches(it.sender, to) }
+            if (target == null) {
+                // «ответь маме: скоро буду» — адресат назван явно, но его сообщения нет: не отправляем кому попало.
+                if (cmd.explicitTo || all.any { matches(it.sender, to) }) {
+                    return SkillOutcome.Say("Не нашла сообщения от «${cmd.to.trim(' ', ',', ':')}», на которое можно ответить. Скажите «прочитай сообщения».")
+                }
+                // «ответь буду через 10 минут» — первое слово не имя: весь текст — ответ.
+                text = cmd.raw
+            }
         }
         target = target ?: replyTarget?.let { rt -> all.firstOrNull { it.key == rt.key } ?: rt } ?: all.firstOrNull { it.canReply }
         if (target == null) return SkillOutcome.Say("Не нашла сообщение, на которое можно ответить. Скажите «прочитай сообщения».")
@@ -307,6 +375,7 @@ class Skills(
             return SkillOutcome.Say("Что ответить ${target.sender}?", followUp = true)
         }
         val ok = host.reply(target, text.replaceFirstChar { it.uppercase() })
+        replyTarget = null
         return SkillOutcome.Say(if (ok) "Ответила ${target.sender} в ${target.app}: «${text.replaceFirstChar { it.uppercase() }}»." else "Не получилось ответить в ${target.app} — это приложение не даёт отвечать из уведомления.")
     }
 
@@ -446,6 +515,7 @@ class Skills(
 
     companion object {
         private const val TAG = "Skills"
+        private val PENDING_TTL: Duration = Duration.ofMinutes(3)
 
         fun permissionText(p: Permission, name: String): String = when (p) {
             Permission.LOCATION -> "Чтобы знать, где вы, разрешите $name доступ к геолокации."

@@ -44,6 +44,8 @@ internal suspend fun HttpClient.fetchText(url: String): String {
 internal class TtlCache<K, V>(private val ttlMillis: Long, private val now: () -> Long = System::currentTimeMillis) {
     private val map = HashMap<K, Pair<Long, V>>()
     @Synchronized fun get(key: K): V? = map[key]?.takeIf { now() - it.first < ttlMillis }?.second
+    /** Есть ли свежая запись (в том числе null — «не нашли», чтобы не спрашивать сеть снова). */
+    @Synchronized fun contains(key: K): Boolean = map[key]?.let { now() - it.first < ttlMillis } == true
     @Synchronized fun put(key: K, value: V) { map[key] = now() to value; if (map.size > 64) map.clear() }
 }
 
@@ -75,8 +77,9 @@ class WeatherService(private val http: HttpClient) {
     /** Ищет город; падежи («в Казани», «в Нижнем Новгороде») пробуем снять. */
     suspend fun findPlace(spoken: String): Place? {
         val key = spoken.lowercase().trim()
-        geoCache.get(key)?.let { return it }
-        for (candidate in nameCandidates(spoken)) {
+        if (geoCache.contains(key)) return geoCache.get(key)
+        val alias = ALIASES[key.replace('ё', 'е').trim('.', ' ')]
+        for (candidate in listOfNotNull(alias) + nameCandidates(spoken)) {
             val url = "https://geocoding-api.open-meteo.com/v1/search?name=${candidate.encodeURLParameter()}&count=10&language=ru&format=json"
             val found = parsePlaces(http.fetchText(url))
             val best = pickPlace(found, candidate)
@@ -101,6 +104,12 @@ class WeatherService(private val http: HttpClient) {
         private val dayMonth = DateTimeFormatter.ofPattern("d MMMM", ru)
         private val weekdayShort = DateTimeFormatter.ofPattern("EEEE", ru)
 
+        /** Разговорные названия городов. */
+        private val ALIASES = mapOf(
+            "питер" to "Санкт-Петербург", "питере" to "Санкт-Петербург", "спб" to "Санкт-Петербург", "петербурге" to "Санкт-Петербург",
+            "мск" to "Москва", "екб" to "Екатеринбург", "екате" to "Екатеринбург", "нск" to "Новосибирск", "новосибе" to "Новосибирск",
+        )
+
         fun parsePlaces(json: String): List<Place> {
             val root = LoliJson.parseToJsonElement(json).jsonObject
             return root.arr("results")?.mapNotNull { e ->
@@ -112,7 +121,8 @@ class WeatherService(private val http: HttpClient) {
         /** Город, чьё название начинается с основы сказанного; российские — в приоритете. */
         fun pickPlace(found: List<Place>, candidate: String): Place? {
             val stem = candidate.lowercase().replace('ё', 'е').take(maxOf(3, candidate.length - 2))
-            val matching = found.filter { it.name.lowercase().replace('ё', 'е').startsWith(stem) }.ifEmpty { found.take(1) }
+            // Ничего похожего — не подставляем случайную деревню («погода в эти…» → «Эти»).
+            val matching = found.filter { it.name.lowercase().replace('ё', 'е').startsWith(stem) }
             return matching.firstOrNull { it.country == "RU" } ?: matching.firstOrNull()
         }
 
@@ -131,7 +141,7 @@ class WeatherService(private val http: HttpClient) {
                     l.endsWith("ске") || l.endsWith("ге") || l.endsWith("де") || l.endsWith("ре") || l.endsWith("не") || l.endsWith("те") || l.endsWith("ле") && !l.endsWith("еле") -> w.dropLast(1) // Омске → Омск
                     l.endsWith("ве") || l.endsWith("ке") -> w.dropLast(1) + "а" // Москве → Москва, Уфе…
                     l.endsWith("и") && l.length > 4 -> w.dropLast(1) + "ь" // Казани → Казань
-                    l.endsWith("е") && l.length > 3 -> w.dropLast(1) + "а"
+                    l.endsWith("е") && l.length >= 3 -> w.dropLast(1) + "а" // Уфе → Уфа
                     l.endsWith("у") && l.length > 3 -> w.dropLast(1) + "а" // в Москву
                     else -> w
                 }
@@ -139,6 +149,8 @@ class WeatherService(private val http: HttpClient) {
             }
             out += words.joinToString(" ") { nominative(it) }.let { if (s.contains('-')) it.replace(' ', '-') else it }
             out += words.joinToString(" ") { nominative(it) }
+            // Беглая гласная: «в Орле» → «Орел», «в Пскове» уже есть выше.
+            if (words.size == 1 && Regex("""(?iu)[бвгджзклмнпрстфхцчшщ]ле$""").containsMatchIn(s)) out += s.dropLast(2) + "ел"
             // Основа слова: геокодер ищет по началу названия.
             out += words.joinToString(" ") { w -> if (w.length > 5) w.dropLast(2) else if (w.length > 3) w.dropLast(1) else w }
             return out.filter { it.length >= 2 }.take(4)
@@ -217,6 +229,10 @@ class WeatherService(private val http: HttpClient) {
             val dayWord = q.date?.let { RuFormat.date(it, today) } ?: "сегодня"
             when (q.aspect) {
                 WeatherQuery.Aspect.RAIN, WeatherQuery.Aspect.UMBRELLA -> {
+                    // «Идёт ли сейчас дождь» — сначала то, что за окном.
+                    if (q.date == null && f.code != null && isRain(f.code)) {
+                        return "Да, сейчас$whereIn ${describe(f.code)}. ${if (q.aspect == WeatherQuery.Aspect.UMBRELLA) "Зонт лучше взять." else "Возьмите зонт."}"
+                    }
                     val d = target ?: return "${where}не удалось получить прогноз."
                     val chance = d.rainChance ?: 0
                     val rainy = isRain(d.code) || chance >= 50

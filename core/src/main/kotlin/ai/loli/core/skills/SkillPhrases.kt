@@ -16,7 +16,8 @@ sealed interface SkillCommand {
     data class NewsDetails(val index: Int) : SkillCommand
     data class Fact(val query: String) : SkillCommand
     data class ReadMessages(val from: String?) : SkillCommand
-    data class ReplyMessage(val to: String?, val text: String, val raw: String) : SkillCommand
+    /** [explicitTo] — адресат назван через двоеточие («ответь маме: …»): если его нет, не отвечаем другому. */
+    data class ReplyMessage(val to: String?, val text: String, val raw: String, val explicitTo: Boolean = false) : SkillCommand
     data class Screen(val mode: ScreenMode) : SkillCommand
     data class ContactNumber(val name: String) : SkillCommand
     data class Calendar(val from: LocalDate, val to: LocalDate, val nextOnly: Boolean = false) : SkillCommand
@@ -45,7 +46,7 @@ object SkillPhrases {
     fun norm(text: String): String = RuTokenizer.normalize(text).trim().trimEnd('.', '!', '?', ',').replace(Regex("""\s+"""), " ")
 
     /** Фраза — это запись/напоминание/задача, а не вопрос («напомни взять зонт»). */
-    private val RECORD_VERB = rx("""^(?:напомни|запиши|записать|добавь|создай|поставь задачу|заметка|заметку|купи|список|сохрани заметку|потратил|потратила|заплатил|заплатила)\b""")
+    private val RECORD_VERB = rx("""^(?:напомни|запиши|записать|добавь|создай|поставь задачу|поставь напоминание|заметка|заметку|купи|список|сохрани заметку|потратил|потратила|заплатил|заплатила)\b""")
 
     fun parse(text: String, today: LocalDate, assistantName: String = "Лоли"): SkillCommand? {
         val t = norm(text)
@@ -82,11 +83,14 @@ object SkillPhrases {
         "сегодня", "завтра", "послезавтра", "сейчас", "неделю", "неделе", "выходные", "выходных", "понедельник", "вторник", "среду", "четверг",
         "пятницу", "субботу", "воскресенье", "течение", "ближайшие", "ближайшее", "будет", "ли", "погода", "погоду", "какая", "утром", "вечером",
         "днем", "ночью", "улице", "городе", "моем", "нашем", "тоже", "а", "и", "сколько", "градусов",
+        "эти", "эту", "этот", "это", "следующий", "следующую", "следующие", "ближайший", "ближайшую", "выходной", "праздники", "отпуск",
     )
 
     fun weather(t: String, original: String, today: LocalDate): WeatherQuery? {
         if (!WEATHER.containsMatchIn(t)) return null
         if (rx("""\bпогод\S*\s+в\s+доме\b|прогноз\s+(?:расход|продаж|бюджет)""").containsMatchIn(t)) return null
+        // «Сколько градусов в духовке», «что надеть в театр» — не погода.
+        if (rx("""градус\S*\s+(?:в|во|у|на)\s+(?:духовк|печ|холодильник|морозилк|воде|ванн|бане|сауне|чайник|комнат|квартир|доме|машине|салоне|аквариум)|градус\S*\s+(?:угол|угла|спирт|водк|вин)|надеть\s+(?:в|на)\s+(?:театр|школ|работ|свадьб|концерт|собеседован|ресторан|вечеринк|праздник|день рожд|клуб|офис|кино|гости)""").containsMatchIn(t)) return null
         val aspect = when {
             t.contains("зонт") -> WeatherQuery.Aspect.UMBRELLA
             rx("""дожд|ливень|гроз""").containsMatchIn(t) -> WeatherQuery.Aspect.RAIN
@@ -150,6 +154,8 @@ object SkillPhrases {
         if (rx("""^курс(?:ы)?\s+валют|^какой\s+курс$|^курсы$""").containsMatchIn(t)) return RatesQuery()
         val codes = RatesService.codesIn(t)
         if (codes.isEmpty()) return null
+        // «Переведи 10 фунтов в килограммы» — это вес, а не валюта.
+        if (rx("""\b(?:кг|килограмм|грамм|км|километр|мил[ьяие]|метр|фут|дюйм|литр|унци|галлон)""").containsMatchIn(t)) return null
         val asksRate = rx("""\bкурс|почем|сколько\s+(?:сейчас\s+)?стоит|цена\s+(?:на\s+)?(?:доллар|евро|юан|биткоин|биткойн|эфир)|сколько\s+(?:сейчас\s+)?рублей\s+(?:за|в)\s+(?:одном\s+|1\s+)?(?:доллар|евро|юан)""").containsMatchIn(t)
         val conversion = rx("""сколько\s+будет|сколько\s+это|это\s+сколько|переведи|пересчитай|посчитай|конвертируй|в\s+рублях|в\s+рубли|сколько\s+рублей|сколько\s+(?:долларов|евро|юаней|биткоинов)|в\s+долларах|в\s+доллары|в\s+евро|в\s+юанях""").containsMatchIn(t)
         val d = DevicePhrases.digitize(t)
@@ -165,7 +171,7 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Новости
 
     private val NEWS = rx(
-        """^(?:а\s+)?(?:(?:расскажи|прочитай|почитай|покажи|включи|какие|скажи|озвучь|давай)\s+)?(?:мне\s+)?(?:последние\s+|свежие\s+|главные\s+|сегодняшние\s+|самые\s+важные\s+)?новост|^что\s+нового(?:\s+в\s+мире|\s+в\s+стране|\s+в\s+спорте|\s+в\s+науке|\s+в\s+экономике|\s+в\s+технологиях)?$|^что\s+(?:сейчас\s+)?происходит\s+в\s+мире""",
+        """^(?:а\s+)?(?:(?:расскажи|прочитай|почитай|покажи|включи|какие|скажи|озвучь|давай)\s+)?(?:мне\s+)?(?:последние\s+|свежие\s+|главные\s+|сегодняшние\s+|самые\s+важные\s+)?новост|^что\s+нового(?:\s+в\s+мире|\s+в\s+стране|\s+в\s+спорте|\s+в\s+науке|\s+в\s+экономике|\s+в\s+технологиях)?$|^что\s+(?:сейчас\s+)?происходит\s+в\s+мире|^что\s+(?:сейчас\s+|сегодня\s+)?(?:пишут|говорят)\s+в\s+новост""",
     )
 
     fun news(t: String): SkillCommand? {
@@ -190,9 +196,9 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Факты (Википедия)
 
     private val FACT = Regex(
-        """^(?:а\s+)?(?:скажи\s+)?(?:кто\s+(?:такой|такая|такие|такое|был|была|были)|что\s+(?:такое|значит|означает)|что\s+ты\s+знаешь\s+(?:про|о|об)|расскажи\s+(?:мне\s+)?(?:про|о|об)|кто\s+(?:написал|изобрел|придумал|открыл|основал|построил)|где\s+находится|сколько\s+лет\s+(?=\S))\s+(.+)$""",
+        """^(?:а\s+)?(?:скажи\s+)?(?:кто\s+(?:такой|такая|такие|такое|был|была|были)|что\s+(?:такое|значит|означает)|что\s+ты\s+знаешь\s+(?:про|о|об)|расскажи\s+(?:мне\s+)?(?:про|о|об)|кто\s+(?:написал|изобрел|придумал|открыл|основал|построил)|где\s+находится|сколько\s+лет)\s+(.+)$""",
     )
-    private val NOT_FACT = rx("""^(?:ты|я|меня|тебя|себя|мы|вы|он|она|они|это|то|такое|мой|моя|мои|твой|твоя)$|задач|расход|заметк|напоминан|\bплан|\bдень\b|список|покупк|погод|курс|новост|сообщени|календар|себе|\bмне\b|себя|тебе""")
+    private val NOT_FACT = rx("""^(?:ты|я|меня|тебя|себя|мы|вы|он|она|они|это|то|такое|мой|моя|мои|твой|твоя)$|(?:^|\s)(?:мо[йяеюи]|моего|моей|моих|моим|наш\S*|твой|твоего|твоей|твою|свой|свою|своего|своей)(?:\s|$)|задач|расход|заметк|напоминан|\bплан|\bдень\b|список|покупк|погод|курс|новост|сообщени|календар|себе|\bмне\b|себя|тебе""")
 
     fun fact(t: String, assistantName: String): String? {
         val m = FACT.find(t) ?: return null
@@ -206,19 +212,22 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Сообщения
 
     private val READ_MSG = rx(
-        """^(?:прочитай|прочти|зачитай|почитай|покажи|озвучь|проверь)\s+(?:мне\s+)?(?:мои\s+|все\s+)?(?:новые\s+|последние\s+|непрочитанные\s+|входящие\s+)?(?:сообщени|уведомлени|смс|эсэмэск|месседж|чаты)|^что\s+(?:мне\s+)?(?:пришло|написали|пишут)|^(?:есть\s+(?:ли\s+)?(?:у меня\s+)?|были\s+)?(?:новые\s+)?сообщения$|^есть\s+(?:ли\s+)?(?:у меня\s+)?(?:новые\s+)?сообщения|^кто\s+мне\s+(?:писал|написал)|^кто\s+(?:писал|написал)$|^что\s+(?:мне\s+)?(?:написал|написала|пишет|пишут)\s+(.+)$""",
+        """^(?:прочитай|прочти|зачитай|почитай|покажи|озвучь|проверь)\s+(?:мне\s+)?(?:мои\s+|все\s+)?(?:новые\s+|последние\s+|непрочитанные\s+|входящие\s+)?(?:сообщени|уведомлени|смс|эсэмэск|месседж|чаты)|^что\s+(?:мне\s+)?(?:пришло|написали|пишут)(?!\s+(?:в|во|на|об?|про)\s+(?:новост|интернет|газет|сети|мире|стране|сми|соцсет|телеграм))|^(?:есть\s+(?:ли\s+)?(?:у меня\s+)?|были\s+)?(?:новые\s+)?сообщения$|^есть\s+(?:ли\s+)?(?:у меня\s+)?(?:новые\s+)?сообщения|^кто\s+мне\s+(?:писал|написал)|^кто\s+(?:писал|написал)$|^что\s+(?:мне\s+)?(?:написал|написала|пишет|пишут)\s+(.+)$""",
     )
 
     fun messages(t: String, original: String): SkillCommand? {
         rx("""^(?:ответь|ответить|отправь\s+ответ|напиши\s+в\s+ответ)\b[,:]?\s*(.*)$""").find(t)?.let { m ->
-            val rest = m.groupValues[1].trim()
+            val rest = m.groupValues[1].trim().replace(Regex("""^(?:на\s+(?:это\s+|последнее\s+)?(?:сообщение|смс)|на\s+него|на\s+нее)\s*[,:]?\s*"""), "")
             if (rest.isEmpty()) return SkillCommand.ReplyMessage(null, "", rest)
-            // «ответь маше: буду через 10 минут», «ответь ему буду…», «ответь буду…».
+            // «ответь маше: буду через 10 минут», «ответь ему, что опоздаю», «ответь буду…».
             val colon = rest.split(Regex("""\s*:\s*"""), limit = 2)
-            if (colon.size == 2 && colon[0].split(' ').size <= 3) return SkillCommand.ReplyMessage(colon[0].removePrefix("на сообщение ").trim(), colon[1].trim(), rest)
-            val first = rest.substringBefore(' ')
-            val tail = rest.substringAfter(' ', "")
-            return SkillCommand.ReplyMessage(first.takeIf { tail.isNotEmpty() }, tail.ifEmpty { rest }, rest)
+            if (colon.size == 2 && colon[0].isNotBlank() && colon[0].split(' ').size <= 3) {
+                return SkillCommand.ReplyMessage(colon[0].trim(), colon[1].trim(), colon[1].trim(), explicitTo = true)
+            }
+            val first = rest.substringBefore(' ').trim(',', '.', '!')
+            val tail = rest.substringAfter(' ', "").trim().removePrefix("что ").trim()
+            if (colon.size == 2 && colon[0].isBlank()) return SkillCommand.ReplyMessage(null, colon[1].trim(), colon[1].trim())
+            return SkillCommand.ReplyMessage(first.takeIf { tail.isNotEmpty() }, tail.ifEmpty { rest }, rest.removePrefix("что ").trim())
         }
         val m = READ_MSG.find(t) ?: return null
         val from = m.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
@@ -241,6 +250,8 @@ object SkillPhrases {
         val m = rx("""^(?:какой|скажи|назови|продиктуй|дай|найди|подскажи)\s+(?:мне\s+)?(?:номер|телефон)(?:\s+телефона)?\s+(?:у\s+)?(.+)$|^(?:номер|телефон)\s+(?:телефона\s+)?(?:у\s+)?(.+)$|^какой\s+у\s+(.+?)\s+(?:номер|телефон)(?:\s+телефона)?$""").find(t) ?: return null
         val name = m.groupValues.drop(1).firstOrNull { it.isNotBlank() }?.trim() ?: return null
         if (name in setOf("мой", "мне", "меня", "телефона", "этот")) return null
+        // «какой номер моего паспорта» — вопрос к памяти, а не к контактам.
+        if (rx("""(?:^|\s)(?:мо[йяеи]|моего|моей|моих|наш\S*|твой|твоего|свой|своего|своей)(?:\s|$)|паспорт|квартир|машин|автомобил|карт[ыаеу]|счет|снилс|инн|полис|заказ|рейс|поезд|дом[аеу]?$|подъезд|офис""").containsMatchIn(name)) return null
         return name
     }
 
@@ -271,7 +282,7 @@ object SkillPhrases {
             val q = m.groupValues[1]
             val station = RadioCatalog.builtIn(q)
             // Только явные названия станций: «включи Европу Плюс», «включи Ретро ФМ».
-            if (station != null && (q.contains("фм") || q.contains("fm") || q.contains("плюс") || q.contains("радио") || q.contains("вести") || q.contains("маяк") || q.contains("шансон"))) return SkillCommand.RadioPlay(q)
+            if (station != null && rx("""\b(?:фм|fm|плюс|радио|вести|маяк|шансон)\b""").containsMatchIn(q)) return SkillCommand.RadioPlay(q)
         }
         return null
     }
@@ -283,9 +294,9 @@ object SkillPhrases {
     // ------------------------------------------------------------------ Таймеры
 
     fun timers(t: String): SkillCommand? {
-        if (rx("""сколько\s+(?:еще\s+)?(?:времени\s+)?осталось|когда\s+(?:сработает|зазвонит|закончится|прозвенит)\s+таймер|сколько\s+на\s+таймере|^какие\s+(?:у\s+меня\s+)?таймеры|^мои\s+таймеры|^покажи\s+таймер""").containsMatchIn(t)) return SkillCommand.TimersLeft
+        if (rx("""сколько\s+(?:еще\s+)?(?:времени\s+)?осталось(?:\s+(?:на\s+)?таймер\S*)?$|сколько\s+(?:еще\s+)?(?:времени\s+)?осталось\s+(?:на|у|до\s+конца)\s+таймер|когда\s+(?:сработает|зазвонит|закончится|прозвенит)\s+таймер|сколько\s+на\s+таймере|^какие\s+(?:у\s+меня\s+)?таймеры|^мои\s+таймеры|^покажи\s+таймер""").containsMatchIn(t)) return SkillCommand.TimersLeft
         rx("""^(?:отмени|выключи|останови|сбрось|удали|убери|отключи)\s+(?:все\s+)?таймер(?:ы|а)?(?:\s+(?:на\s+)?(.+))?$""").find(t)?.let { m ->
-            return SkillCommand.TimersCancel(m.groupValues[1].takeIf { it.isNotBlank() && it != "все" })
+            return SkillCommand.TimersCancel(m.groupValues[1].trim().takeIf { it.isNotBlank() && it != "все" })
         }
         return null
     }
@@ -311,11 +322,14 @@ object SkillPhrases {
     fun places(t: String, original: String): SkillCommand? {
         if (rx("""^(?:какие|покажи|мои)\s+(?:у\s+меня\s+)?(?:напоминания\s+по\s+месту|места)|^какие\s+места\s+(?:ты\s+)?(?:знаешь|запомнила)""").containsMatchIn(t)) return SkillCommand.ListPlaces
         // Сохранить место: «запомни, я дома», «здесь моя работа, запомни», «запомни это место как дача».
-        val saveVerb = rx("""\b(?:запомни|сохрани|отметь)\b""").containsMatchIn(t)
-        if (saveVerb) {
-            rx("""\bя\s+(?:сейчас\s+)?(?:дома|на работе|на даче|в офисе)\b""").find(t)?.let { return SkillCommand.SavePlace(placeName(it.value.removePrefix("я ").removePrefix("сейчас ").trim().removePrefix("сейчас "))) }
-            rx("""(?:здесь|тут|это)\s+(?:находится\s+)?(?:мой|моя|мое|наш|наша|наше)\s+(\S+)""").find(t)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
-            rx("""(?:это|здесь|тут)?\s*место\s+как\s+(.+)$""").find(t)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
+        // Только короткие фразы целиком: «запомни, это мой пароль…» и «запомни, что я на работе до 7» — это память, а не место.
+        val saveVerb = rx("""^(?:запомни|сохрани|отметь)\b|\b(?:запомни|сохрани|отметь)$""")
+        if (saveVerb.containsMatchIn(t)) {
+            val body = t.replace(rx("""^(?:запомни|сохрани|отметь)(?:\s+это)?\s*,?\s*(?:что\s+)?|\s*,?\s*(?:запомни|сохрани|отметь)$"""), "").trim(' ', ',')
+            rx("""^я\s+(?:сейчас\s+)?(дома|на работе|на даче|в офисе)$""").find(body)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
+            rx("""^(?:здесь|тут)\s+(?:находится\s+)?(?:мой|моя|мое|наш|наша|наше)\s+(\S+)$""").find(body)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
+            rx("""^(?:это\s+)?(?:место\s+)?(?:мой|моя|мое|наш|наша|наше)\s+(дом|работа|дача|офис|школа|университет|универ|спортзал|садик)$""").find(body)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
+            rx("""^(?:это\s+|здесь\s+|тут\s+)?место\s+как\s+(.+)$""").find(body)?.let { return SkillCommand.SavePlace(placeName(it.groupValues[1])) }
         }
         // Напоминание по месту.
         // Текст напоминания — с «ё», как сказано.
@@ -341,7 +355,10 @@ object SkillPhrases {
         val o = original.trim().trimEnd('.', '!', '?')
         Regex("""(?iu)^(?:(?:запомни[,]?\s+(?:что\s+)?)?(?:называй|зови)\s+меня|(?:запомни[,]?\s+(?:что\s+)?)?меня\s+зовут|мо[её]\s+имя)\s+[—-]?\s*(.+)$""").find(o)?.let { m ->
             val name = m.groupValues[1].trim().trim(',', '.', '«', '»', '"').split(Regex("""\s+""")).take(2).joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.uppercase() } }
-            if (name.length in 2..30 && !rx("""\b(?:не|никак|ничего)\b""").containsMatchIn(RuTokenizer.normalize(name))) return SkillCommand.SetName(name)
+            val firstWord = RuTokenizer.normalize(m.groupValues[1].trim()).substringBefore(' ')
+            // «Меня зовут на день рождения к Маше» — приглашение, а не имя.
+            val notName = firstWord in setOf("на", "в", "во", "к", "ко", "с", "со", "за", "по", "домой", "гулять", "играть", "туда", "сюда", "обратно", "замуж", "работать", "учиться")
+            if (!notName && name.length in 2..30 && !rx("""\b(?:не|никак|ничего)\b""").containsMatchIn(RuTokenizer.normalize(name))) return SkillCommand.SetName(name)
         }
         Regex("""(?iu)^(?:запомни[,]?\s+(?:что\s+)?)?(?:я\s+живу|мы\s+живем|мы\s+живём|я\s+сейчас\s+живу)\s+(?:в|во)\s+(.+)$|^мой\s+город\s+[—-]?\s*(.+)$""").find(o)?.let { m ->
             val city = m.groupValues.drop(1).firstOrNull { it.isNotBlank() }?.trim()?.trim(',', '.') ?: return null

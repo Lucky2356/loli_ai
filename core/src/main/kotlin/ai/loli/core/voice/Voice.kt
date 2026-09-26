@@ -73,15 +73,18 @@ object SpeechText {
             Regex("""(\d+)()\s?дн\.""") to Triple("день", "дня", "дней"),
             Regex("""(\d+)()\s?нед\.""") to Triple("неделя", "недели", "недель"),
             Regex("""(\d+)()\s?мес\.""") to Triple("месяц", "месяца", "месяцев"),
-            Regex("""(\d+)()\s?м/с""") to Triple("метр в секунду", "метра в секунду", "метров в секунду"),
-            Regex("""(\d+)()\s?%""") to Triple("процент", "процента", "процентов"),
+            Regex("""(\d+)(?:,(\d+))?\s?м/с""") to Triple("метр в секунду", "метра в секунду", "метров в секунду"),
+            Regex("""(\d+)(?:,(\d+))?\s?%""") to Triple("процент", "процента", "процентов"),
         )
         var t = text
         // «+12°» → «плюс 12 градусов», «−3°» → «минус 3 градуса».
-        t = Regex("""(?:(?<=^|[\s(…:])([+−-]))?(\d+)\s?°\s?[CС]?(?![\p{L}])""").replace(t) { m ->
+        t = Regex("""(?:(?<=^|[\s(…:])([+−-]))?(\d+)(?:,(\d+))?\s?°\s?[CС]?(?![\p{L}])""").replace(t) { m ->
             val n = m.groupValues[2].toLongOrNull() ?: return@replace m.value
-            val sign = when (m.groupValues[1]) { "+" -> "плюс "; "−", "-" -> if (n == 0L) "" else "минус "; else -> "" }
-            "$sign$n ${ai.loli.core.assistant.RuFormat.plural(n, "градус", "градуса", "градусов")}"
+            val frac = m.groupValues[3]
+            val sign = when (m.groupValues[1]) { "+" -> "плюс "; "−", "-" -> if (n == 0L && frac.trim('0').isEmpty()) "" else "минус "; else -> "" }
+            // «12,5°» — «двенадцать и пять десятых градуса»: с дробью родительный падеж единственного числа.
+            val word = if (frac.isNotEmpty()) "градуса" else ai.loli.core.assistant.RuFormat.plural(n, "градус", "градуса", "градусов")
+            "$sign$n${if (frac.isNotEmpty()) ",$frac" else ""} $word"
         }
         for ((re, forms) in units) {
             t = re.replace(t) { m ->

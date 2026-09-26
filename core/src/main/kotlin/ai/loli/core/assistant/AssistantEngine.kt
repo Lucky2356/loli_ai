@@ -37,6 +37,8 @@ data class AssistantSettings(
     val userName: String? = null,
     /** Город пользователя — для погоды, если геолокация недоступна. */
     val city: String? = null,
+    /** Правила экрана блокировки (null — телефон разблокирован или правила не заданы). */
+    val lockPolicy: LockPolicy? = null,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -65,6 +67,8 @@ data class AssistantReply(
     val dictation: Boolean = false,
     /** Для ответа нужно разрешение — приложение предложит его выдать. */
     val permission: ai.loli.core.skills.Permission? = null,
+    /** В ответе личное (сообщения, экран, контакты): в историю для AI не попадает. */
+    val sensitive: Boolean = false,
 )
 
 /** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
@@ -124,7 +128,7 @@ class AssistantEngine(
             Logger.e(TAG, "Ошибка обработки команды", e)
             AssistantReply("Что-то пошло не так: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.")
         }
-        record(text, reply.text)
+        record(text, reply.text, reply.sensitive)
         continueDialog(reply, source, cfg)
     }
 
@@ -182,7 +186,7 @@ class AssistantEngine(
     /** Свободный вопрос без облачного AI — офлайн-модель. */
     private suspend fun localAnswer(text: String, cfg: AssistantSettings): AssistantReply? {
         val lc = localChat?.takeIf { it.available } ?: return null
-        val history = context.messages.takeLast(6) + ChatMessage(ChatMessage.Role.USER, text)
+        val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
             lc.reply(ai.loli.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName), history)
         } catch (e: CancellationException) {
@@ -194,10 +198,16 @@ class AssistantEngine(
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
     }
 
+    /** Фраза — команда (расход, задача, телефон, список)? Тогда она прерывает игру или ожидание навыка. */
+    private fun isCommand(text: String): Boolean = runCatching {
+        localParser.parse(text, time.now(), time.zone())?.actions?.isNotEmpty() == true || special.parse(text, time.today()) != null
+    }.getOrDefault(false)
+
     private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? =
         when (val out = skills?.handle(text, cfg, skillAi)) {
             is ai.loli.core.skills.SkillOutcome.Say -> AssistantReply(
                 out.text, expectFollowUp = out.followUp, awaitingAnswer = out.followUp, permission = out.permission, speakLanguage = out.speakLanguage,
+                sensitive = out.sensitive,
             )
             is ai.loli.core.skills.SkillOutcome.Run -> execute(out.plan, usedAI = false, offline = false, name = cfg.assistantName)
             null -> null
@@ -207,13 +217,19 @@ class AssistantEngine(
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
 
     private suspend fun process(text: String, cfg: AssistantSettings): AssistantReply {
-        // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него.
-        if (skills?.busy == true) runSkills(text, cfg)?.let { return it }
+        // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него, если это не новая команда.
+        var skillsTried = false
+        if (skills?.busy == true) {
+            if (skills.interruptedBy(text, cfg, ::isCommand)) skills.reset()
+            else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
+        }
         // 1. Ожидаем подтверждение опасного действия.
         context.pendingConfirmation?.let { pending ->
             when {
                 LocalCommandParser.isYes(text) -> {
                     context.pendingConfirmation = null
+                    // Пока ждали «да», телефон могли заблокировать: удаление — это изменение записей.
+                    if (cfg.lockPolicy?.edit == false) return AssistantReply("Разблокируйте телефон — удалять записи без разблокировки не разрешено.")
                     val result = executor.applyConfirmed(pending, context)
                     return AssistantReply(result.outcomes.joinToString(" ") { it.text }, result.outcomes, changedData = true)
                 }
@@ -272,7 +288,7 @@ class AssistantEngine(
         special.translation(text)?.let { return translate(it, cfg) }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
-        runSkills(text, cfg)?.let { return it }
+        if (!skillsTried) runSkills(text, cfg)?.let { return it }
         special.boughtItems(text)?.let { bought ->
             val open = shoppingItems().filter { !it.done }
             val matched = bought.filter { b ->
@@ -280,8 +296,13 @@ class AssistantEngine(
                 open.any { i -> i.text.equals(b, true) || ai.loli.core.nlp.TextAnalysis.stems(i.text).any { it in stems } }
             }
             if (matched.isNotEmpty()) {
-                val list = open.first().listName
-                return execute(AssistantPlan("", matched.map { AssistantAction.CheckListItem(list, it) }), usedAI = false, offline = false, name = cfg.assistantName)
+                // Каждую покупку отмечаем в том списке, где она есть.
+                val actions = matched.map { b ->
+                    val stems = ai.loli.core.nlp.TextAnalysis.stems(b).toSet()
+                    val item = open.firstOrNull { i -> i.text.equals(b, true) } ?: open.first { i -> ai.loli.core.nlp.TextAnalysis.stems(i.text).any { it in stems } }
+                    AssistantAction.CheckListItem(item.listName, b)
+                }
+                return execute(AssistantPlan("", actions), usedAI = false, offline = false, name = cfg.assistantName)
             }
         }
         // 5. Облачный AI → при недоступности офлайн-парсер.
@@ -455,7 +476,9 @@ class AssistantEngine(
             cfg.assistantName, time.now(), time.zone(), memoryItems, candidates, context.focus, context.topic, context.dialogMode,
             userName = cfg.userName,
         )
-        val request = AIRequest(system = system, messages = context.messages + ChatMessage(ChatMessage.Role.USER, text))
+        // На блокировке прошлый разговор модели не показываем: в нём могли быть личные данные.
+        val history = if (cfg.locked) emptyList() else context.messages
+        val request = AIRequest(system = system, messages = history + ChatMessage(ChatMessage.Role.USER, text))
         val response = provider.complete(request)
         val plan = ActionParser(time.now(), time.zone(), handles).parse(response.text)
         plan.topic?.let { context.topic = it }
@@ -588,8 +611,9 @@ class AssistantEngine(
         else -> action
     }
 
-    private suspend fun record(userText: String, reply: String) {
-        context.addTurn(userText, reply)
+    private suspend fun record(userText: String, reply: String, sensitive: Boolean = false) {
+        // Личное (сообщения, экран, контакты) остаётся в истории на телефоне, но не уходит AI в следующих запросах.
+        context.addTurn(userText, if (sensitive) "(личные данные — показаны пользователю, не пересказываю)" else reply)
         runCatching {
             conversations.add(context.conversationId, MessageRole.USER, userText)
             if (reply.isNotBlank()) conversations.add(context.conversationId, MessageRole.ASSISTANT, reply)

@@ -16,7 +16,8 @@ data class ContactInfo(val name: String, val phones: List<String>)
 
 data class CalendarItem(val title: String, val start: Instant, val end: Instant?, val allDay: Boolean, val location: String? = null)
 
-data class ActiveTimer(val id: String, val label: String, val endsAt: Instant)
+/** [seconds] — на сколько был поставлен таймер (0 — неизвестно). */
+data class ActiveTimer(val id: String, val label: String, val endsAt: Instant, val seconds: Int = 0)
 
 data class SavedPlace(val name: String, val lat: Double, val lon: Double)
 
@@ -54,6 +55,8 @@ interface SkillHost {
 
     fun timers(): List<ActiveTimer> = emptyList()
     fun cancelTimers(label: String?): Int = 0
+    /** Отменить один таймер по id. */
+    fun cancelTimer(id: String): Boolean = false
 
     /** Запомнить текущее место под именем. */
     suspend fun savePlace(name: String): SavedPlace? = null

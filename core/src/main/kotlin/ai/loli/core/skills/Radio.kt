@@ -73,7 +73,9 @@ class RadioCatalog(private val http: HttpClient?) {
 
         fun builtIn(q: String): RadioStation? {
             val clean = q.removePrefix("радио ").trim()
-            return POPULAR.firstOrNull { (keys, _) -> keys.any { k -> q == k || clean == k || q.contains(k) && k.length >= 5 } }?.second
+            // Ключ — целыми словами: «провести встречу» — не «Вести FM».
+            fun hasWords(k: String) = k.length >= 5 && ai.loli.core.nlp.Rx.of("""(?<![\p{L}])${Regex.escape(k)}""").containsMatchIn(q)
+            return POPULAR.firstOrNull { (keys, _) -> keys.any { k -> q == k || clean == k || hasWords(k) } }?.second
         }
 
         /** Жанр → тег каталога. */

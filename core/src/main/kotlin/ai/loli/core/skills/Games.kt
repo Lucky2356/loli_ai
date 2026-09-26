@@ -44,7 +44,9 @@ sealed class Game {
             if (k in used) return GameTurn("${city.replaceFirstChar { it.uppercase() }} уже был! Другой город на «${letter?.uppercaseChar()}».")
             val listed = CITIES.firstOrNull { key(it) == k }
             if (listed == null) {
-                val ok = known?.let { runCatching { it(city) }.getOrDefault(false) }
+                val ok = known?.let {
+                    try { it(city) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
+                }
                 if (ok == false) {
                     misses++
                     return GameTurn("Не знаю такого города — «${city.replaceFirstChar { it.uppercase() }}». Попробуйте другой на «${letter?.uppercaseChar()}».")
@@ -141,7 +143,7 @@ sealed class Game {
         fun parseStart(text: String): Game? {
             val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
             return when {
-                Regex("""(?:играть|игра|поиграем|сыграем|давай|начнем)\s*(?:в|во)?\s*город|^города$|^игра в города$""").containsMatchIn(t) -> Cities()
+                Regex("""(?:играть|игра|поиграем|сыграем|давай|начнем)\s*(?:в|во)?\s*город(?:а|ах)(?![\p{L}])|^города$|^игра в города$""").containsMatchIn(t) -> Cities()
                 Regex("""угада(?:й|ть|ю)\s+число|загада(?:й|ла)\s+число|игра\s+(?:в\s+)?(?:угадай\s+)?число""").containsMatchIn(t) -> GuessNumber()
                 Regex("""загад(?:ай|ывай)\s+(?:мне\s+|нам\s+)?загадк|(?:давай|хочу|расскажи|поиграем в|сыграем в)\s+загадк|^загадк[аиу]$|^загадай что[- ]нибудь$""").containsMatchIn(t) -> Riddles()
                 else -> null

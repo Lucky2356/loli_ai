@@ -71,12 +71,19 @@ class WikiService(private val http: HttpClient) {
 
     suspend fun lookup(query: String): Article? {
         val key = query.lowercase().trim()
-        cache.get(key)?.let { return it }
+        if (cache.contains(key)) return cache.get(key)
         // Сначала прямое совпадение названия (с перенаправлениями), затем полнотекстовый поиск.
         val direct = extract(query.replaceFirstChar { it.uppercase() })
-        val article = direct ?: searchTitle(query)?.let { extract(it) }
+        // Результат поиска берём, только если заголовок похож на вопрос: иначе прочитаем чужую статью.
+        val article = direct ?: searchTitle(query)?.takeIf { similarTitle(it, query) }?.let { extract(it) }
         cache.put(key, article)
         return article
+    }
+
+    private fun similarTitle(title: String, query: String): Boolean {
+        fun stems(s: String) = s.lowercase().replace('ё', 'е').split(Regex("""[^\p{L}\p{N}]+""")).filter { it.length >= 3 }.map { it.take(maxOf(3, it.length - 3)) }
+        val t = stems(title)
+        return stems(query).any { q -> t.any { it.startsWith(q) || q.startsWith(it) } }
     }
 
     private suspend fun searchTitle(query: String): String? {

@@ -102,8 +102,19 @@ object DevicePhrases {
             .replace(re("""\b(?:минуту|час|на|для|и|по|через)\b"""), " ")
             .replace(Regex("""\s+"""), " ").trim()
         if (rest.length < 3) return ""
-        // «пасту» → «паста», «яйца» — как есть: винительный падеж частых слов.
-        return rest.split(' ').take(3).joinToString(" ") { w -> if (w.endsWith("у") && w.length > 3) w.dropLast(1) + "а" else w }
+        val words = rest.split(' ').take(3)
+        // «забрать сестру» — после глагола винительный падеж оставляем как есть.
+        if (words.any { it.length > 3 && (it.endsWith("ть") || it.endsWith("ти")) }) return words.joinToString(" ")
+        // «пасту» → «паста», «гречневую кашу» → «гречневая каша», «яйца» — как есть.
+        return words.joinToString(" ") { w ->
+            when {
+                w.endsWith("ую") && w.length > 4 -> w.dropLast(2) + "ая"
+                w.endsWith("юю") && w.length > 4 -> w.dropLast(2) + "яя"
+                w.endsWith("у") && w.length > 3 -> w.dropLast(1) + "а"
+                w.endsWith("ю") && w.length > 3 && !w.endsWith("ию") -> w.dropLast(1) + "я"
+                else -> w
+            }
+        }
     }
 
     fun parse(n: String, now: Instant, zone: ZoneId): AssistantAction.Device? {

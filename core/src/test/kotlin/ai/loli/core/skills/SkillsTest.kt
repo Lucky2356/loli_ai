@@ -85,8 +85,10 @@ class SkillsTest {
         override suspend fun playRadio(station: RadioStation): Boolean { radioPlayed += station.name; return true }
         override fun stopRadio() = radioPlayed.isNotEmpty()
         override suspend fun ringPhone(): Boolean { rang = true; return true }
-        override fun timers() = listOf(ActiveTimer("t1", "паста", Instant.parse("2026-09-25T09:08:30Z")))
+        override fun timers() = listOf(ActiveTimer("t1", "паста", Instant.parse("2026-09-25T09:08:30Z"), seconds = 600))
         override fun cancelTimers(label: String?) = 1
+        val cancelledIds = ArrayList<String>()
+        override fun cancelTimer(id: String): Boolean { cancelledIds += id; return true }
         override suspend fun savePlace(name: String) = SavedPlace(name, 55.7, 37.6).also { savedPlaces += it }
         override fun places() = savedPlaces
         override suspend fun addPlaceReminder(text: String, place: String, onLeave: Boolean) = PlaceReminder("p1", text, place, onLeave).also { placeRems += it }
@@ -352,5 +354,112 @@ class SkillsTest {
             ai.loli.core.voice.SpeechText.declineUnits("+12°, −3°, ветер 4 м/с, 70%"))
         assertEquals("паста", ai.loli.core.assistant.DevicePhrases.timerLabel("на пасту 8 минут"))
         assertEquals("", ai.loli.core.assistant.DevicePhrases.timerLabel("на 5 минут"))
+    }
+
+    // ------------------------------------------------------------------ Аудит 2.0.1: ложные срабатывания и защита
+
+    @Test fun auditPhrasesDoNotStealOtherCommands() {
+        fun p(t: String) = SkillPhrases.parse(t, today)
+        // Радио не включается из «провести», места не перехватывают память.
+        assertNull(p("поставь напоминание завтра провести встречу"))
+        assertNull(p("запомни, это мой пароль от почты"))
+        assertNull(p("сохрани заметку: здесь моя идея про сайт"))
+        assertNull(p("запомни что я на работе до 7"))
+        assertTrue(p("запомни это место как дача").let { it is SkillCommand.SavePlace && it.name == "дача" })
+        assertTrue(p("здесь моя работа, запомни").let { it is SkillCommand.SavePlace && it.name == "работа" })
+        // Таймеры, Википедия, сообщения, контакты, имя.
+        assertNull(p("сколько осталось дней до нового года"))
+        assertEquals(SkillCommand.TimersLeft, p("сколько осталось"))
+        assertNull(p("где находится мой паспорт"))
+        assertNull(p("что ты знаешь про мою маму"))
+        assertEquals(SkillCommand.Fact("путину"), p("сколько лет путину"))
+        assertTrue(p("что пишут в новостях") is SkillCommand.News)
+        assertFalse(p("что пишут в новостях") is SkillCommand.ReadMessages)
+        assertNull(p("какой номер моего паспорта"))
+        assertNull(p("меня зовут на день рождения к Маше"))
+        assertEquals(SkillCommand.SetName("Аня"), p("меня зовут Аня"))
+        // Курсы: «Европа» — не евро; кросс-курс; вес — не валюта.
+        assertNull(p("сколько стоит поездка в Европу"))
+        assertNull(p("переведи 10 фунтов в кг"))
+        assertEquals(RatesQuery(listOf("USD", "EUR"), 100.0, fromRub = false), (p("переведи 100 долларов в евро") as SkillCommand.Rates).query)
+        // Погода: «эти выходные» и «духовка» — не города.
+        assertNull((p("какая погода в эти выходные") as SkillCommand.Weather).query.place)
+        assertNull((p("погода в следующий понедельник") as SkillCommand.Weather).query.place)
+        assertNull(p("сколько градусов в духовке"))
+        // Игры — только явная фраза.
+        assertNull(Game.parseStart("давай в городе погуляем"))
+        assertTrue(Game.parseStart("давай в города") is Game.Cities)
+    }
+
+    @Test fun auditRatesAndSpeechForms() {
+        val board = RatesService.parseCbr(cbr)
+        val cross = RatesService.format(RatesQuery(listOf("USD", "EUR"), 100.0), board, emptyMap())
+        assertEquals("100 долларов — это 85,46 евро по курсу ЦБ.", cross)
+        assertTrue(RatesService.codesIn("в эфире").isEmpty())
+        assertEquals(listOf("ETH"), RatesService.codesIn("курс эфира"))
+        assertEquals("12,5 процента, 12,5 градуса", ai.loli.core.voice.SpeechText.declineUnits("12,5%, 12,5°"))
+        assertEquals("гречневая каша", ai.loli.core.assistant.DevicePhrases.timerLabel("10 минут на гречневую кашу"))
+        assertEquals("забрать сестру", ai.loli.core.assistant.DevicePhrases.timerLabel("10 минут забрать сестру"))
+        assertEquals("Уфа", WeatherService.nameCandidates("Уфе")[1])
+        assertTrue("Орел" in WeatherService.nameCandidates("Орле"))
+        assertNull(WeatherService.pickPlace(listOf(WeatherService.Place("Эттербек", 50.8, 4.3)), "Эти"))
+    }
+
+    @Test fun auditGameAndCityQuestionDoNotSwallowCommands() = runTest {
+        val e = env()
+        e.engine.handle("давай поиграем в угадай число", ai.loli.core.assistant.InputSource.VOICE)
+        val r = e.engine.handle("запиши расход 300 рублей на кофе", ai.loli.core.assistant.InputSource.VOICE)
+        assertFalse(r.text.contains("чем 300"), r.text)
+        assertEquals(1, e.store.expenses.all().size)
+        // Вопрос «в каком городе?» — «спасибо» и новая команда его отменяют.
+        val host = FakeHost().apply { location = null }
+        val e2 = env(host)
+        assertTrue(e2.engine.handle("какая погода").text.startsWith("В каком городе?"))
+        assertFalse(e2.engine.handle("запиши расход 300").text.contains("Не нашла город"))
+    }
+
+    @Test fun auditReplyNeverGoesToWrongPerson() = runTest {
+        val host = FakeHost()
+        val e = env(host)
+        val r = e.engine.handle("ответь маме: скоро буду")
+        assertTrue(host.sent.isEmpty(), host.sent.toString())
+        assertTrue(r.text.startsWith("Не нашла сообщения от «маме»"), r.text)
+        e.engine.handle("ответь на сообщение: ок")
+        assertEquals("Маша" to "Ок", host.sent.single())
+        e.engine.handle("ответь ему, что опоздаю")
+        assertEquals("Опоздаю", host.sent.last().second)
+    }
+
+    @Test fun auditLockPolicyAndPrivateHistory() = runTest {
+        val host = FakeHost()
+        val e = env(host)
+        // Всё запрещено на блокировке — даже погода и имя.
+        e.settings = AssistantSettings(useAI = false, locked = true, lockPolicy = ai.loli.core.assistant.LockPolicy.NONE)
+        assertTrue(e.engine.handle("какая погода").text.startsWith("Разблокируйте"))
+        assertTrue(e.engine.handle("называй меня Боб").text.startsWith("Разблокируйте"))
+        assertNull(host.savedName)
+        // По умолчанию: погода можно, имя — это запись (можно), напомнить своё имя — нельзя.
+        e.settings = AssistantSettings(useAI = false, locked = true, lockPolicy = ai.loli.core.assistant.LockPolicy.SAFE, userName = "Боб")
+        assertTrue(e.engine.handle("как меня зовут").text.startsWith("Разблокируйте"))
+        assertTrue(e.engine.handle("выключи радио").text.isNotBlank())
+        // Прочитанные сообщения не уходят AI в истории, а на блокировке AI не видит прошлого разговора.
+        val ai = ai.loli.core.ScriptedAI { """{"reply":"Хорошо","actions":[]}""" }
+        e.ai = ai
+        e.settings = AssistantSettings(useAI = false)
+        e.engine.handle("прочитай сообщения")
+        e.settings = AssistantSettings(useAI = true)
+        e.engine.handle("как дела у тебя вообще расскажи")
+        val history = ai.requests.last().messages.joinToString(" ") { it.content }
+        assertFalse(history.contains("Ты где?"), history)
+        e.settings = AssistantSettings(useAI = true, locked = true)
+        e.engine.handle("а что ты ещё умеешь делать интересного")
+        assertEquals(1, ai.requests.last().messages.size)
+    }
+
+    @Test fun auditTimerCancelByDuration() = runTest {
+        val host = FakeHost()
+        val e = env(host)
+        e.engine.handle("отмени таймер на 10 минут")
+        assertEquals(listOf("t1"), host.cancelledIds)
     }
 }

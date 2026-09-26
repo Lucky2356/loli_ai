@@ -26,6 +26,8 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
 
     private fun shopping(text: String, n: String): AssistantAction? {
         val list = ShoppingItem.DEFAULT_LIST
+        // «Запиши покупки 500 рублей» — это расход, а не пункт списка.
+        if (Regex("""^(?:запиши|внеси|добавь)\b""").containsMatchIn(n) && Regex("""\d+\s*(?:р\b|руб|₽|тыс|к\b)|\d{3,}|рубл""").containsMatchIn(DevicePhrases.digitize(n))) return null
         // «добавь в покупки молоко и хлеб», «запиши в список покупок: хлеб, яйца»
         Regex("""^(?:добавь|допиши|запиши|внеси|закинь|кинь|положи|включи)\s+(?:мне\s+)?(?:в\s+)?(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки|продуктовый\s+список)[:,]?\s+(.+)$""")
             .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
@@ -49,7 +51,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         }
         Regex("""^(?:покажи|прочитай|открой)\s+список\s+(.+)$""").find(n)?.let { m ->
             val name = sub(text, m.groups[1]!!)
-            if (!Regex("""^(?:задач|дел|напомин|расход|трат|заметок|идей)""").containsMatchIn(RuTokenizer.normalize(name))) {
+            if (!Regex("""^(?:задач|дел|напомин|расход|трат|заметок|идей|дн\S*\s+рожд|рожд|будильн|сценари|таймер|мест|контакт|сообщени|событи|встреч|памят)""").containsMatchIn(RuTokenizer.normalize(name))) {
                 return AssistantAction.QueryList(name.replaceFirstChar { it.uppercase() })
             }
         }

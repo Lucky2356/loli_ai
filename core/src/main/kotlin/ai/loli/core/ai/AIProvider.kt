@@ -133,12 +133,17 @@ class AIConfig(
 
     /** http:// допускается только для локальной сети (свой сервер Ollama/LM Studio); в интернет — только https://. */
     val isSecureEndpoint: Boolean get() {
-        val lower = endpoint.lowercase()
-        if (lower.startsWith("https://")) return true
-        if (!lower.startsWith("http://")) return false
-        val host = lower.removePrefix("http://").substringBefore('/').substringBefore(':')
-        return host == "localhost" || host.endsWith(".local") || host.startsWith("127.") || host.startsWith("10.") ||
-            host.startsWith("192.168.") || Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(host)
+        val uri = runCatching { java.net.URI(endpoint.trim()) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase()
+        if (scheme == "https") return !uri.host.isNullOrBlank()
+        if (scheme != "http") return false
+        // Хост берём разбором адреса: «http://10.evil.com» и «http://10.0.0.1@evil.com» — это интернет, а не локальная сеть.
+        val host = uri.host?.lowercase()?.trim('[', ']') ?: return false
+        if (host == "localhost" || host == "::1" || (host.endsWith(".local") && host.length > 6)) return true
+        val octets = host.split('.').takeIf { it.size == 4 }?.map { it.toIntOrNull() ?: return false } ?: return false
+        if (octets.any { it !in 0..255 }) return false
+        val (a, b) = octets
+        return a == 127 || a == 10 || (a == 192 && b == 168) || (a == 172 && b in 16..31)
     }
 
     val isComplete: Boolean get() = model.isNotBlank() && endpoint.isNotBlank() && (apiKey.isNotBlank() || type == AIProviderType.CUSTOM)

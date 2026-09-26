@@ -53,7 +53,7 @@ class RatesService(private val http: HttpClient) {
         /** Слова → коды валют. Основы слов, чтобы подходили все падежи. */
         val NAMES: List<Pair<Regex, String>> = listOf(
             "доллар|бакс|usd" to "USD",
-            "евро|eur" to "EUR",
+            "евро(?![\\p{L}])|eur(?![\\p{L}])" to "EUR",
             "юан|cny" to "CNY",
             "фунт|gbp" to "GBP",
             "иен|йен|jpy" to "JPY",
@@ -61,19 +61,19 @@ class RatesService(private val http: HttpClient) {
             "белорусск\\S*\\s+рубл|byn" to "BYN",
             "гривн|uah" to "UAH",
             "лир(?:а|ы|ах|у)?(?![\\p{L}])" to "TRY",
-            "франк|chf" to "CHF",
+            "франк(?:а|ов|и|ах|ами|ом|у)?(?![\\p{L}])|chf" to "CHF",
             "дирхам|aed" to "AED",
             "сом(?:а|ов|ы)?(?![\\p{L}])|kgs" to "KGS",
             "сум(?:а|ов|ы)?(?![\\p{L}])|uzs" to "UZS",
-            "драм(?:а|ов|ы)?(?![\\p{L}])|amd" to "AMD",
+            "армянск\\S*\\s+драм|драм(?:ов)?(?![\\p{L}])|amd" to "AMD",
             "лари|gel" to "GEL",
             "манат|azn" to "AZN",
             "рупи|inr" to "INR",
-            "вон(?:а|ы)?(?![\\p{L}])|krw" to "KRW",
+            "корейск\\S*\\s+вон|вон(?:а|ы)(?![\\p{L}])|krw" to "KRW",
             "злот|pln" to "PLN",
             "бат(?:а|ов|ы)?(?![\\p{L}])|thb" to "THB",
             "биткоин|биткойн|битк|btc" to "BTC",
-            "эфир|ethereum|eth" to "ETH",
+            "эфириум\\S*|эфир(?:а|ом|у)?(?![\\p{L}])|ethereum|eth(?![\\p{L}])" to "ETH",
             "тезер|usdt" to "USDT",
         ).map { (p, c) -> Regex("""(?<![\p{L}])(?:$p)""", RegexOption.IGNORE_CASE) to c }
 
@@ -118,7 +118,9 @@ class RatesService(private val http: HttpClient) {
             return s.replace(' ', ' ').replace(' ', ' ')
         }
 
-        private fun currencyName(code: String, n: Double): String {
+        private fun currencyName(code: String, amount: Double): String {
+            // Склоняем по тому числу, которое видно в ответе: 1234,6 показываем как «1 235».
+            val n = if (abs(amount) >= 1000) Math.round(amount).toDouble() else amount
             val whole = n % 1.0 == 0.0
             val k = n.toLong()
             fun pl(one: String, few: String, many: String) = if (!whole) few else RuFormat.plural(k, one, few, many)
@@ -157,6 +159,13 @@ class RatesService(private val http: HttpClient) {
             q.amount?.let { amount ->
                 val code = codes.first()
                 val p = priceRub(code) ?: return "Не нашла курс ${nameGen(code, null)}."
+                // «100 долларов в евро» — кросс-курс через рубль.
+                val to = codes.getOrNull(1)
+                if (!q.fromRub && to != null) {
+                    val p2 = priceRub(to) ?: return "Не нашла курс ${nameGen(to, null)}."
+                    val out = amount * p / p2
+                    return "${money(amount)} ${currencyName(code, amount)} — это ${money(out)} ${currencyName(to, out)} по курсу ${if (code in CRYPTO || to in CRYPTO) "биржи" else "ЦБ"}."
+                }
                 return if (q.fromRub) {
                     val out = amount / p
                     "${money(amount)} ₽ — это ${money(out)} ${currencyName(code, out)} по курсу ${if (code in CRYPTO) "биржи" else "ЦБ"}."

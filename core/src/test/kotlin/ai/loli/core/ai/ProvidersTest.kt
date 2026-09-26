@@ -250,6 +250,13 @@ class EndpointSecurityTest {
         assertTrue(secure("http://172.20.0.5/v1"))
         assertFalse(secure("http://api.example.com/v1"))
         assertFalse(secure("http://172.40.0.5/v1"))
+        // Обход проверки по началу строки.
+        assertFalse(secure("http://10.evil.com/v1"))
+        assertFalse(secure("http://192.168.evil.com/v1"))
+        assertFalse(secure("http://10.0.0.1@evil.com/v1"))
+        assertFalse(secure("http://127.0.0.1.nip.io/v1"))
+        assertTrue(secure("http://10.0.2.2:11434/v1"))
+        assertTrue(secure("http://my-pc.local:1234/v1"))
         assertFailsWith<AIException.InsecureEndpoint> {
             AIProviderFactory.create(io.ktor.client.HttpClient(MockEngine { error("no") }), AIConfig(AIProviderType.CUSTOM, "http://evil.com/v1", "m", "k"))
         }
