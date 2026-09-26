@@ -26,6 +26,7 @@ class TestEnv(
     device: ai.loli.core.assistant.DeviceController = ai.loli.core.assistant.UnsupportedDevice,
     lockPolicy: () -> ai.loli.core.assistant.LockPolicy? = { null },
     skillsFactory: ((FixedTimeSource) -> ai.loli.core.skills.Skills)? = null,
+    localChat: ai.loli.core.ai.LocalChat? = null,
 ) {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { LoliDatabase.Schema.create(it) }
     val store = LocalStore(driver, time, Dispatchers.Unconfined)
@@ -45,6 +46,7 @@ class TestEnv(
         settings = { settings }, aiProvider = { ai },
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
         skills = skillsFactory?.invoke(time),
+        localChat = localChat,
     )
 }
 

@@ -84,13 +84,25 @@ import ai.loli.core.model.MessageRole
 import ai.loli.core.nlp.Money
 import java.time.LocalTime
 
-private val suggestions = listOf(
+/** Примеры команд: нажатие выполняет команду. Порядок меняется при каждом запуске — так человек узнаёт новое. */
+private val allSuggestions = listOf(
+    "Какая погода?",
     "Что у меня на сегодня?",
+    "Напомни через 10 минут выключить плиту",
     "Потратила 500 ₽ на продукты",
-    "Напомни через час выпить воды",
-    "Добавь задачу купить подарок",
+    "Курс доллара",
+    "Включи радио",
+    "Таймер на 5 минут",
+    "Добавь в покупки молоко и хлеб",
+    "Новости",
+    "Давай в города",
+    "Расскажи сказку",
+    "Кто такой Гагарин?",
     "Что ты умеешь?",
 )
+private val suggestions: List<String> by lazy {
+    (listOf(allSuggestions.first()) + allSuggestions.drop(1).shuffled().take(7) + "Что ты умеешь?").distinct()
+}
 
 /** Состояние голоса для экранов Лоли: режим сферы, подпись и услышанный текст. */
 private data class VoiceUi(val mode: OrbMode, val status: String, val heard: String, val level: Float) {
@@ -160,6 +172,7 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
+            ai.loli.app.ui.components.CrashCard(settings.assistantName)
             UpdateCard(vm.c)
             SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it })
             Box(
@@ -241,6 +254,10 @@ private fun ChatPreview(
                         )
                     }
                     Text("Открыть чат ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                // Подсказки видны всегда: одно касание — и команда выполнена.
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 2.dp)) {
+                    items(suggestions) { s -> Suggestion(s) { onSuggestion(s) } }
                 }
             }
             if (awaitingConfirmation) {

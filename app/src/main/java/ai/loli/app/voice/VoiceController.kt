@@ -74,6 +74,8 @@ class VoiceController(
     var systemDialogAvailable: () -> Boolean = { false }
     /** Вызывается после каждого голосового ответа (приложение показывает уведомление, если экран заблокирован или свёрнут). */
     var onVoiceReply: (AssistantReply) -> Unit = {}
+    /** «Стоп» — прервать и ответ офлайн-модели, который считается на телефоне. */
+    var onStop: () -> Unit = {}
     /** Слушает «стоп», пока Лоли говорит; true — пользователь её остановил (задаётся приложением). */
     var stopWatcher: (suspend () -> Boolean)? = null
     /** Понимает ли Лоли фразу — для выбора лучшего из вариантов распознавания. */
@@ -123,6 +125,7 @@ class VoiceController(
     }
 
     fun stop() {
+        runCatching { onStop() }
         job?.cancel()
         scope.launch { engine.endDialog() }
         tts.stop()

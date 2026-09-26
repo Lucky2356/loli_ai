@@ -94,6 +94,10 @@ class AssistantEngine(
     private val special: SpecialCommands = SpecialCommands(),
     /** Погода, курсы, новости, сообщения, радио, игры… */
     val skills: ai.loli.core.skills.Skills? = null,
+    /** Фраза не понята ни на устройстве, ни AI — для журнала непонятых фраз (только на телефоне). */
+    private val onNotUnderstood: (String) -> Unit = {},
+    /** Офлайн-модель на телефоне: свободные вопросы без интернета и ключей. */
+    private val localChat: ai.loli.core.ai.LocalChat? = null,
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
@@ -160,7 +164,7 @@ class AssistantEngine(
 
     /** Облачный AI для навыков (пересказ экрана, сказки); null — AI не подключён или недоступен. */
     private val skillAi: ai.loli.core.skills.SkillAi = { system, user, maxTokens ->
-        if (!settings().useAI) null else try {
+        val cloud = if (!settings().useAI) null else try {
             aiProvider()?.complete(AIRequest(system = system, messages = listOf(ChatMessage(ChatMessage.Role.USER, user)), jsonMode = false, maxTokens = maxTokens))
                 ?.text?.trim()?.also { lastAiFailure = null }
         } catch (e: CancellationException) {
@@ -169,6 +173,25 @@ class AssistantEngine(
             lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
             null
         }
+        // Нет облачного AI — отвечает офлайн-модель (если скачана).
+        cloud ?: localChat?.takeIf { it.available }?.let { lc ->
+            runCatching { lc.reply(system, listOf(ChatMessage(ChatMessage.Role.USER, user.take(3000))), maxTokens.coerceAtMost(600)) }.getOrNull()
+        }
+    }
+
+    /** Свободный вопрос без облачного AI — офлайн-модель. */
+    private suspend fun localAnswer(text: String, cfg: AssistantSettings): AssistantReply? {
+        val lc = localChat?.takeIf { it.available } ?: return null
+        val history = context.messages.takeLast(6) + ChatMessage(ChatMessage.Role.USER, text)
+        val out = try {
+            lc.reply(ai.loli.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName), history)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.w(TAG, "Офлайн-модель не ответила", e)
+            null
+        }?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
     }
 
     private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? =
@@ -281,7 +304,10 @@ class AssistantEngine(
                 }
             }
         }
-        val local = localParser.parse(text, time.now(), time.zone()) ?: localFallback(text, cfg)
+        val parsed = localParser.parse(text, time.now(), time.zone())
+        // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
+        if (parsed == null && ai.loli.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
+        val local = parsed ?: localFallback(text, cfg)
         if (local != null) {
             val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
             val note = when (aiError) {
@@ -290,6 +316,8 @@ class AssistantEngine(
             }
             return reply.copy(text = reply.text + note, aiError = aiError?.let { shortReason(it) })
         }
+        localAnswer(text, cfg)?.let { return it }
+        runCatching { onNotUnderstood(text) }
         val reason = when {
             !cfg.useAI -> "Не совсем поняла."
             aiError is AIException.NotConfigured || aiError == null -> "Не поняла, а облачный AI не настроен."

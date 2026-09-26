@@ -67,7 +67,7 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
     var advanced by rememberSaveable { mutableStateOf(false) }
     var guide by remember { mutableStateOf(false) }
     if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
-    val systemMode = s.voiceMode == "system" || (s.voiceMode == "auto" && !c.loliVoiceModels.isReady(s.loliVoice))
+    val systemMode = s.voiceMode == "system" || (s.voiceMode == "auto" && !c.loliVoiceModels.isReady(c.loliVoiceModels.effective(s.loliVoice)))
     var voices by remember { mutableStateOf<List<AndroidTtsProvider.VoiceOption>?>(null) }
     var engines by remember { mutableStateOf<List<AndroidTtsProvider.EngineOption>>(emptyList()) }
     // Синтезатор телефона проверяем, только если он сейчас говорит или открыт «Дополнительно».

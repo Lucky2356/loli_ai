@@ -202,11 +202,12 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
             Group {
                 ValueItem("Имя", s.assistantName, Icons.Rounded.Face) { edit = "name" }
                 GroupDivider(inset = 66.dp)
-                val loli = ai.loli.app.voice.LoliVoiceModels.VOICES.firstOrNull { it.id == s.loliVoice }
+                val voiceId = c.loliVoiceModels.effective(s.loliVoice)
+                val loli = ai.loli.app.voice.LoliVoiceModels.VOICES.firstOrNull { it.id == voiceId }
                 val voiceTitle = when {
                     !s.ttsEnabled -> "выключен"
                     s.voiceMode == "system" -> "телефона"
-                    c.loliVoiceModels.isReady(s.loliVoice) -> loli?.title ?: "Лоли"
+                    c.loliVoiceModels.isReady(voiceId) -> loli?.title ?: "Лоли"
                     else -> "не скачан"
                 }
                 ValueItem("Голос", voiceTitle, Icons.Rounded.RecordVoiceOver) { open(SettingsPage.VOICE) }
@@ -507,6 +508,11 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                     scope.launch { c.settings.setAutoUpdate(v) }
                 }
                 GroupDivider()
+                SwitchItem("Бета-версии", "Новые функции раньше всех, но возможны ошибки. Обычно лучше выключено", s.betaUpdates) { v ->
+                    c.updates.beta = v
+                    scope.launch { c.settings.setBetaUpdates(v); c.updates.check() }
+                }
+                GroupDivider()
                 RowItem(
                     title = "Проверить обновления",
                     subtitle = when (val u = update) {
@@ -520,6 +526,30 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                     icon = Icons.Rounded.SystemUpdate,
                     onClick = { scope.launch { c.updates.check() } },
                 )
+            }
+        }
+        item(key = "feedback") {
+            val context = LocalContext.current
+            var phrases by remember { mutableStateOf(ai.loli.app.diagnostics.Diagnostics.unknownPhrases(context)) }
+            SectionLabel("Помочь улучшить ${s.assistantName}")
+            Group {
+                RowItem(
+                    title = "Непонятые фразы: ${phrases.size}",
+                    subtitle = if (phrases.isEmpty()) "Здесь появятся фразы, которые ${s.assistantName} не поняла. Хранятся только на телефоне"
+                    else "Отправьте их разработчику — ${s.assistantName} научится их понимать. Последняя: «${phrases.last().take(60)}»",
+                    icon = Icons.Rounded.Lightbulb,
+                    trailing = {
+                        if (phrases.isNotEmpty()) TextButton(onClick = {
+                            val body = phrases.joinToString("\n") { "- $it" }
+                            runCatching { context.startActivity(ai.loli.app.diagnostics.Diagnostics.issueIntent("Непонятые фразы (${phrases.size})", body)) }
+                                .onFailure { runCatching { context.startActivity(ai.loli.app.diagnostics.Diagnostics.shareIntent("Непонятые фразы", body)) } }
+                        }) { Text("Отправить") }
+                    },
+                )
+                if (phrases.isNotEmpty()) {
+                    GroupDivider()
+                    RowItem(title = "Очистить список", onClick = { ai.loli.app.diagnostics.Diagnostics.clearUnknown(context); phrases = emptyList() })
+                }
             }
         }
         item(key = "security") {

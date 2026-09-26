@@ -51,7 +51,7 @@ fun LoliVoiceSection(c: AppContainer) {
         LoliVoiceModels.VOICES.forEachIndexed { i, v ->
             if (i > 0) GroupDivider(inset = 16.dp)
             val state by c.loliVoiceModels.state(v.id).collectAsStateWithLifecycle()
-            val selected = s.loliVoice == v.id
+            val selected = c.loliVoiceModels.effective(s.loliVoice) == v.id
             val status = when (val st = state) {
                 LoliVoiceModels.State.Ready -> if (selected) "Выбран · работает без интернета" else "Скачан"
                 LoliVoiceModels.State.Missing -> "${v.subtitle} · ~${v.bytes / 1_000_000} МБ"
@@ -89,7 +89,7 @@ fun LoliVoiceSection(c: AppContainer) {
     }
     Hint(
         "Голоса скачиваются один раз из релизов Лоли на GitHub (оттуда же приходят обновления) и проверяются по контрольной сумме. " +
-            "Лицензии: Денис и Дмитрий — CC0, Руслан — только некоммерческое использование, Ирина — датасет RHVoice.",
+            "Лицензии: Денис и Дмитрий — CC0 (свободно), Ирина — датасет RHVoice, Руслан — только некоммерческое использование.",
     )
     Text(
         "Стили звучания и скорость ниже работают и для голоса Лоли.",

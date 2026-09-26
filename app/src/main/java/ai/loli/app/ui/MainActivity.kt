@@ -85,7 +85,6 @@ import ai.loli.app.ui.screens.SettingsPage
 import ai.loli.app.ui.screens.SettingsScreen
 import ai.loli.app.ui.theme.LoliTheme
 import ai.loli.app.voice.WakeWordService
-import ai.loli.core.auth.AuthState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -233,7 +232,6 @@ fun rememberListenAction(c: AppContainer): () -> Unit {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>) {
-    val auth by c.auth.state.collectAsStateWithLifecycle()
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     var showAuth by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
@@ -262,7 +260,8 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
         return
     }
 
-    val needsAuth = showAuth || (auth is AuthState.SignedOut && !settings.localOnly && c.supabaseConfig().isConfigured && !settings.onboardingDone)
+    // Вход в аккаунт не обязателен: Лоли сразу работает на телефоне, синхронизацию можно включить в «Настройки → Аккаунт».
+    val needsAuth = showAuth
     if (needsAuth) {
         BackHandler(enabled = showAuth) { showAuth = false }
         AuthScreen(c, onClose = if (showAuth) ({ showAuth = false }) else null) {

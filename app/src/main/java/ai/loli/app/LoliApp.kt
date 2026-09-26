@@ -12,6 +12,8 @@ class LoliApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Сбой пишется в файл на телефоне; при следующем запуске Лоли предложит отправить отчёт.
+        ai.loli.app.diagnostics.Diagnostics.install(this)
         // Логи проходят через Redactor (маскировка ключей и токенов); в release — только предупреждения и ошибки.
         Logger.minLevel = if (BuildConfig.DEBUG) Logger.Level.DEBUG else Logger.Level.WARN
         Logger.sink = object : LogSink {

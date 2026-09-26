@@ -66,7 +66,10 @@ class UpdateManager(private val context: Context) {
     private val prefs = context.getSharedPreferences("loli_updates", Context.MODE_PRIVATE)
     private val dir = File(context.cacheDir, "updates")
 
-    val currentVersion: String get() = BuildConfig.VERSION_NAME.substringBefore('-')
+    val currentVersion: String get() = BuildConfig.VERSION_NAME.removeSuffix("-debug")
+
+    /** Получать бета-версии (предварительные релизы) — для тех, кто хочет новое раньше всех. */
+    @Volatile var beta: Boolean = false
     var lastCheckedAt: Long
         get() = prefs.getLong("last_check", 0)
         private set(v) = prefs.edit().putLong("last_check", v).apply()
@@ -117,7 +120,10 @@ class UpdateManager(private val context: Context) {
     }
 
     private fun fetchLatest(): UpdateInfo? {
-        val conn = (URL("https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest").openConnection() as HttpURLConnection).apply {
+        // Стабильный канал — «последний релиз»; бета — самый новый из последних релизов, включая предварительные.
+        val url = if (beta) "https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases?per_page=15"
+        else "https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest"
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 20_000
             setRequestProperty("Accept", "application/vnd.github+json")
@@ -130,7 +136,15 @@ class UpdateManager(private val context: Context) {
                 403, 429 -> error("GitHub временно ограничил проверки, попробуйте позже")
                 else -> error("GitHub ответил ${conn.responseCode}")
             }
-            val json = LoliJson.parseToJsonElement(conn.inputStream.bufferedReader().use { it.readText() }).jsonObject
+            val root = LoliJson.parseToJsonElement(conn.inputStream.bufferedReader().use { it.readText() })
+            val json = if (root is JsonArray) {
+                // Только версии приложения (v1.2.3, v2.0.0-beta.1): служебные релизы голосов и моделей пропускаем.
+                root.map { it.jsonObject }
+                    .filter { it["draft"]?.jsonPrimitive?.contentOrNull != "true" }
+                    .filter { VERSION_TAG.matches(it["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty()) }
+                    .maxWithOrNull { a, b -> compareVersions(a["tag_name"]!!.jsonPrimitive.content.removePrefix("v"), b["tag_name"]!!.jsonPrimitive.content.removePrefix("v")) }
+                    ?: return null
+            } else root.jsonObject
             val version = json["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("v") ?: return null
             if (compareVersions(version, currentVersion) <= 0) return null
             val asset = (json["assets"] as? JsonArray).orEmpty().map { it.jsonObject }
@@ -276,6 +290,9 @@ class UpdateManager(private val context: Context) {
         private const val TAG = "Update"
 
         /** «1.10.0» > «1.9.3»; суффиксы вроде «-debug» не учитываются. */
+        private val VERSION_TAG = Regex("""^v\d+\.\d+(?:\.\d+)?(?:-[A-Za-z]+\.?\d*)?$""")
+
+        /** «2.0.0-beta.2» < «2.0.0-beta.10» < «2.0.0» < «2.0.1». Суффикс «-debug» не учитывается. */
         fun compareVersions(a: String, b: String): Int {
             fun parts(v: String) = v.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
             val x = parts(a)
@@ -284,7 +301,16 @@ class UpdateManager(private val context: Context) {
                 val d = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
                 if (d != 0) return d
             }
-            return 0
+            fun pre(v: String): Int? = v.substringAfter('-', "").takeIf { it.isNotEmpty() && it != "debug" }
+                ?.let { s -> Regex("""(\d+)$""").find(s)?.groupValues?.get(1)?.toIntOrNull() ?: 0 }
+            val pa = pre(a)
+            val pb = pre(b)
+            return when {
+                pa == null && pb == null -> 0
+                pa == null -> 1
+                pb == null -> -1
+                else -> pa - pb
+            }
         }
     }
 }

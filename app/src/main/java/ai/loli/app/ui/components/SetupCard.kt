@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.TouchApp
@@ -43,12 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.loli.app.AppContainer
-import ai.loli.app.device.BackgroundLauncher
-import ai.loli.app.device.LoliAccessibilityService
 import ai.loli.app.ui.screens.AssistantGuideDialog
 import ai.loli.app.ui.screens.isBatteryExempt
 import ai.loli.app.ui.screens.isDefaultAssistant
-import ai.loli.app.ui.screens.openAccessibility
 import ai.loli.app.ui.screens.requestBatteryExemption
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -90,21 +86,16 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }.all { granted(it) }
     }
-    val overlay = remember(tick) { c.launcher.canLaunchFromBackground() }
-    val a11y = remember(tick) { LoliAccessibilityService.isEnabled }
     val assistant = remember(tick, guide) { isDefaultAssistant(context) != false }
     val battery = remember(tick) { isBatteryExempt(context) }
     val exact = remember(tick) { Build.VERSION.SDK_INT !in 31..32 || c.reminderScheduler.canScheduleExact() }
 
-    // Одним окном: микрофон, уведомления, а заодно контакты и календарь — для звонков и событий голосом.
+    // Одним окном — только главное: микрофон и уведомления. Контакты, календарь, геолокацию Лоли спросит, когда понадобятся.
     val permsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh++ }
     val allPerms = remember {
         buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-            add(Manifest.permission.READ_CONTACTS)
-            add(Manifest.permission.READ_CALENDAR)
-            add(Manifest.permission.WRITE_CALENDAR)
         }.toTypedArray()
     }
 
@@ -116,20 +107,15 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
             "В окне «Разрешить?» нажимайте «Разрешить» или «При использовании приложения».") { permsLauncher.launch(allPerms) } else null,
         if (!assistant) SetupStep("assistant", Icons.Rounded.TouchApp, "Сделать $name ассистентом",
             "Чтобы вызывать $name долгим нажатием кнопки «Домой» или жестом.", optional = true) { guide = true } else null,
-        if (!overlay) SetupStep("overlay", Icons.Rounded.Layers, "Работа поверх приложений",
-            oem.overlay, optional = true) {
-            runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) }
-        } else null,
-        if (!a11y) SetupStep("a11y", Icons.Rounded.VolumeUp, "Кнопки громкости и системные команды",
-            "Найдите в списке «$name» (иногда в разделе «Установленные приложения» или «Скачанные службы») и включите.", optional = true) { openAccessibility(context) } else null,
-        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи", oem.battery) { requestBatteryExemption(context) } else null,
+        // «Поверх приложений» и спецвозможности — в «Настройки → Безопасность и разрешения»: нужны не всем.
+        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи", oem.battery, optional = true) { requestBatteryExemption(context) } else null,
         if (!exact) SetupStep("exact", Icons.Rounded.Alarm, "Точные напоминания",
             "Включите переключатель «Разрешить» напротив $name.") {
             runCatching {
                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:${context.packageName}")))
             }
         } else null,
-        if (oem.autostart != null && !oemDone) SetupStep("autostart", Icons.Rounded.BatteryChargingFull, "Автозапуск (${oem.brand})", oem.autostart) {
+        if (oem.autostart != null && !oemDone) SetupStep("autostart", Icons.Rounded.BatteryChargingFull, "Автозапуск (${oem.brand})", oem.autostart, optional = true) {
             oemDone = true
             prefs.edit().putBoolean("oem_autostart_done", true).apply()
             OemHints.openAutostart(context)
@@ -203,14 +189,15 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
     }
 
     if (guide) AssistantGuideDialog(name) { guide = false }
-    val visible = !dismissed && todo.isNotEmpty()
+    // Карточка видна, только пока не хватает главного; дополнительные шаги — в настройках.
+    val visible = !dismissed && required.isNotEmpty()
     LaunchedEffect(visible) { onVisible(visible) }
     AnimatedVisibility(visible, exit = shrinkVertically() + fadeOut()) {
         Surface(shape = MaterialTheme.shapes.large, color = groupColor(), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Настройте $name полностью", style = MaterialTheme.typography.titleSmall)
+                        Text(if (required.size == 1) "Остался один шаг" else "Настройте $name", style = MaterialTheme.typography.titleSmall)
                         Text(
                             when {
                                 auto || busy -> "Настраиваю — после каждого экрана просто вернитесь назад"
@@ -236,7 +223,7 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                 if (optional.isNotEmpty()) {
                     RowItem(
                         title = if (showOptional) "Скрыть дополнительные" else "Дополнительно (${optional.size})",
-                        subtitle = if (showOptional) null else "Для вызова кнопками, жестом и поверх других приложений",
+                        subtitle = if (showOptional) null else "Ассистент по кнопке, работа в фоне — по желанию",
                         onClick = { showOptional = !showOptional },
                     )
                     if (showOptional) optional.forEach { step ->

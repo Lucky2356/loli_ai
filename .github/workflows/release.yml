@@ -14,6 +14,10 @@ on:
         type: choice
         options: [release, debug]
         default: release
+      beta:
+        description: "Бета-версия (увидят только те, кто включил бета-обновления; версия вида 2.0.0-beta.1)"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -91,5 +95,6 @@ jobs:
           tag_name: v${{ steps.v.outputs.version }}
           name: Лоли ${{ steps.v.outputs.version }}
           files: dist/*.apk
-          prerelease: ${{ steps.v.outputs.type == 'debug' }}
+          prerelease: ${{ steps.v.outputs.type == 'debug' || inputs.beta == true || contains(steps.v.outputs.version, '-') }}
+          make_latest: ${{ (steps.v.outputs.type == 'debug' || inputs.beta == true || contains(steps.v.outputs.version, '-')) && 'false' || 'true' }}
           generate_release_notes: true

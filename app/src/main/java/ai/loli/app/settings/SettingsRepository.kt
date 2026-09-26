@@ -117,8 +117,8 @@ data class AppSettings(
     val ttsAutoEngine: String = "",
     /** Кто говорит: auto — встроенный «Голос Лоли», если скачан, иначе проверенный синтезатор телефона. */
     val voiceMode: String = "auto",
-    /** Встроенный голос: irina, denis, dmitri, ruslan. */
-    val loliVoice: String = "irina",
+    /** Встроенный голос: denis (по умолчанию, лицензия CC0), dmitri, irina, ruslan. */
+    val loliVoice: String = "denis",
     /** Как зовут пользователя («называй меня …»). */
     val userName: String = "",
     /** Город для погоды, если геолокация недоступна. */
@@ -133,6 +133,8 @@ data class AppSettings(
     val accent: AccentColor = AccentColor.INDIGO,
     /** Сама скачивать и ставить новые версии. */
     val autoUpdate: Boolean = true,
+    /** Получать бета-версии. */
+    val betaUpdates: Boolean = false,
     /** Разрешено ли вообще пользоваться Лоли на заблокированном экране. */
     val lockScreenEnabled: Boolean = true,
     val lockPolicy: ai.loli.core.assistant.LockPolicy = ai.loli.core.assistant.LockPolicy(),
@@ -198,6 +200,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val userName = stringPreferencesKey("user_name")
         val city = stringPreferencesKey("city")
         val autoUpdate = booleanPreferencesKey("auto_update")
+        val betaUpdates = booleanPreferencesKey("beta_updates")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
         val lockBasic = booleanPreferencesKey("lock_basic")
@@ -265,7 +268,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             ttsEngine = p[K.ttsEngine].orEmpty(),
             ttsAutoEngine = p[K.ttsAutoEngine].orEmpty(),
             voiceMode = p[K.voiceMode] ?: "auto",
-            loliVoice = p[K.loliVoice] ?: "irina",
+            loliVoice = p[K.loliVoice] ?: "denis",
             userName = p[K.userName].orEmpty(),
             city = p[K.city].orEmpty(),
             wakeWordEnabled = p[K.wake] ?: false,
@@ -278,6 +281,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             secureScreen = p[K.secureScreen] ?: false,
             morningBrief = p[K.morningBrief] ?: true,
             autoUpdate = p[K.autoUpdate] ?: true,
+            betaUpdates = p[K.betaUpdates] ?: false,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
             lockPolicy = ai.loli.core.assistant.LockPolicy(
                 create = p[K.lockCreate] ?: true, basicDevice = p[K.lockBasic] ?: true, calls = p[K.lockCalls] ?: true,
@@ -375,6 +379,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setCity(v: String) = store.edit { it[K.city] = v.trim().take(60) }
     suspend fun setVoiceStyle(pitch: Float, rate: Float) = store.edit { it[K.pitch] = pitch.coerceIn(0.5f, 2f); it[K.rate] = rate.coerceIn(0.5f, 2f) }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
+    suspend fun setBetaUpdates(v: Boolean) = store.edit { it[K.betaUpdates] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }
     suspend fun setLockPolicy(v: ai.loli.core.assistant.LockPolicy) = store.edit {
         it[K.lockCreate] = v.create; it[K.lockBasic] = v.basicDevice; it[K.lockCalls] = v.calls

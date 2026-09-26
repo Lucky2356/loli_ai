@@ -19,7 +19,35 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "1.9.0"
+val APP_VERSION = "2.0.0"
+
+// Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
+// и проверяются по sha256 — в репозиторий они не попадают.
+val llamaVersion = "0.5.0"
+val llamaSha256 = "fef9ed754f4e031fb5c663c29260feda4ebc241abb68d64a81c0f1df5f1748e2"
+val llamaTarball: File = file("libs/llama.cpp-$llamaVersion.tar.gz")
+val llamaSrcDir: File = layout.buildDirectory.dir("llama.cpp-$llamaVersion").get().asFile
+if (!llamaTarball.exists()) {
+    llamaTarball.parentFile.mkdirs()
+    val tmp = File(llamaTarball.path + ".part")
+    logger.lifecycle("Скачиваю llama.cpp $llamaVersion…")
+    uri("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v$llamaVersion.tar.gz").toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+    val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+    if (digest != llamaSha256) {
+        tmp.delete()
+        throw GradleException("llama.cpp: неверная контрольная сумма $digest")
+    }
+    tmp.renameTo(llamaTarball)
+}
+val prepareLlamaSources by tasks.registering(Sync::class) {
+    from(tarTree(resources.gzip(llamaTarball))) {
+        // Убираем верхнюю папку архива «llama.cpp-0.5.0/».
+        eachFile { relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray()) }
+        includeEmptyDirs = false
+    }
+    into(llamaSrcDir)
+}
+tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }.configureEach { dependsOn(prepareLlamaSources) }
 
 val releaseKeystoreFile = config("LOLI_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
@@ -46,6 +74,20 @@ android {
         vectorDrawables { useSupportLibrary = true }
         // Телефоны — ARM; без x86-библиотек APK заметно меньше.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Офлайн-модель (llama.cpp) — только для 64-битных телефонов: на 32-битных она слишком медленная.
+        externalNativeBuild {
+            cmake {
+                abiFilters += listOf("arm64-v8a")
+                arguments += listOf("-DLLAMA_SRC=${llamaSrcDir.absolutePath}", "-DCMAKE_BUILD_TYPE=Release")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // Офлайн-модель речи (scripts/fetch-vosk-model.sh) встраивается в APK, если скачана.

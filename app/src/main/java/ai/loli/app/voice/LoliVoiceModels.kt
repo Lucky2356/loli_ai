@@ -54,6 +54,9 @@ class LoliVoiceModels(context: Context) {
 
     fun anyReady(): Boolean = VOICES.any { isReady(it.id) }
 
+    /** Выбранный голос, а если он не скачан — любой уже скачанный (чтобы смена голоса по умолчанию не оставила без голоса). */
+    fun effective(id: String): String = if (isReady(id)) id else VOICES.firstOrNull { isReady(it.id) }?.id ?: id
+
     suspend fun download(id: String): Boolean = mutex.withLock {
         val v = voice(id)
         val state = states.getValue(v.id)
@@ -165,12 +168,12 @@ class LoliVoiceModels(context: Context) {
         private const val RELEASE = "voices-v1"
         private const val INCOMPLETE = ".incomplete"
         private const val BUFFER = 64 * 1024
-        const val DEFAULT = "irina"
+        const val DEFAULT = "denis"
 
         val VOICES = listOf(
-            Voice("irina", "Ирина", "Женский", "7f8b6410559edad2dcfab7fa4813f0c4a09b12748edbe584397b6b5fc62a9782", 67_404_557),
             Voice("denis", "Денис", "Мужской", "8bcfc5cea11b0d943d03f6b4d4da0eacf8b5ec2af5c35ff021a03c65b16c2138", 67_424_164),
             Voice("dmitri", "Дмитрий", "Мужской", "bc5dedfdd158fed88391db3645fe13a4e93eebfb6bb2ab238b13ce9bd52bc52d", 67_424_225),
+            Voice("irina", "Ирина", "Женский", "7f8b6410559edad2dcfab7fa4813f0c4a09b12748edbe584397b6b5fc62a9782", 67_404_557),
             Voice("ruslan", "Руслан", "Мужской", "ac37cb0ce13b7ad0d4f11075262d51c312d9b0956f0f9014adad078deff84120", 67_425_668),
         )
     }

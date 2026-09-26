@@ -87,8 +87,10 @@ fun AiPage(c: AppContainer, onBack: () -> Unit, openProvider: (AIProviderType) -
     val s by c.settings.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val resumeTick = rememberResumeTick()
-    LoliScreen(title = "AI-провайдеры", subtitle = "Необязательно: команды и так понимаются на устройстве", onBack = onBack) {
+    LoliScreen(title = "AI", subtitle = "Необязательно: команды и так понимаются на устройстве", onBack = onBack) {
+        item(key = "offline") { OfflineModelSection(c) }
         item(key = "use") {
+            SectionLabel("Облачный AI")
             Group(Modifier.padding(top = 4.dp)) {
                 SwitchItem(
                     "Облачный AI", if (s.useAI) "Свободный разговор и сложные фразы. Нужен интернет и API-ключ" else "Выключен: всё работает локально, без интернета",
@@ -350,4 +352,48 @@ private fun ModelPicker(c: AppContainer, type: AIProviderType, current: String, 
             if (!canLoad) TextButton(onClick = onDismiss, modifier = Modifier.padding(start = 12.dp, bottom = 12.dp)) { Text("Закрыть") }
         }
     }
+}
+
+
+/** Офлайн-модель: свободный разговор без интернета и ключей (~1 ГБ, скачивается один раз). */
+@Composable
+private fun OfflineModelSection(c: AppContainer) {
+    val state by c.offlineLlm.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var enabled by remember { mutableStateOf(c.offlineLlm.enabled) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val metered = remember {
+        context.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered != false
+    }
+    SectionLabel("Офлайн-модель · без интернета")
+    Group {
+        when (val st = state) {
+            ai.loli.app.llm.OfflineLlm.State.Ready -> {
+                SwitchItem(
+                    "Отвечать на любые вопросы",
+                    "Qwen 2.5 1.5B на телефоне: «почему небо голубое», «посоветуй фильм». Если подключён облачный AI — отвечает он",
+                    enabled, icon = Icons.Rounded.AutoAwesome,
+                ) { v -> enabled = v; c.offlineLlm.enabled = v }
+                GroupDivider()
+                RowItem(title = "Удалить модель", subtitle = "Освободит ~1 ГБ", onClick = { c.offlineLlm.delete() })
+            }
+            ai.loli.app.llm.OfflineLlm.State.Missing, is ai.loli.app.llm.OfflineLlm.State.Failed -> RowItem(
+                title = "Скачать офлайн-модель (~1 ГБ)",
+                subtitle = (st as? ai.loli.app.llm.OfflineLlm.State.Failed)?.let { "Не получилось: ${it.message}" }
+                    ?: ("Свободный разговор без интернета и без ключей. Ответ за несколько секунд на современных телефонах" +
+                        if (metered) ". Сейчас мобильный интернет — лучше по Wi‑Fi" else ""),
+                icon = Icons.Rounded.AutoAwesome,
+                trailing = { TextButton(onClick = { scope.launch { c.offlineLlm.download() } }) { Text(if (st is ai.loli.app.llm.OfflineLlm.State.Failed) "Ещё раз" else "Скачать") } },
+            )
+            is ai.loli.app.llm.OfflineLlm.State.Downloading -> Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Скачиваю модель · ${(st.progress * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge)
+                androidx.compose.material3.LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
+                Text("Можно закрыть экран — при обрыве загрузка продолжится с того же места.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+            }
+            ai.loli.app.llm.OfflineLlm.State.Verifying -> RowItem(title = "Проверяю файл…", subtitle = "Контрольная сумма, несколько секунд", icon = Icons.Rounded.AutoAwesome)
+            is ai.loli.app.llm.OfflineLlm.State.Unsupported -> RowItem(title = "Недоступна на этом телефоне", subtitle = st.reason.replaceFirstChar { it.uppercase() }, icon = Icons.Rounded.AutoAwesome)
+        }
+    }
+    Hint("Модель Qwen 2.5 (Apache-2.0) работает прямо на телефоне: вопросы никуда не отправляются. По уму она проще облачных AI — для бытовых вопросов и советов.")
 }

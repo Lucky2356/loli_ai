@@ -33,3 +33,4 @@ app/vosk-cache/
 
 # sherpa-onnx (встроенный голос): скачивается сборкой из релиза voices-v1
 app/libs/sherpa-onnx-*.aar
+app/libs/llama.cpp-*.tar.gz

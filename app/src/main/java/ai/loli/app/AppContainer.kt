@@ -146,6 +146,8 @@ class AppContainer(private val context: Context) {
         onCity = { c -> appScope.launch { settings.setCity(c.orEmpty()) } },
     )
     val skills = ai.loli.core.skills.Skills(skillHost, http, time)
+    /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */
+    val offlineLlm = ai.loli.app.llm.OfflineLlm(context, appScope)
     private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
 
     /** Телефон заблокирован (экран блокировки показан). */
@@ -182,6 +184,8 @@ class AppContainer(private val context: Context) {
         aiProvider = { aiProvider() },
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
         skills = skills,
+        onNotUnderstood = { ai.loli.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
+        localChat = offlineLlm,
     ) }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
@@ -211,7 +215,7 @@ class AppContainer(private val context: Context) {
     val loliVoiceModels = ai.loli.app.voice.LoliVoiceModels(context)
     val loliVoice = ai.loli.app.voice.LoliVoice(
         loliVoiceModels,
-        voiceId = { settings.settings.value.loliVoice },
+        voiceId = { loliVoiceModels.effective(settings.settings.value.loliVoice) },
         rate = { settings.settings.value.speechRate },
         pitch = { settings.settings.value.speechPitch },
     )
@@ -231,6 +235,7 @@ class AppContainer(private val context: Context) {
             val stopWords = ai.loli.app.voice.StopWordWatcher(context, voskEngine, voskModels)
             v.stopWatcher = { stopWords.awaitStop() }
             v.understands = { engine.understandsLocally(it) }
+            v.onStop = { offlineLlm.stop() }
             v.onVoiceReply = { reply ->
                 // Экран заблокирован или приложение свёрнуто — результат придёт уведомлением.
                 if (reply.text.isNotBlank() && (isLocked() || !launcher.isForeground())) {
@@ -262,6 +267,7 @@ class AppContainer(private val context: Context) {
         appScope.launch {
             auth.restore()
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()
+            updates.beta = settings.current().betaUpdates
             ready.complete(Unit)
             _started.value = true
             updates.schedulePeriodic()
@@ -272,6 +278,18 @@ class AppContainer(private val context: Context) {
             }
         }
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) { rescheduleReminders() }
+        // Первый запуск: если по-русски говорить нечем, голос Лоли скачивается сам — только по Wi‑Fi.
+        appScope.launch {
+            awaitReady()
+            kotlinx.coroutines.delay(4_000)
+            val s = settings.current()
+            val unmetered = context.getSystemService(android.net.ConnectivityManager::class.java)?.let { cm ->
+                cm.activeNetwork != null && !cm.isActiveNetworkMetered
+            } == true
+            if (s.ttsEnabled && unmetered && !loliVoiceModels.anyReady() && runCatching { speech.needsLoliVoice() }.getOrDefault(false)) {
+                loliVoiceModels.download(s.loliVoice)
+            }
+        }
     }
 
     suspend fun rescheduleReminders() {
