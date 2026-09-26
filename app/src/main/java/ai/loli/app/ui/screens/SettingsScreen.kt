@@ -421,6 +421,8 @@ fun ServerConfig(c: AppContainer) {
 @Composable
 fun PermissionsGroup(c: AppContainer) {
     val context = LocalContext.current
+    val settings by c.settings.settings.collectAsStateWithLifecycle()
+    val name = settings.assistantName
     val resumeTick = rememberResumeTick()
     var refresh by remember { mutableIntStateOf(0) }
     val tick = resumeTick + refresh
@@ -464,7 +466,7 @@ fun PermissionsGroup(c: AppContainer) {
     Group {
         RowItem(
             title = if (missingImportant.isEmpty()) "Всё нужное разрешено" else "Не хватает: ${missingImportant.size}",
-            subtitle = if (missingImportant.isEmpty()) "Остальное ${c.settings.settings.value.assistantName} спросит сама, когда понадобится" else "Нажмите «Разрешить» у каждого пункта",
+            subtitle = if (missingImportant.isEmpty()) "Остальное $name спросит сама, когда понадобится" else "Нажмите «Разрешить» у каждого пункта",
             icon = if (missingImportant.isEmpty()) Icons.Rounded.CheckCircle else Icons.Rounded.Lock,
         )
         missingImportant.forEach { p ->
