@@ -1,0 +1,39 @@
+name: Probe
+
+# Временная проверка: версия и API llama.cpp, доступность модели Qwen 2.5 1.5B (GGUF).
+on:
+  push:
+    paths: [".github/workflows/probe.yml"]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: llama.cpp
+        run: |
+          set -x
+          TAG=$(gh release view --repo ggml-org/llama.cpp --json tagName -q .tagName)
+          echo "TAG=$TAG"
+          curl -sSL -o llama.tgz "https://github.com/ggml-org/llama.cpp/archive/refs/tags/$TAG.tar.gz"
+          sha256sum llama.tgz; ls -la llama.tgz
+          mkdir src && tar -xzf llama.tgz -C src --strip-components=1
+          ls src; ls src/examples | head -50; ls src/examples/llama.android 2>/dev/null; find src -path '*llama.android*' -name '*.cpp' | head
+          grep -nE "^LLAMA_API" src/include/llama.h | grep -E "model_load_from_file|init_from_model|model_default_params|context_default_params|tokenize|token_to_piece|decode|batch_get_one|batch_init|sampler_chain|sampler_init_(greedy|temp|top_p|top_k|dist|min_p|penalties)|sampler_sample|sampler_accept|vocab_is_eog|model_get_vocab|chat_apply_template|model_chat_template|backend_init|model_free|free\(|kv_self_clear|memory_clear|get_memory|n_ctx|vocab_n_tokens|model_n_ctx_train|log_set" 
+          grep -n "struct llama_context_params" -A40 src/include/llama.h | head -60
+          grep -n "llama_chat_message" -A5 src/include/llama.h | head -20
+          find src -path '*android*' -name 'CMakeLists.txt' | head
+          f=$(find src -path '*llama.android*' -name '*.cpp' | head -1); [ -n "$f" ] && sed -n 1,400p "$f"
+          f2=$(find src -path '*llama.android*' -name 'CMakeLists.txt' | head -1); [ -n "$f2" ] && cat "$f2"
+      - name: Models
+        run: |
+          for u in \
+            "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf" \
+            "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
+            "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf" \
+            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf" \
+            "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf" ; do
+            echo "== $u"; curl -sIL "$u" | grep -iE "^HTTP|content-length|x-linked-size|x-linked-etag" | tail -4
+          done
