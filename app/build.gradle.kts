@@ -19,7 +19,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "1.8.0"
+val APP_VERSION = "1.9.0"
 
 val releaseKeystoreFile = config("LOLI_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()

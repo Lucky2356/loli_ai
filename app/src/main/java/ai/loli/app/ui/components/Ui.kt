@@ -49,6 +49,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
@@ -446,6 +448,24 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
+}
+
+/** Свёрнутый блок «Дополнительно»: редкие настройки не мешают обычному человеку. */
+@Composable
+fun MoreToggle(expanded: Boolean, onToggle: () -> Unit, title: String = "Дополнительно") {
+    Group(Modifier.padding(top = 16.dp)) {
+        RowItem(
+            title = title,
+            subtitle = if (expanded) "Скрыть" else "Для тех, кто хочет настроить всё сам",
+            onClick = onToggle,
+            trailing = {
+                Icon(
+                    if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+        )
+    }
 }
 
 @Composable

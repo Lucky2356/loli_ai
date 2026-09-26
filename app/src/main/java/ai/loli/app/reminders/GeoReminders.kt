@@ -36,6 +36,12 @@ class GeoReminders(private val context: Context) {
         reminders().filter { it.place == p.name }.forEach { register(it) }
     }
 
+    /** Забыть место вместе с его напоминаниями. */
+    fun removePlace(name: String) {
+        cancel(name)
+        synchronized(this) { write(KEY_PLACES, places().filter { it.name != name }.map { JSONObject().put("name", it.name).put("lat", it.lat).put("lon", it.lon) }) }
+    }
+
     @Synchronized
     fun reminders(): List<PlaceReminder> = read(KEY_REMINDERS).mapNotNull { o ->
         PlaceReminder(o.optString("id"), o.optString("text"), o.optString("place"), o.optBoolean("leave"))

@@ -32,6 +32,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material.icons.rounded.LocationCity
+import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatteryChargingFull
@@ -92,6 +96,7 @@ import ai.loli.app.ui.components.GroupDivider
 import ai.loli.app.ui.components.Hint
 import ai.loli.app.ui.components.LoliField
 import ai.loli.app.ui.components.LoliScreen
+import ai.loli.app.ui.components.MoreToggle
 import ai.loli.app.ui.components.Pills
 import ai.loli.app.ui.components.PrimaryButton
 import ai.loli.app.ui.components.RowItem
@@ -111,16 +116,14 @@ import kotlinx.coroutines.launch
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector) {
-    CAPABILITIES("settings/capabilities", "Что умеет Лоли", "Что работает на устройстве, а что — с AI", Icons.Rounded.Lightbulb),
-    ASSISTANT("settings/assistant", "Ассистент", "Имя, диалог, голос ответов", Icons.Rounded.Face),
-    VOICE("settings/voice", "Голос и распознавание", "Микрофон, офлайн-модель, «Лоли» в фоне", Icons.Rounded.Mic),
-    AI("settings/ai", "AI-провайдеры", "Несколько сервисов с автоматическим резервом", Icons.Rounded.AutoAwesome),
-    ACCESS("settings/access", "Доступ и безопасность", "Экран блокировки, приложения, кнопки, вход по отпечатку", Icons.Rounded.Shield),
-    APPEARANCE("settings/appearance", "Оформление", "Тема и цвета", Icons.Rounded.Palette),
-    ACCOUNT("settings/account", "Аккаунт и синхронизация", "Supabase, резервная копия в облаке", Icons.Rounded.Cloud),
-    PERMISSIONS("settings/permissions", "Разрешения", "Микрофон, уведомления, будильники", Icons.Rounded.Lock),
-    ABOUT("settings/about", "О приложении", "Безопасность и версия", Icons.Rounded.Info),
+enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector, val main: Boolean = true) {
+    VOICE("settings/voice", "Голос и речь", "Кто говорит, характер голоса, разговор, сценарии", Icons.Rounded.RecordVoiceOver),
+    AI("settings/ai", "AI", "Необязательно: ответы на любые вопросы, пересказ, сказки", Icons.Rounded.AutoAwesome),
+    ACCESS("settings/access", "Безопасность и разрешения", "Экран блокировки, вход по отпечатку, доступы", Icons.Rounded.Shield),
+    ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
+    CAPABILITIES("settings/capabilities", "Что умеет Лоли", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
+    APPEARANCE("settings/appearance", "Оформление", "Тема и цвет", Icons.Rounded.Palette, main = false),
+    ABOUT("settings/about", "О приложении", "Версия и обновления", Icons.Rounded.Info, main = false),
 }
 
 @Composable
@@ -134,13 +137,11 @@ fun SettingsScreen(
 ) {
     when (page) {
         null -> SettingsRoot(c, open)
-        SettingsPage.ASSISTANT -> AssistantPage(c, onBack)
-        SettingsPage.VOICE -> VoicePage(c, onBack)
+        SettingsPage.VOICE -> VoiceSpeechPage(c, onBack)
         SettingsPage.AI -> AiPage(c, onBack, openProvider = { type -> openRoute("settings/ai/${type.id}") })
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
         SettingsPage.ACCESS -> AccessPage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
-        SettingsPage.PERMISSIONS -> PermissionsPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
     }
@@ -148,14 +149,42 @@ fun SettingsScreen(
 
 // ------------------------------------------------------------------ Корень
 
+/** Главный экран настроек: всё основное — прямо здесь, без переходов; остальное — в четырёх разделах. */
 @Composable
 private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
     val s by c.settings.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val resumeTick = rememberResumeTick()
     val isAssistant = remember(resumeTick) { isDefaultAssistant(context) }
     var guide by remember { mutableStateOf(false) }
+    var edit by remember { mutableStateOf<String?>(null) }
+    var placesTick by remember { mutableIntStateOf(0) }
     if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
+    when (edit) {
+        "name" -> TextDialog(
+            "Имя ассистента", s.assistantName, hint = "Это и слово для вызова: «${s.assistantName}, какая погода?»",
+            presets = listOf("Лоли", "Джарвис", "Кира", "Алиса", "Ника"), onDismiss = { edit = null },
+        ) { v ->
+            scope.launch {
+                c.settings.setAssistantName(v)
+                if (WakeWordService.running) { WakeWordService.stop(context); WakeWordService.start(context) }
+            }
+        }
+        "user" -> TextDialog("Как вас зовут", s.userName, hint = "${s.assistantName} будет обращаться к вам по имени. Можно и голосом: «называй меня …»", onDismiss = { edit = null }) { v ->
+            scope.launch { c.settings.setUserName(v) }
+        }
+        "city" -> TextDialog("Ваш город", s.city, hint = "Для погоды, когда геолокация выключена. Можно и голосом: «я живу в …»", onDismiss = { edit = null }) { v ->
+            scope.launch { c.settings.setCity(v) }
+        }
+        "places" -> PlacesDialog(c, onDismiss = { edit = null; placesTick++ })
+    }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            scope.launch { c.settings.setWakeWord(true) }
+            WakeWordService.start(context)
+        }
+    }
     LoliScreen(title = "Настройки") {
         if (isAssistant == false) {
             item(key = "assist") {
@@ -168,270 +197,61 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
                 }
             }
         }
-        item(key = "pages") {
+        item(key = "loli") {
+            SectionLabel(s.assistantName)
             Group {
-                SettingsPage.entries.forEachIndexed { i, p ->
+                ValueItem("Имя", s.assistantName, Icons.Rounded.Face) { edit = "name" }
+                GroupDivider(inset = 66.dp)
+                val loli = ai.loli.app.voice.LoliVoiceModels.VOICES.firstOrNull { it.id == s.loliVoice }
+                val voiceTitle = when {
+                    !s.ttsEnabled -> "выключен"
+                    s.voiceMode == "system" -> "телефона"
+                    c.loliVoiceModels.isReady(s.loliVoice) -> loli?.title ?: "Лоли"
+                    else -> "не скачан"
+                }
+                ValueItem("Голос", voiceTitle, Icons.Rounded.RecordVoiceOver) { open(SettingsPage.VOICE) }
+                GroupDivider(inset = 66.dp)
+                SwitchItem("Отвечать голосом", null, s.ttsEnabled, icon = Icons.Rounded.VolumeUp) { v -> scope.launch { c.settings.setTts(v) } }
+                GroupDivider(inset = 66.dp)
+                SwitchItem(
+                    "Слышать «${s.assistantName}» без нажатия",
+                    "Скажите «${s.assistantName}, …» — даже когда приложение закрыто. Без интернета, звук не покидает телефон",
+                    s.wakeWordEnabled, enabled = c.voskModels.isObtainable(), icon = Icons.Rounded.Mic,
+                ) { v ->
+                    val mic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    if (v && !mic) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@SwitchItem }
+                    scope.launch { c.settings.setWakeWord(v) }
+                    if (v) WakeWordService.start(context) else WakeWordService.stop(context)
+                }
+            }
+        }
+        item(key = "me") {
+            SectionLabel("Обо мне")
+            Group {
+                ValueItem("Как вас зовут", s.userName.ifBlank { "не указано" }, Icons.Rounded.Badge) { edit = "user" }
+                GroupDivider(inset = 66.dp)
+                ValueItem("Мой город", s.city.ifBlank { "по геолокации" }, Icons.Rounded.LocationCity) { edit = "city" }
+                GroupDivider(inset = 66.dp)
+                val places = remember(resumeTick, placesTick) { c.geo.places() }
+                ValueItem("Места", places.joinToString { it.name }.ifBlank { "не заданы" }, Icons.Rounded.Place) { edit = "places" }
+            }
+        }
+        item(key = "pages") {
+            SectionLabel("Ещё")
+            Group {
+                SettingsPage.entries.filter { it.main }.forEachIndexed { i, p ->
                     if (i > 0) GroupDivider(inset = 66.dp)
                     RowItem(title = p.title, subtitle = p.subtitle, icon = p.icon, chevron = true, onClick = { open(p) })
                 }
             }
+            Group(Modifier.padding(top = 16.dp)) {
+                SettingsPage.entries.filter { !it.main }.forEachIndexed { i, p ->
+                    if (i > 0) GroupDivider(inset = 66.dp)
+                    RowItem(title = p.title, icon = p.icon, chevron = true, onClick = { open(p) })
+                }
+            }
         }
         item(key = "version") { Hint("${s.assistantName} ${BuildConfig.VERSION_NAME}", Modifier.padding(top = 8.dp)) }
-    }
-}
-
-// ------------------------------------------------------------------ Ассистент
-
-@Composable
-private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
-    val s by c.settings.settings.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    LoliScreen(title = "Ассистент", onBack = onBack) {
-        item(key = "name") {
-            var name by remember(s.assistantName) { mutableStateOf(s.assistantName) }
-            val presets = listOf("Лоли", "Джарвис", "Кира", "Алиса", "Ника")
-            SectionLabel("Имя и слово для вызова")
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                LoliField(name, { name = it.take(40) }, "Имя")
-            }
-            Pills(presets, presets.indexOf(name), { name = presets[it] }, Modifier.padding(vertical = 10.dp))
-            if (name.isNotBlank() && name.trim() != s.assistantName) {
-                PrimaryButton("Сохранить имя", {
-                    scope.launch {
-                        c.settings.setAssistantName(name)
-                        if (WakeWordService.running) { WakeWordService.stop(context); WakeWordService.start(context) }
-                    }
-                }, modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth())
-            }
-            Hint("Имя — это и слово активации: «${name.ifBlank { "Лоли" }}, запиши расход 300 рублей».")
-        }
-        item(key = "dialog") {
-            SectionLabel("Разговор")
-            Group {
-                SwitchItem("Диалоговый режим", "После ответа продолжаю слушать без повторного имени, пока вы не скажете «хватит» или не замолчите",
-                    s.dialogModeEnabled) { v -> scope.launch { c.settings.setDialogMode(v) } }
-                GroupDivider()
-                SwitchItem("Отвечать голосом", "Системный синтезатор речи", s.ttsEnabled) { v -> scope.launch { c.settings.setTts(v) } }
-                GroupDivider()
-                val appContext = LocalContext.current.applicationContext
-                SwitchItem("Утренняя сводка", "В 8:30 — уведомление с задачами и напоминаниями на день (только если они есть)", s.morningBrief) { v ->
-                    scope.launch { c.settings.setMorningBrief(v); ai.loli.app.reminders.MorningBrief.schedule(appContext, v) }
-                }
-            }
-        }
-        item(key = "routines") { RoutinesSection(c) }
-        if (s.ttsEnabled) item(key = "loli-voice") { LoliVoiceSection(c) }
-        if (s.ttsEnabled) item(key = "voice") {
-            val context = LocalContext.current
-            val systemMode = s.voiceMode == "system" || (s.voiceMode == "auto" && !c.loliVoiceModels.isReady(s.loliVoice))
-            var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
-            var engines by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.EngineOption>>(emptyList()) }
-            val resume = ai.loli.app.ui.components.rememberResumeTick()
-            LaunchedEffect(s.ttsEngine, resume) { voices = null; c.tts.recheck(); engines = c.tts.engines(); voices = c.tts.russianVoices() }
-            val ru by c.tts.russianStatus.collectAsStateWithLifecycle()
-            val engineLabel by c.tts.engineLabel.collectAsStateWithLifecycle()
-            val sample = "Привет! Я ${s.assistantName}. Так звучит мой голос."
-            if (systemMode && (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA)) {
-                androidx.compose.material3.Surface(
-                    onClick = { ai.loli.app.voice.RussianVoiceHelp.act(context, ru, c.tts.activeEngine()) },
-                    shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(ai.loli.app.voice.RussianVoiceHelp.title(ru), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                        Text(ai.loli.app.voice.RussianVoiceHelp.hint(ru), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                    }
-                }
-            }
-            Hint(
-                if (!systemMode) "Сейчас говорит: Голос Лоли · ${ai.loli.app.voice.LoliVoiceModels.VOICES.firstOrNull { it.id == s.loliVoice }?.title.orEmpty()}"
-                else if (engineLabel.isNotBlank()) "Сейчас говорит синтезатор телефона: $engineLabel · " + if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.OK) "русский есть" else "русского нет"
-                else "",
-            )
-            // Готовые стили: работают с любым движком, даже если в нём всего один голос.
-            SectionLabel("Характер голоса")
-            Group {
-                VOICE_STYLES.forEachIndexed { i, st ->
-                    if (i > 0) GroupDivider(inset = 52.dp)
-                    val selected = kotlin.math.abs(s.speechPitch - st.pitch) < 0.03f && kotlin.math.abs(s.speechRate - st.rate) < 0.03f
-                    RadioRow(st.title, st.subtitle, selected) {
-                        scope.launch {
-                            c.settings.setVoiceStyle(st.pitch, st.rate)
-                            if (!systemMode) c.loliVoice.speak(sample, rateOverride = st.rate, pitchOverride = st.pitch)
-                            else c.tts.preview(sample, s.voiceName, st.pitch, st.rate)
-                        }
-                    }
-                }
-            }
-            if (systemMode && engines.size > 1) {
-                SectionLabel("Синтезатор речи")
-                Group {
-                    val current = s.ttsEngine.ifBlank { c.tts.defaultEngine() }
-                    engines.forEachIndexed { i, e ->
-                        if (i > 0) GroupDivider(inset = 52.dp)
-                        RadioRow(e.label, if (e.name == c.tts.defaultEngine()) "Системный по умолчанию" else e.name, current == e.name) {
-                            scope.launch { c.settings.setTtsEngine(if (e.name == c.tts.defaultEngine()) "" else e.name) }
-                        }
-                    }
-                }
-            }
-            if (systemMode) SectionLabel("Голос синтезатора телефона")
-            if (systemMode) Group {
-                RadioRow("Как в системе", "Голос по умолчанию синтезатора речи", s.voiceName.isBlank()) {
-                    scope.launch { c.settings.setVoiceName(""); c.tts.speak(sample) }
-                }
-                val list = voices
-                if (list == null) {
-                    GroupDivider(inset = 52.dp)
-                    Hint("Загружаю голоса…")
-                } else {
-                    list.forEach { v ->
-                        GroupDivider(inset = 52.dp)
-                        RadioRow(v.title, v.subtitle, s.voiceName == v.name) {
-                            scope.launch { c.settings.setVoiceName(v.name); c.tts.preview(sample, v.name) }
-                        }
-                    }
-                }
-            }
-            if (systemMode) Hint(
-                if (voices?.isEmpty() == true) "Русских голосов не найдено. Установите их кнопкой ниже или выберите другой синтезатор (например, RHVoice)."
-                else "Нажмите на голос — ${s.assistantName} сразу им заговорит. Больше голосов: установите другой синтезатор речи (например, RHVoice из Google Play) и выберите его ниже.",
-            )
-            if (systemMode) Row(Modifier.padding(horizontal = 8.dp)) {
-                // «Скачать голоса» работает только у синтезатора Google; у Vivo/Huawei и др. кнопка ничего не делала.
-                if (c.tts.activeEngine() == ai.loli.app.voice.AndroidTtsProvider.GOOGLE_TTS) TextButton(onClick = {
-                    runCatching {
-                        context.startActivity(
-                            Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
-                                .setPackage(ai.loli.app.voice.AndroidTtsProvider.GOOGLE_TTS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    }
-                }) { Text("Скачать голоса") }
-                TextButton(onClick = {
-                    runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
-                }) { Text("Синтезатор речи") }
-            }
-        }
-        if (s.ttsEnabled) item(key = "rate") {
-            SectionLabel("Скорость · ${"%.1f".format(s.speechRate)}×   Высота · ${"%.1f".format(s.speechPitch)}")
-            Group {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text("Скорость", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Slider(value = s.speechRate, onValueChange = { v -> scope.launch { c.settings.setSpeechRate(v) } }, valueRange = 0.5f..2f)
-                    Text("Высота голоса", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Slider(value = s.speechPitch, onValueChange = { v -> scope.launch { c.settings.setSpeechPitch(v) } }, valueRange = 0.5f..2f)
-                    TextButton(onClick = { scope.launch { c.speech.speak("Привет! Я ${s.assistantName}. Так звучит мой голос.") } }) { Text("Прослушать") }
-                }
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ Голос
-
-@Composable
-private fun VoicePage(c: AppContainer, onBack: () -> Unit) {
-    val s by c.settings.settings.collectAsStateWithLifecycle()
-    val model by c.voskModels.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val resumeTick = rememberResumeTick()
-    var refresh by remember { mutableIntStateOf(0) }
-    val micGranted = remember(refresh, resumeTick) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-    }
-    val isAssistant = remember(resumeTick) { isDefaultAssistant(context) }
-    var guide by remember { mutableStateOf(false) }
-    if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
-    val services = remember(resumeTick) { c.systemStt.services().map { c.systemStt.serviceLabel(it) }.distinct() }
-    // После выдачи разрешения сразу включаем фоновое прослушивание, о котором просил пользователь.
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        refresh++
-        if (granted) {
-            scope.launch { c.settings.setWakeWord(true) }
-            WakeWordService.start(context)
-        }
-    }
-    // Встроенная модель распаковывается при первом открытии страницы — дальше всё работает офлайн.
-    LaunchedEffect(Unit) { if (c.voskModels.isBundled) c.voskModels.ensureReady() }
-
-    LoliScreen(title = "Голос", subtitle = "Как ${s.assistantName} слышит вас", onBack = onBack) {
-        item(key = "mode") {
-            SectionLabel("Распознавание речи")
-            Group {
-                SttMode.entries.forEachIndexed { i, m ->
-                    if (i > 0) GroupDivider(inset = 52.dp)
-                    RadioRow(m.title, m.hint, s.sttMode == m) { scope.launch { c.settings.setSttMode(m) } }
-                }
-            }
-            Hint(
-                if (services.isEmpty()) "Системных сервисов распознавания не найдено — используется офлайн-модель. Для лучшего качества установите приложение Google."
-                else "Найдено на телефоне: ${services.joinToString()}. Если один не работает, ${s.assistantName} сама переключится на другой или на офлайн-модель.",
-            )
-        }
-        item(key = "pause") {
-            SectionLabel("Пауза до конца фразы")
-            Group {
-                ai.loli.app.settings.SpeechPause.entries.forEachIndexed { i, p ->
-                    if (i > 0) GroupDivider(inset = 52.dp)
-                    RadioRow(p.title, p.hint, s.speechPause == p) { scope.launch { c.settings.setSpeechPause(p) } }
-                }
-            }
-            Hint("Если ${s.assistantName} перебивает или отвечает, пока вы ещё говорите, — выберите «Длинная». Оборванную фразу («купи хлеб и…») ${s.assistantName} дослушает сама.")
-        }
-        item(key = "model") {
-            SectionLabel("Офлайн-модель русской речи")
-            Group {
-                when (val m = model) {
-                    VoskModelManager.State.Ready -> RowItem(
-                        title = "Установлена", subtitle = if (c.voskModels.isBundled) "Встроена в приложение, работает без интернета" else "Работает без интернета",
-                        icon = Icons.Rounded.CheckCircle,
-                        trailing = {
-                            if (!c.voskModels.isBundled) {
-                                TextButton(onClick = { WakeWordService.stop(context); c.voskEngine.release(); c.voskModels.delete(); scope.launch { c.settings.setWakeWord(false) } }) { Text("Удалить") }
-                            }
-                        },
-                    )
-                    is VoskModelManager.State.Installing -> ProgressRow("Устанавливаю встроенную модель", m.progress)
-                    is VoskModelManager.State.Downloading -> ProgressRow("Скачиваю модель (~45 МБ)", m.progress)
-                    VoskModelManager.State.Missing -> RowItem(
-                        title = if (c.voskModels.isBundled) "Встроенная модель" else "Не установлена",
-                        subtitle = if (c.voskModels.isBundled) "Будет установлена автоматически" else "Нужна для офлайн-распознавания и фонового «${s.assistantName}»",
-                        icon = Icons.Rounded.RecordVoiceOver,
-                        trailing = { TextButton(onClick = { c.appScope.launch { c.voskModels.download() } }) { Text(if (c.voskModels.isBundled) "Установить" else "Скачать") } },
-                    )
-                    is VoskModelManager.State.Failed -> RowItem(
-                        title = "Не удалось установить", subtitle = m.message, icon = Icons.Rounded.RecordVoiceOver,
-                        trailing = { TextButton(onClick = { c.appScope.launch { c.voskModels.download() } }) { Text("Повторить") } },
-                    )
-                }
-            }
-        }
-        item(key = "wake") {
-            SectionLabel("Вызов голосом")
-            Group {
-                SwitchItem(
-                    "Слушать «${s.assistantName}» в фоне",
-                    "Постоянное уведомление, повышенный расход батареи. Распознавание — на устройстве, звук никуда не отправляется.",
-                    s.wakeWordEnabled, enabled = c.voskModels.isObtainable(),
-                ) { v ->
-                    if (v && !micGranted) { micLauncher.launch(Manifest.permission.RECORD_AUDIO); return@SwitchItem }
-                    scope.launch { c.settings.setWakeWord(v) }
-                    if (v) WakeWordService.start(context) else WakeWordService.stop(context)
-                }
-                GroupDivider()
-                RowItem(
-                    title = if (isAssistant == true) "${s.assistantName} — ассистент по умолчанию" else "Сделать ассистентом по умолчанию",
-                    subtitle = if (isAssistant == true) "Долгое нажатие «Домой» или кнопки питания открывает ${s.assistantName}"
-                    else "Откроются настройки: выберите «${s.assistantName}» в пункте «Цифровой ассистент»",
-                    icon = Icons.Rounded.TouchApp, chevron = true,
-                    onClick = { guide = true },
-                )
-            }
-            Hint("Не получается выбрать? Нажмите на пункт выше — покажу путь именно для вашего телефона.")
-        }
     }
 }
 
@@ -507,6 +327,7 @@ private fun AccountPage(c: AppContainer, onBack: () -> Unit, onOpenAuth: () -> U
     LaunchedEffect(sync, refresh) { pending = c.store.pendingChanges() }
     var confirmOut by remember { mutableStateOf(false) }
     var outError by remember { mutableStateOf<String?>(null) }
+    var advancedServer by rememberSaveable { mutableStateOf(false) }
     LoliScreen(title = "Аккаунт", subtitle = "Синхронизация между устройствами", onBack = onBack) {
         item(key = "account") {
             when (val a = auth) {
@@ -537,7 +358,8 @@ private fun AccountPage(c: AppContainer, onBack: () -> Unit, onOpenAuth: () -> U
                 }
             }
         }
-        item(key = "server") {
+        item(key = "more") { MoreToggle(advancedServer, { advancedServer = !advancedServer }, "Для разработчиков") }
+        if (advancedServer) item(key = "server") {
             SectionLabel("Сервер")
             ServerConfig(c)
         }
@@ -592,67 +414,77 @@ fun ServerConfig(c: AppContainer) {
 
 // ------------------------------------------------------------------ Разрешения
 
+/**
+ * Разрешения одним блоком: сначала то, чего не хватает (с кнопкой «Разрешить»), выданное — одной строкой.
+ * Большинство разрешений Лоли и так спрашивает сама в момент, когда функция понадобилась.
+ */
 @Composable
-private fun PermissionsPage(c: AppContainer, onBack: () -> Unit) {
+fun PermissionsGroup(c: AppContainer) {
     val context = LocalContext.current
     val resumeTick = rememberResumeTick()
     var refresh by remember { mutableIntStateOf(0) }
-    LoliScreen(title = "Разрешения", onBack = onBack) {
-        item(key = "perms") {
-            val tick = resumeTick + refresh
-            Group(Modifier.padding(top = 4.dp)) {
-                PermissionRow("Микрофон", "Голосовые команды", Icons.Rounded.Mic, Manifest.permission.RECORD_AUDIO, tick) { refresh++ }
+    val tick = resumeTick + refresh
+    fun has(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+    val mic = remember(tick) { has(Manifest.permission.RECORD_AUDIO) }
+    val notif = remember(tick) { Build.VERSION.SDK_INT < 33 || has(Manifest.permission.POST_NOTIFICATIONS) }
+    val exact = remember(tick) { c.reminderScheduler.canScheduleExact() }
+    val overlay = remember(tick) { c.launcher.canLaunchFromBackground() }
+    val battery = remember(tick) { isBatteryExempt(context) }
+    val contacts = remember(tick) { has(Manifest.permission.READ_CONTACTS) }
+    val messages = remember(tick) { ai.loli.app.notify.LoliNotificationListener.enabled(context) }
+    val location = remember(tick) { has(Manifest.permission.ACCESS_COARSE_LOCATION) }
+    val a11y = remember(tick) { ai.loli.app.device.LoliAccessibilityService.isEnabled }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val askContacts = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+
+    data class P(val ok: Boolean, val important: Boolean, val title: String, val why: String, val icon: ImageVector, val fix: () -> Unit)
+    val all = listOf(
+        P(mic, true, "Микрофон", "Голосовые команды", Icons.Rounded.Mic) { askMic.launch(Manifest.permission.RECORD_AUDIO) },
+        P(notif, true, "Уведомления", "Напоминания и таймеры", Icons.Rounded.Notifications) { if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) },
+        P(exact, true, "Точные напоминания", "Иначе Android может задержать напоминание", Icons.Rounded.Alarm) {
+            if (Build.VERSION.SDK_INT >= 31) runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))) }
+        },
+        P(battery, true, "Работа в фоне", "Чтобы напоминания и «Лоли» в фоне не засыпали", Icons.Rounded.BatteryChargingFull) { requestBatteryExemption(context) },
+        P(overlay, false, "Поверх других приложений", "Открывать приложения и звонки, когда Лоли свёрнута", Icons.Rounded.Layers) {
+            runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) }
+        },
+        P(messages, false, "Сообщения", "«Прочитай сообщения», «ответь Маше…»", Icons.Rounded.Notifications) {
+            runCatching { context.startActivity(ai.loli.app.notify.LoliNotificationListener.settingsIntent(context)) }
+        },
+        P(contacts, false, "Контакты", "«Позвони маме», «какой номер у папы»", Icons.Rounded.Contacts) { askContacts.launch(Manifest.permission.READ_CONTACTS) },
+        P(location, false, "Геолокация", "Погода «здесь» и напоминания «когда буду дома»", Icons.Rounded.Place) { askLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
+        P(a11y, false, "Спецвозможности", "Кнопки громкости, «назад», «что на экране»", Icons.Rounded.TouchApp) { openAccessibility(context) },
+    )
+    val missingImportant = all.filter { !it.ok && it.important }
+    val optional = all.filter { !it.ok && !it.important }
+    var showOptional by remember { mutableStateOf(false) }
+    SectionLabel("Разрешения")
+    Group {
+        RowItem(
+            title = if (missingImportant.isEmpty()) "Всё нужное разрешено" else "Не хватает: ${missingImportant.size}",
+            subtitle = if (missingImportant.isEmpty()) "Остальное ${c.settings.settings.value.assistantName} спросит сама, когда понадобится" else "Нажмите «Разрешить» у каждого пункта",
+            icon = if (missingImportant.isEmpty()) Icons.Rounded.CheckCircle else Icons.Rounded.Lock,
+        )
+        missingImportant.forEach { p ->
+            GroupDivider(inset = 66.dp)
+            RowItem(title = p.title, subtitle = p.why, icon = p.icon, trailing = { TextButton(onClick = p.fix) { Text("Разрешить") } })
+        }
+        if (optional.isNotEmpty()) {
+            GroupDivider(inset = 66.dp)
+            RowItem(
+                title = "Для отдельных функций: ${optional.size}",
+                subtitle = if (showOptional) "Скрыть" else optional.joinToString { it.title.lowercase() },
+                icon = Icons.Rounded.Info,
+                onClick = { showOptional = !showOptional },
+            )
+            if (showOptional) optional.forEach { p ->
                 GroupDivider(inset = 66.dp)
-                val overlay = remember(tick) { c.launcher.canLaunchFromBackground() }
-                RowItem(
-                    title = "Поверх других приложений",
-                    subtitle = if (overlay) "Разрешено: таймеры, будильники и приложения открываются, даже когда Лоли свёрнута"
-                    else "Нужно, чтобы по голосу открывать часы, приложения и звонки, когда Лоли свёрнута",
-                    icon = Icons.Rounded.Layers,
-                    trailing = { if (!overlay) TextButton(onClick = { runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) } }) { Text("Разрешить") } },
-                )
-                GroupDivider(inset = 66.dp)
-                PermissionRow("Контакты", "Чтобы звонить и писать по имени: «позвони маме»", Icons.Rounded.Contacts, Manifest.permission.READ_CONTACTS, tick) { refresh++ }
-                if (Build.VERSION.SDK_INT >= 33) {
-                    GroupDivider(inset = 66.dp)
-                    PermissionRow("Уведомления", "Напоминания и фоновое прослушивание", Icons.Rounded.Notifications, Manifest.permission.POST_NOTIFICATIONS, tick) { refresh++ }
-                }
-                GroupDivider(inset = 66.dp)
-                val exact = remember(tick) { c.reminderScheduler.canScheduleExact() }
-                RowItem(
-                    title = "Точные напоминания", subtitle = if (exact) "Разрешено" else "Без него Android может задержать напоминание",
-                    icon = Icons.Rounded.Alarm,
-                    trailing = {
-                        if (!exact) TextButton(onClick = {
-                            if (Build.VERSION.SDK_INT >= 31) runCatching {
-                                context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}")))
-                            }
-                        }) { Text("Разрешить") }
-                    },
-                )
-                GroupDivider(inset = 66.dp)
-                RowItem(
-                    title = "Работа в фоне", subtitle = "Отключите экономию батареи для ${context.getString(ai.loli.app.R.string.app_name)}, чтобы фоновое прослушивание не останавливалось",
-                    icon = Icons.Rounded.BatteryChargingFull, chevron = true,
-                    onClick = { requestBatteryExemption(context) },
-                )
+                RowItem(title = p.title, subtitle = p.why, icon = p.icon, trailing = { TextButton(onClick = p.fix) { Text("Разрешить") } })
             }
-            SecondaryButton("Все настройки приложения", {
-                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
-            }, modifier = Modifier.padding(16.dp).fillMaxWidth())
         }
     }
-}
-
-@Composable
-private fun PermissionRow(title: String, subtitle: String, icon: ImageVector, permission: String, tick: Int, onResult: () -> Unit) {
-    val context = LocalContext.current
-    val granted = remember(tick) { ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onResult() }
-    RowItem(
-        title = title, subtitle = if (granted) "Разрешено" else subtitle, icon = icon,
-        trailing = { if (!granted) TextButton(onClick = { launcher.launch(permission) }) { Text("Разрешить") } },
-    )
 }
 
 // ------------------------------------------------------------------ О приложении
@@ -723,7 +555,7 @@ fun RadioRow(title: String, subtitle: String?, selected: Boolean, onClick: () ->
 }
 
 @Composable
-private fun ProgressRow(title: String, progress: Float) {
+internal fun ProgressRow(title: String, progress: Float) {
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
         Text("$title · ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge)
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
@@ -906,9 +738,9 @@ fun requestBatteryExemption(context: Context) {
     runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
-private class VoiceStyle(val title: String, val subtitle: String, val pitch: Float, val rate: Float)
+internal class VoiceStyle(val title: String, val subtitle: String, val pitch: Float, val rate: Float)
 
-private val VOICE_STYLES = listOf(
+internal val VOICE_STYLES = listOf(
     VoiceStyle("Обычный", "Как задумано синтезатором", 1.0f, 1.0f),
     VoiceStyle("Мягкий", "Чуть выше и спокойнее", 1.15f, 0.92f),
     VoiceStyle("Бодрый", "Выше и быстрее", 1.2f, 1.15f),
@@ -918,7 +750,7 @@ private val VOICE_STYLES = listOf(
 
 /** Сценарии: фраза → несколько команд. Готовые шаблоны добавляются одним нажатием. */
 @Composable
-private fun RoutinesSection(c: AppContainer) {
+internal fun RoutinesSection(c: AppContainer) {
     val scope = rememberCoroutineScope()
     val routines by remember { c.store.routines.observe() }.collectAsStateWithLifecycle(emptyList())
     SectionLabel("Сценарии")

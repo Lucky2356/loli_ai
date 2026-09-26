@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.loli.app.AppContainer
+import ai.loli.app.ui.components.MoreToggle
 import ai.loli.app.device.InstalledApp
 import ai.loli.app.device.LoliAccessibilityService
 import androidx.compose.material.icons.rounded.PowerSettingsNew
@@ -89,9 +90,48 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
         )
     }
 
-    LoliScreen(title = "Доступ", subtitle = "Что Лоли разрешено делать", onBack = onBack) {
+    var advanced by rememberSaveable { mutableStateOf(false) }
+    LoliScreen(title = "Безопасность", subtitle = "Что ${s.assistantName} разрешено делать", onBack = onBack) {
         item(key = "lock") {
-            SectionLabel("На заблокированном экране")
+            SectionLabel("Когда телефон заблокирован")
+            val level = if (!s.lockScreenEnabled) ai.loli.core.assistant.LockPolicy.Level.NONE else p.level
+            Group {
+                listOf(
+                    Triple(ai.loli.core.assistant.LockPolicy.Level.SAFE, "Только безопасное (рекомендую)", "Записать, таймер, погода, музыка, звонки. Ваши записи и сообщения — только после разблокировки"),
+                    Triple(ai.loli.core.assistant.LockPolicy.Level.NONE, "Ничего без разблокировки", "${s.assistantName} попросит сначала разблокировать телефон"),
+                    Triple(ai.loli.core.assistant.LockPolicy.Level.ALL, "Всё", "Кто держит телефон, увидит и изменит ваши записи"),
+                ).forEachIndexed { i, (lv, title, sub) ->
+                    if (i > 0) GroupDivider(inset = 52.dp)
+                    RadioRow(title, sub, level == lv) {
+                        scope.launch {
+                            c.settings.setLockScreenEnabled(lv != ai.loli.core.assistant.LockPolicy.Level.NONE)
+                            ai.loli.core.assistant.LockPolicy.of(lv)?.let { c.settings.setLockPolicy(it) }
+                        }
+                    }
+                }
+                if (level == ai.loli.core.assistant.LockPolicy.Level.CUSTOM) {
+                    GroupDivider(inset = 52.dp)
+                    RadioRow("Своя настройка", "Выбрана в «Дополнительно» ниже", true) { advanced = true }
+                }
+            }
+        }
+        item(key = "applock") {
+            SectionLabel("Защита приложения")
+            Group {
+                SwitchItem(
+                    "Вход по отпечатку или PIN-коду",
+                    if (deviceSecure) "${s.assistantName} попросит подтвердить личность при открытии (после 1 минуты в фоне)"
+                    else "Сначала включите блокировку экрана в настройках телефона",
+                    s.appLock, enabled = deviceSecure || s.appLock, icon = Icons.Rounded.Fingerprint,
+                ) { v -> scope.launch { c.settings.setAppLock(v) } }
+            }
+            Hint("Ключи, вход и записи зашифрованы на телефоне. Обновления ставятся только с GitHub, с проверкой подписи.")
+        }
+        item(key = "perms") { PermissionsGroup(c) }
+        item(key = "more") { MoreToggle(advanced, { advanced = !advanced }) }
+
+        if (advanced) item(key = "lock-fine") {
+            SectionLabel("Экран блокировки — подробно")
             Group {
                 SwitchItem("Работать без разблокировки", "Вызов кнопкой, голосом или жестом, пока телефон заблокирован", s.lockScreenEnabled, icon = Icons.Rounded.Lock) { v ->
                     scope.launch { c.settings.setLockScreenEnabled(v) }
@@ -124,9 +164,16 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
             Hint("Результат команды на заблокированном экране придёт уведомлением. Его текст виден на экране блокировки, только если это разрешено в настройках уведомлений телефона.")
+            Group(Modifier.padding(top = 8.dp)) {
+                SwitchItem(
+                    "Скрывать экран ${s.assistantName}",
+                    "Не показывать содержимое в недавних приложениях, запретить скриншоты и запись экрана",
+                    s.secureScreen, icon = Icons.Rounded.Visibility,
+                ) { v -> scope.launch { c.settings.setSecureScreen(v) } }
+            }
         }
 
-        item(key = "keys") {
+        if (advanced) item(key = "keys") {
             SectionLabel("Вызов кнопками")
             val assistant = remember(resumeTick) { isDefaultAssistant(context) == true }
             Group {
@@ -164,26 +211,7 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
             )
         }
 
-        item(key = "applock") {
-            SectionLabel("Защита приложения")
-            Group {
-                SwitchItem(
-                    "Вход по отпечатку или PIN-коду",
-                    if (deviceSecure) "Лоли попросит подтвердить личность при открытии (после 1 минуты в фоне)"
-                    else "Сначала включите блокировку экрана в настройках телефона",
-                    s.appLock, enabled = deviceSecure || s.appLock, icon = Icons.Rounded.Fingerprint,
-                ) { v -> scope.launch { c.settings.setAppLock(v) } }
-                GroupDivider(inset = 66.dp)
-                SwitchItem(
-                    "Скрывать экран ${s.assistantName}",
-                    "Не показывать содержимое в недавних приложениях, запретить скриншоты и запись экрана (в том числе другим приложениям)",
-                    s.secureScreen, icon = Icons.Rounded.Visibility,
-                ) { v -> scope.launch { c.settings.setSecureScreen(v) } }
-            }
-            Hint("API-ключи, вход в аккаунт и база записей зашифрованы ключом Android Keystore и не попадают в резервные копии. Обновления ставятся только с GitHub, с проверкой контрольной суммы и подписи.")
-        }
-
-        item(key = "apps-head") {
+        if (advanced) item(key = "apps-head") {
             SectionLabel("Приложения, которые Лоли может открывать")
             Group {
                 SwitchItem(
@@ -193,7 +221,7 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
             }
             SearchBox(query, { query = it }, "Найти приложение", Modifier.padding(top = 12.dp, bottom = 4.dp))
         }
-        item(key = "apps") {
+        if (advanced) item(key = "apps") {
             val list = apps
             if (list == null) {
                 Hint("Загружаю список приложений…")
