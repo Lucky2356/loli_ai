@@ -26,6 +26,10 @@
     <string name="update_tap">Нажмите, чтобы установить</string>
     <string name="widget_label">Лоли</string>
     <string name="widget_description">Спросить Лоли одним касанием</string>
+    <string name="widget_tasks_label">Задачи на сегодня</string>
+    <string name="widget_tasks_description">Задачи на сегодня и просроченные</string>
+    <string name="widget_shopping_label">Покупки</string>
+    <string name="widget_shopping_description">Что осталось купить</string>
     <string name="accessibility_label">Лоли — управление голосом</string>
     <string name="accessibility_description">Позволяет Лоли по голосовой команде нажимать системные кнопки: «назад», «домой», «недавние приложения», «открой уведомления», «сделай скриншот», «заблокируй экран». Лоли не читает содержимое экрана и не видит, что вы вводите.</string>
     <string name="result_channel">Результаты команд</string>

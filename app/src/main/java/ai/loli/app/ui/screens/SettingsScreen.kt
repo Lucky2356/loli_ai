@@ -1,5 +1,8 @@
 package ai.loli.app.ui.screens
 
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.rounded.Check
@@ -217,6 +220,7 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
+        item(key = "routines") { RoutinesSection(c) }
         if (s.ttsEnabled) item(key = "voice") {
             val context = LocalContext.current
             var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
@@ -878,4 +882,57 @@ private val VOICE_STYLES = listOf(
     VoiceStyle("Бодрый", "Выше и быстрее", 1.2f, 1.15f),
     VoiceStyle("Низкий", "Ниже и размереннее", 0.8f, 0.95f),
     VoiceStyle("Деловой", "Ровно и быстро", 0.95f, 1.2f),
+)
+
+/** Сценарии: фраза → несколько команд. Готовые шаблоны добавляются одним нажатием. */
+@Composable
+private fun RoutinesSection(c: AppContainer) {
+    val scope = rememberCoroutineScope()
+    val routines by remember { c.store.routines.observe() }.collectAsStateWithLifecycle(emptyList())
+    SectionLabel("Сценарии")
+    Group {
+        if (routines.isEmpty()) {
+            Hint("Скажите: «когда я говорю „спокойной ночи“ — поставь будильник на 7 и включи не беспокоить». Или добавьте шаблон ниже.")
+        }
+        routines.forEachIndexed { i, r ->
+            if (i > 0) GroupDivider()
+            RowItem(
+                title = "«${r.trigger}»", subtitle = r.commands.joinToString(" · "), maxSubtitleLines = 3,
+                trailing = {
+                    IconButton(onClick = { scope.launch { c.store.routines.delete(r.id) } }) {
+                        Icon(androidx.compose.material.icons.Icons.Rounded.Close, contentDescription = "Удалить сценарий", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+            )
+        }
+    }
+    val context = LocalContext.current
+    Row(Modifier.padding(horizontal = 8.dp)) {
+        TextButton(onClick = {
+            scope.launch {
+                val r = ai.loli.app.device.BirthdayImport.run(context, c)
+                val msg = when {
+                    r.permissionDenied -> "Нужен доступ к контактам, чтобы найти дни рождения"
+                    r.imported == 0 -> "Новых дней рождения в контактах не нашлось"
+                    else -> "Добавила ${ai.loli.core.assistant.RuFormat.count(r.imported, "день рождения", "дня рождения", "дней рождения")} — напомню накануне и в сам день"
+                }
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }) { Text("Дни рождения из контактов") }
+    }
+    val missing = ROUTINE_TEMPLATES.filter { t -> routines.none { ai.loli.core.model.Routine.normalize(it.trigger) == ai.loli.core.model.Routine.normalize(t.first) } }
+    if (missing.isNotEmpty()) {
+        Row(Modifier.padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())) {
+            missing.forEach { (trigger, commands) ->
+                TextButton(onClick = { scope.launch { c.store.routines.save(trigger, commands) } }) { Text("+ $trigger") }
+            }
+        }
+    }
+}
+
+private val ROUTINE_TEMPLATES = listOf(
+    "Доброе утро" to listOf("что у меня на сегодня", "какая погода"),
+    "Спокойной ночи" to listOf("поставь будильник на 7:00", "включи не беспокоить"),
+    "Я за рулём" to listOf("включи не беспокоить", "включи музыку"),
+    "Я дома" to listOf("выключи не беспокоить", "что у меня на сегодня"),
 )

@@ -247,6 +247,30 @@
         </receiver>
 
         <receiver
+            android:name=".widget.TasksWidget"
+            android:exported="true"
+            android:label="@string/widget_tasks_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_tasks_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ShoppingWidget"
+            android:exported="true"
+            android:label="@string/widget_shopping_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_shopping_info" />
+        </receiver>
+
+        <receiver
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
 

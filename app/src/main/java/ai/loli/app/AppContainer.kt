@@ -157,7 +157,7 @@ class AppContainer(private val context: Context) {
         else ai.loli.core.assistant.LockPolicy(create = false, basicDevice = false, calls = false, view = false, edit = false, apps = false)
     }
 
-    private val executor by lazy {
+    val executor: ai.loli.core.assistant.ActionExecutor by lazy {
         ActionExecutor(
             store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
             lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
@@ -220,6 +220,10 @@ class AppContainer(private val context: Context) {
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             // Прогрев БД вне главного потока; дальше — подписка на изменения для синхронизации.
             store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
+            // Виджеты «Задачи на сегодня» и «Покупки» обновляются сразу после изменений.
+            store.changes.addListener { table ->
+                if (table == "tasks" || table == "shopping_items") runCatching { ai.loli.app.widget.ListWidget.refreshAll(context) }
+            }
         }
         appScope.launch {
             auth.restore()
