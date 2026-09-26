@@ -179,6 +179,7 @@ class AppContainer(private val context: Context) {
             rate = { settings.settings.value.speechRate },
             pitch = { settings.settings.value.speechPitch },
             voiceName = { settings.settings.value.voiceName },
+            engineName = { settings.settings.value.ttsEngine },
         ) }
     val tts: AndroidTtsProvider get() = ttsLazy.value
     val voice: VoiceController by lazy {

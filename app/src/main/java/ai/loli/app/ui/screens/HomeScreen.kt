@@ -166,7 +166,11 @@ fun HomeScreen(
                 Modifier.clip(CircleShape).clickable(
                     interactionSource = remember { MutableInteractionSource() }, indication = null,
                 ) { if (ui.active) vm.stop() else onMic() },
-            ) { AssistantOrb(ui.mode, ui.level, size = if (setupShown) 150.dp else 210.dp) }
+            ) {
+                // Сфера подстраивается под высоту экрана: на маленьких телефонах и с крупным шрифтом — меньше.
+                val full = (viewport * 0.42f).coerceIn(120.dp, 230.dp)
+                AssistantOrb(ui.mode, ui.level, size = if (setupShown) (full * 0.7f).coerceAtLeast(110.dp) else full)
+            }
             Text(
                 ui.status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
                 color = if (ui.mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -180,7 +184,7 @@ fun HomeScreen(
         }
         }
         // Закреплённые переходы в разделы.
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Stat(Modifier.weight(1f), "Задачи", "${summary.activeTasks}", if (summary.overdueTasks > 0) "просрочено ${summary.overdueTasks}" else "активных") { openPlans(0) }
             Stat(Modifier.weight(1f), "Сегодня", Money.format(summary.todayExpensesMinor, "RUB"), "потрачено") { openExpenses() }
             Stat(Modifier.weight(1f), "Напомнить", "${summary.activeReminders}", "запланировано") { openPlans(1) }
@@ -353,15 +357,19 @@ private fun greeting(): String = when (LocalTime.now().hour) {
 private fun Stat(modifier: Modifier, title: String, value: String, caption: String, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Surface(onClick = onClick, shape = MaterialTheme.shapes.medium, color = groupColor(), interactionSource = interaction, modifier = modifier.pressScale(interaction)) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.foundation.layout.BoxWithConstraints {
+        // Узкая карточка (маленький экран, крупный шрифт) — шрифт числа поменьше, чтобы сумма не обрезалась.
+        val narrow = maxWidth < 112.dp || value.length > 7 && maxWidth < 140.dp
+        Column(Modifier.padding(horizontal = if (narrow) 10.dp else 14.dp, vertical = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             // Число меняется «перелистыванием» снизу вверх.
             AnimatedContent(
                 targetState = value,
                 transitionSpec = { (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) },
                 label = "stat",
-            ) { v -> Text(v, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp)) }
-            Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            ) { v -> Text(v, style = if (narrow) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp)) }
+            Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         }
     }
 }

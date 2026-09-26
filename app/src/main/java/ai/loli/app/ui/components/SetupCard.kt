@@ -52,7 +52,16 @@ import ai.loli.app.ui.screens.requestBatteryExemption
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private class SetupStep(val id: String, val icon: ImageVector, val title: String, val action: () -> Unit)
+private class SetupStep(
+    val id: String,
+    val icon: ImageVector,
+    val title: String,
+    /** Что нажать в системном окне — с учётом производителя телефона. */
+    val hint: String,
+    /** Необязательный шаг: нужен только для отдельных функций, его можно пройти позже. */
+    val optional: Boolean = false,
+    val action: () -> Unit,
+)
 
 /**
  * «Настройте Лоли»: чего не хватает для полной работы. Кнопка «Настроить всё» проходит шаги сама:
@@ -98,32 +107,48 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
         }.toTypedArray()
     }
 
+    val oem = remember { OemHints.current() }
+    // Шаги производителя (автозапуск Xiaomi/Huawei/Oppo) нельзя проверить — отмечаем пройденными после посещения.
+    var oemDone by remember { mutableStateOf(prefs.getBoolean("oem_autostart_done", false)) }
     val todo = listOfNotNull(
-        if (!basePerms) SetupStep("perms", Icons.Rounded.Mic, "Микрофон и уведомления") { permsLauncher.launch(allPerms) } else null,
-        if (!assistant) SetupStep("assistant", Icons.Rounded.TouchApp, "Сделать $name ассистентом") { guide = true } else null,
-        if (!overlay) SetupStep("overlay", Icons.Rounded.Layers, "Работа поверх приложений") {
+        if (!basePerms) SetupStep("perms", Icons.Rounded.Mic, "Микрофон и уведомления",
+            "В окне «Разрешить?» нажимайте «Разрешить» или «При использовании приложения».") { permsLauncher.launch(allPerms) } else null,
+        if (!assistant) SetupStep("assistant", Icons.Rounded.TouchApp, "Сделать $name ассистентом",
+            "Чтобы вызывать $name долгим нажатием кнопки «Домой» или жестом.", optional = true) { guide = true } else null,
+        if (!overlay) SetupStep("overlay", Icons.Rounded.Layers, "Работа поверх приложений",
+            oem.overlay, optional = true) {
             runCatching { context.startActivity(BackgroundLauncher.overlaySettings(context)) }
         } else null,
-        if (!a11y) SetupStep("a11y", Icons.Rounded.VolumeUp, "Кнопки громкости и системные команды") { openAccessibility(context) } else null,
-        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи") { requestBatteryExemption(context) } else null,
-        if (!exact) SetupStep("exact", Icons.Rounded.Alarm, "Точные напоминания") {
+        if (!a11y) SetupStep("a11y", Icons.Rounded.VolumeUp, "Кнопки громкости и системные команды",
+            "Найдите в списке «$name» (иногда в разделе «Установленные приложения» или «Скачанные службы») и включите.", optional = true) { openAccessibility(context) } else null,
+        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи", oem.battery) { requestBatteryExemption(context) } else null,
+        if (!exact) SetupStep("exact", Icons.Rounded.Alarm, "Точные напоминания",
+            "Включите переключатель «Разрешить» напротив $name.") {
             runCatching {
                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:${context.packageName}")))
             }
         } else null,
+        if (oem.autostart != null && !oemDone) SetupStep("autostart", Icons.Rounded.BatteryChargingFull, "Автозапуск (${oem.brand})", oem.autostart) {
+            oemDone = true
+            prefs.edit().putBoolean("oem_autostart_done", true).apply()
+            OemHints.openAutostart(context)
+        } else null,
     )
+    val required = todo.filter { !it.optional }
+    val optional = todo.filter { it.optional }
+    var showOptional by rememberSaveable { mutableStateOf(false) }
 
     // Мастер: после возврата из системного экрана сразу открывает следующий шаг.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(auto, tick, refresh, guide, busy, todo.size, attemptedCsv) {
+    LaunchedEffect(auto, tick, refresh, guide, busy, todo.size, attemptedCsv, showOptional) {
         if (!auto || guide || busy) return@LaunchedEffect
         delay(900) // системный экран успевает открыться — тогда Лоли уже не на экране и ждёт возврата
         // Пока открыт системный экран или окно разрешения — ждём возвращения человека в Лоли.
         if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@LaunchedEffect
-        val next = todo.firstOrNull { it.id !in attempted }
+        val next = (if (showOptional) todo else required).firstOrNull { it.id !in attempted }
         if (next == null) {
             auto = false
-            Toast.makeText(context, if (todo.isEmpty()) "$name настроена полностью" else "Готово. Оставшиеся шаги можно пройти позже", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, if (todo.isEmpty()) "$name настроена полностью" else if (required.isEmpty()) "Главное настроено. Дополнительные шаги — по желанию" else "Готово. Оставшиеся шаги можно пройти позже", Toast.LENGTH_SHORT).show()
             return@LaunchedEffect
         }
         attemptedCsv = (attempted + next.id).joinToString(",")
@@ -156,7 +181,11 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                     Column(Modifier.weight(1f)) {
                         Text("Настройте $name полностью", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            if (auto || busy) "Настраиваю — возвращайтесь назад после каждого экрана" else "Осталось шагов: ${todo.size}",
+                            when {
+                                auto || busy -> "Настраиваю — после каждого экрана просто вернитесь назад"
+                                required.isEmpty() -> "Главное готово. Остальное — по желанию"
+                                else -> "Нужно ещё ${ai.loli.core.assistant.RuFormat.count(required.size, "шаг", "шага", "шагов")}"
+                            },
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -170,8 +199,18 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                     enabled = !busy,
                 )
-                todo.forEach { step ->
-                    RowItem(title = step.title, icon = step.icon, chevron = true, onClick = step.action)
+                required.forEach { step ->
+                    RowItem(title = step.title, subtitle = step.hint, icon = step.icon, chevron = true, maxSubtitleLines = 3, onClick = step.action)
+                }
+                if (optional.isNotEmpty()) {
+                    RowItem(
+                        title = if (showOptional) "Скрыть дополнительные" else "Дополнительно (${optional.size})",
+                        subtitle = if (showOptional) null else "Для вызова кнопками, жестом и поверх других приложений",
+                        onClick = { showOptional = !showOptional },
+                    )
+                    if (showOptional) optional.forEach { step ->
+                        RowItem(title = step.title, subtitle = step.hint, icon = step.icon, chevron = true, maxSubtitleLines = 3, onClick = step.action)
+                    }
                 }
             }
         }

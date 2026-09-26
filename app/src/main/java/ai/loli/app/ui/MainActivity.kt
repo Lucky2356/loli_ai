@@ -44,6 +44,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -322,9 +326,12 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
             label = "screens",
         ) { (tab, route) ->
             holder.SaveableStateProvider("${tab.name}/${route.orEmpty()}") {
-                Box(Modifier.fillMaxSize()) {
+                // На планшете и в альбомной ориентации содержимое не растягивается во всю ширину.
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.fillMaxHeight().widthIn(max = 720.dp).fillMaxWidth()) {
                     Screen(c, nav, tab, route, listen, recordsSegment.intValue, { recordsSegment.intValue = it },
                         plansSegment.intValue, { plansSegment.intValue = it }, onOpenAuth = { showAuth = true })
+                    }
                 }
             }
         }

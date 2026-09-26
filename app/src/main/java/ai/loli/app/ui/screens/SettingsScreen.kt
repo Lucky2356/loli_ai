@@ -220,8 +220,32 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
         if (s.ttsEnabled) item(key = "voice") {
             val context = LocalContext.current
             var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
-            LaunchedEffect(Unit) { voices = c.tts.russianVoices() }
+            var engines by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.EngineOption>>(emptyList()) }
+            LaunchedEffect(s.ttsEngine) { voices = null; engines = c.tts.engines(); voices = c.tts.russianVoices() }
             val sample = "Привет! Я ${s.assistantName}. Так звучит мой голос."
+            // Готовые стили: работают с любым движком, даже если в нём всего один голос.
+            SectionLabel("Характер голоса")
+            Group {
+                VOICE_STYLES.forEachIndexed { i, st ->
+                    if (i > 0) GroupDivider(inset = 52.dp)
+                    val selected = kotlin.math.abs(s.speechPitch - st.pitch) < 0.03f && kotlin.math.abs(s.speechRate - st.rate) < 0.03f
+                    RadioRow(st.title, st.subtitle, selected) {
+                        scope.launch { c.settings.setVoiceStyle(st.pitch, st.rate); c.tts.preview(sample, s.voiceName, st.pitch, st.rate) }
+                    }
+                }
+            }
+            if (engines.size > 1) {
+                SectionLabel("Синтезатор речи")
+                Group {
+                    val current = s.ttsEngine.ifBlank { c.tts.defaultEngine() }
+                    engines.forEachIndexed { i, e ->
+                        if (i > 0) GroupDivider(inset = 52.dp)
+                        RadioRow(e.label, if (e.name == c.tts.defaultEngine()) "Системный по умолчанию" else e.name, current == e.name) {
+                            scope.launch { c.settings.setTtsEngine(if (e.name == c.tts.defaultEngine()) "" else e.name) }
+                        }
+                    }
+                }
+            }
             SectionLabel("Голос")
             Group {
                 RadioRow("Как в системе", "Голос по умолчанию синтезатора речи", s.voiceName.isBlank()) {
@@ -845,3 +869,13 @@ fun requestBatteryExemption(context: Context) {
     if (runCatching { context.startActivity(direct) }.isSuccess) return
     runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
+
+private class VoiceStyle(val title: String, val subtitle: String, val pitch: Float, val rate: Float)
+
+private val VOICE_STYLES = listOf(
+    VoiceStyle("Обычный", "Как задумано синтезатором", 1.0f, 1.0f),
+    VoiceStyle("Мягкий", "Чуть выше и спокойнее", 1.15f, 0.92f),
+    VoiceStyle("Бодрый", "Выше и быстрее", 1.2f, 1.15f),
+    VoiceStyle("Низкий", "Ниже и размереннее", 0.8f, 0.95f),
+    VoiceStyle("Деловой", "Ровно и быстро", 0.95f, 1.2f),
+)

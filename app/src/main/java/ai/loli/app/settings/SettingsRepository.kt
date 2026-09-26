@@ -111,6 +111,8 @@ data class AppSettings(
     val speechPitch: Float = 1.0f,
     /** Имя голоса синтезатора; пусто — голос по умолчанию для русского. */
     val voiceName: String = "",
+    /** Синтезатор речи (пакет движка); пусто — системный по умолчанию. */
+    val ttsEngine: String = "",
     val wakeWordEnabled: Boolean = false,
     val dialogModeEnabled: Boolean = true,
     val sttMode: SttMode = SttMode.AUTO,
@@ -179,6 +181,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val morningBrief = booleanPreferencesKey("morning_brief")
         val pitch = floatPreferencesKey("speech_pitch")
         val voice = stringPreferencesKey("voice_name")
+        val ttsEngine = stringPreferencesKey("tts_engine")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
@@ -244,6 +247,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             speechRate = p[K.rate] ?: 1.0f,
             speechPitch = p[K.pitch] ?: 1.0f,
             voiceName = p[K.voice].orEmpty(),
+            ttsEngine = p[K.ttsEngine].orEmpty(),
             wakeWordEnabled = p[K.wake] ?: false,
             dialogModeEnabled = p[K.dialog] ?: true,
             sttMode = SttMode.fromId(p[K.sttMode]) ?: if (p[K.legacyOfflineStt] == true) SttMode.OFFLINE else SttMode.AUTO,
@@ -342,6 +346,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }
     suspend fun setVoiceName(v: String) = store.edit { it[K.voice] = v }
+    /** Смена движка сбрасывает голос: имена голосов у движков разные. */
+    suspend fun setTtsEngine(v: String) = store.edit { it[K.ttsEngine] = v; it[K.voice] = "" }
+    suspend fun setVoiceStyle(pitch: Float, rate: Float) = store.edit { it[K.pitch] = pitch.coerceIn(0.5f, 2f); it[K.rate] = rate.coerceIn(0.5f, 2f) }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }
     suspend fun setLockPolicy(v: ai.loli.core.assistant.LockPolicy) = store.edit {
