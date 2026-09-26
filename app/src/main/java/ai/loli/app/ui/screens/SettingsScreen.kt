@@ -221,8 +221,10 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
             }
         }
         item(key = "routines") { RoutinesSection(c) }
+        if (s.ttsEnabled) item(key = "loli-voice") { LoliVoiceSection(c) }
         if (s.ttsEnabled) item(key = "voice") {
             val context = LocalContext.current
+            val systemMode = s.voiceMode == "system" || (s.voiceMode == "auto" && !c.loliVoiceModels.isReady(s.loliVoice))
             var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
             var engines by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.EngineOption>>(emptyList()) }
             val resume = ai.loli.app.ui.components.rememberResumeTick()
@@ -230,7 +232,7 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
             val ru by c.tts.russianStatus.collectAsStateWithLifecycle()
             val engineLabel by c.tts.engineLabel.collectAsStateWithLifecycle()
             val sample = "Привет! Я ${s.assistantName}. Так звучит мой голос."
-            if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA) {
+            if (systemMode && (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA)) {
                 androidx.compose.material3.Surface(
                     onClick = { ai.loli.app.voice.RussianVoiceHelp.act(context, ru, c.tts.activeEngine()) },
                     shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
@@ -242,7 +244,11 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     }
                 }
             }
-            if (engineLabel.isNotBlank()) Hint("Сейчас говорит: $engineLabel · " + if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.OK) "русский есть" else "русского нет")
+            Hint(
+                if (!systemMode) "Сейчас говорит: Голос Лоли · ${ai.loli.app.voice.LoliVoiceModels.VOICES.firstOrNull { it.id == s.loliVoice }?.title.orEmpty()}"
+                else if (engineLabel.isNotBlank()) "Сейчас говорит синтезатор телефона: $engineLabel · " + if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.OK) "русский есть" else "русского нет"
+                else "",
+            )
             // Готовые стили: работают с любым движком, даже если в нём всего один голос.
             SectionLabel("Характер голоса")
             Group {
@@ -250,11 +256,15 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     if (i > 0) GroupDivider(inset = 52.dp)
                     val selected = kotlin.math.abs(s.speechPitch - st.pitch) < 0.03f && kotlin.math.abs(s.speechRate - st.rate) < 0.03f
                     RadioRow(st.title, st.subtitle, selected) {
-                        scope.launch { c.settings.setVoiceStyle(st.pitch, st.rate); c.tts.preview(sample, s.voiceName, st.pitch, st.rate) }
+                        scope.launch {
+                            c.settings.setVoiceStyle(st.pitch, st.rate)
+                            if (!systemMode) c.loliVoice.speak(sample, rateOverride = st.rate, pitchOverride = st.pitch)
+                            else c.tts.preview(sample, s.voiceName, st.pitch, st.rate)
+                        }
                     }
                 }
             }
-            if (engines.size > 1) {
+            if (systemMode && engines.size > 1) {
                 SectionLabel("Синтезатор речи")
                 Group {
                     val current = s.ttsEngine.ifBlank { c.tts.defaultEngine() }
@@ -266,8 +276,8 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     }
                 }
             }
-            SectionLabel("Голос")
-            Group {
+            if (systemMode) SectionLabel("Голос синтезатора телефона")
+            if (systemMode) Group {
                 RadioRow("Как в системе", "Голос по умолчанию синтезатора речи", s.voiceName.isBlank()) {
                     scope.launch { c.settings.setVoiceName(""); c.tts.speak(sample) }
                 }
@@ -284,13 +294,19 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     }
                 }
             }
-            Hint(
+            if (systemMode) Hint(
                 if (voices?.isEmpty() == true) "Русских голосов не найдено. Установите их кнопкой ниже или выберите другой синтезатор (например, RHVoice)."
                 else "Нажмите на голос — ${s.assistantName} сразу им заговорит. Больше голосов: установите другой синтезатор речи (например, RHVoice из Google Play) и выберите его ниже.",
             )
-            Row(Modifier.padding(horizontal = 8.dp)) {
-                TextButton(onClick = {
-                    runCatching { context.startActivity(Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            if (systemMode) Row(Modifier.padding(horizontal = 8.dp)) {
+                // «Скачать голоса» работает только у синтезатора Google; у Vivo/Huawei и др. кнопка ничего не делала.
+                if (c.tts.activeEngine() == ai.loli.app.voice.AndroidTtsProvider.GOOGLE_TTS) TextButton(onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+                                .setPackage(ai.loli.app.voice.AndroidTtsProvider.GOOGLE_TTS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
                 }) { Text("Скачать голоса") }
                 TextButton(onClick = {
                     runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
@@ -306,7 +322,7 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     Slider(value = s.speechRate, onValueChange = { v -> scope.launch { c.settings.setSpeechRate(v) } }, valueRange = 0.5f..2f)
                     Text("Высота голоса", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = s.speechPitch, onValueChange = { v -> scope.launch { c.settings.setSpeechPitch(v) } }, valueRange = 0.5f..2f)
-                    TextButton(onClick = { scope.launch { c.tts.speak("Привет! Я ${s.assistantName}. Так звучит мой голос.") } }) { Text("Прослушать") }
+                    TextButton(onClick = { scope.launch { c.speech.speak("Привет! Я ${s.assistantName}. Так звучит мой голос.") } }) { Text("Прослушать") }
                 }
             }
         }

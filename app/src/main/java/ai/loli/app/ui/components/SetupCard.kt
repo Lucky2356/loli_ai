@@ -135,13 +135,33 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
             OemHints.openAutostart(context)
         } else null,
     )
-    // Русский голос: без него Лоли молчит или читает ответы чужим языком.
-    val ttsOn = c.settings.settings.collectAsStateWithLifecycle().value.ttsEnabled
-    val ru by c.tts.russianStatus.collectAsStateWithLifecycle()
-    LaunchedEffect(tick, ttsOn) { if (ttsOn) c.tts.recheck() }
-    val voiceStep = if (ttsOn && (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA)) {
-        SetupStep("voice", Icons.Rounded.VolumeUp, ai.loli.app.voice.RussianVoiceHelp.title(ru), ai.loli.app.voice.RussianVoiceHelp.hint(ru)) {
-            ai.loli.app.voice.RussianVoiceHelp.act(context, ru, c.tts.activeEngine())
+    // Русский голос: синтезатор телефона не всегда говорит по-русски (Vivo, Huawei, Xiaomi…) —
+    // тогда предлагаем встроенный «Голос Лоли». Пока он не скачан, Лоли отвечает только текстом.
+    val settingsNow = c.settings.settings.collectAsStateWithLifecycle().value
+    val ttsOn = settingsNow.ttsEnabled
+    var needsVoice by remember { mutableStateOf(false) }
+    val voiceState by c.loliVoiceModels.state(settingsNow.loliVoice).collectAsStateWithLifecycle()
+    LaunchedEffect(tick, ttsOn, settingsNow.voiceMode, voiceState) {
+        needsVoice = ttsOn && runCatching { c.speech.needsLoliVoice() }.getOrDefault(false)
+    }
+    val voiceStep = if (needsVoice) {
+        val progress = when (val st = voiceState) {
+            is ai.loli.app.voice.LoliVoiceModels.State.Downloading -> " — ${(st.progress * 100).toInt()}%"
+            ai.loli.app.voice.LoliVoiceModels.State.Installing -> " — устанавливаю"
+            is ai.loli.app.voice.LoliVoiceModels.State.Failed -> " — не получилось (${st.message}), нажмите ещё раз"
+            else -> ""
+        }
+        SetupStep(
+            "voice", Icons.Rounded.VolumeUp, "Скачать голос $name (~67 МБ)$progress",
+            "Синтезатор речи этого телефона не говорит по-русски как надо. Встроенный голос скачается один раз и будет работать без интернета.",
+        ) {
+            scope.launch {
+                if (c.loliVoiceModels.download(settingsNow.loliVoice)) {
+                    if (settingsNow.voiceMode == "system") c.settings.setVoiceMode("auto")
+                    needsVoice = false
+                    c.loliVoice.speak("Привет! Я $name. Теперь я говорю по-русски.")
+                }
+            }
         }
     } else null
     val todo = listOfNotNull(voiceStep) + baseTodo

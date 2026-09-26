@@ -188,8 +188,27 @@ class AppContainer(private val context: Context) {
             saveAutoEngine = { settings.setTtsAutoEngine(it) },
         ) }
     val tts: AndroidTtsProvider get() = ttsLazy.value
+    /** Встроенный «Голос Лоли»: скачиваемые русские голоса и офлайн-синтез. */
+    val loliVoiceModels = ai.loli.app.voice.LoliVoiceModels(context)
+    val loliVoice = ai.loli.app.voice.LoliVoice(
+        loliVoiceModels,
+        voiceId = { settings.settings.value.loliVoice },
+        rate = { settings.settings.value.speechRate },
+        pitch = { settings.settings.value.speechPitch },
+    )
+    /** Кто озвучивает ответы: встроенный голос или проверенный синтезатор телефона. */
+    val speech = ai.loli.app.voice.SpeechOutput(
+        system = { tts }, systemCreated = { ttsLazy.isInitialized() }, loli = loliVoice,
+        mode = {
+            when (settings.settings.value.voiceMode) {
+                "loli" -> ai.loli.app.voice.SpeechOutput.Mode.LOLI
+                "system" -> ai.loli.app.voice.SpeechOutput.Mode.SYSTEM
+                else -> ai.loli.app.voice.SpeechOutput.Mode.AUTO
+            }
+        },
+    )
     val voice: VoiceController by lazy {
-        VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope).also { v ->
+        VoiceController(engine, settings.settings, systemStt, offlineStt, speech, appScope).also { v ->
             val stopWords = ai.loli.app.voice.StopWordWatcher(context, voskEngine, voskModels)
             v.stopWatcher = { stopWords.awaitStop() }
             v.understands = { engine.understandsLocally(it) }
@@ -203,12 +222,6 @@ class AppContainer(private val context: Context) {
                 android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).resolveActivity(context.packageManager) != null
             }
         }
-    }
-    private val lazyTts = object : ai.loli.core.voice.TextToSpeechProvider {
-        override val isReady: Boolean get() = tts.isReady
-        override suspend fun speak(text: String) = tts.speak(text)
-        override fun stop() { if (ttsLazy.isInitialized()) tts.stop() }
-        override fun shutdown() { if (ttsLazy.isInitialized()) tts.shutdown() }
     }
 
     /** Завершается, когда сессия и настройки загружены (важно для холодного старта из WorkManager/Receiver). */

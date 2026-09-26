@@ -115,6 +115,10 @@ data class AppSettings(
     val ttsEngine: String = "",
     /** Синтезатор с русским, найденный Лоли автоматически. */
     val ttsAutoEngine: String = "",
+    /** Кто говорит: auto — встроенный «Голос Лоли», если скачан, иначе проверенный синтезатор телефона. */
+    val voiceMode: String = "auto",
+    /** Встроенный голос: irina, denis, dmitri, ruslan. */
+    val loliVoice: String = "irina",
     val wakeWordEnabled: Boolean = false,
     val dialogModeEnabled: Boolean = true,
     val sttMode: SttMode = SttMode.AUTO,
@@ -185,6 +189,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val voice = stringPreferencesKey("voice_name")
         val ttsEngine = stringPreferencesKey("tts_engine")
         val ttsAutoEngine = stringPreferencesKey("tts_auto_engine")
+        val voiceMode = stringPreferencesKey("voice_mode")
+        val loliVoice = stringPreferencesKey("loli_voice")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
@@ -252,6 +258,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             voiceName = p[K.voice].orEmpty(),
             ttsEngine = p[K.ttsEngine].orEmpty(),
             ttsAutoEngine = p[K.ttsAutoEngine].orEmpty(),
+            voiceMode = p[K.voiceMode] ?: "auto",
+            loliVoice = p[K.loliVoice] ?: "irina",
             wakeWordEnabled = p[K.wake] ?: false,
             dialogModeEnabled = p[K.dialog] ?: true,
             sttMode = SttMode.fromId(p[K.sttMode]) ?: if (p[K.legacyOfflineStt] == true) SttMode.OFFLINE else SttMode.AUTO,
@@ -353,6 +361,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     /** Смена движка сбрасывает голос: имена голосов у движков разные. */
     suspend fun setTtsEngine(v: String) = store.edit { it[K.ttsEngine] = v; it[K.voice] = "" }
     suspend fun setTtsAutoEngine(v: String) = store.edit { it[K.ttsAutoEngine] = v }
+    suspend fun setVoiceMode(v: String) = store.edit { it[K.voiceMode] = v }
+    suspend fun setLoliVoice(v: String) = store.edit { it[K.loliVoice] = v }
     suspend fun setVoiceStyle(pitch: Float, rate: Float) = store.edit { it[K.pitch] = pitch.coerceIn(0.5f, 2f); it[K.rate] = rate.coerceIn(0.5f, 2f) }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }

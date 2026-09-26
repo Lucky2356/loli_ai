@@ -30,3 +30,6 @@
 # Shizuku: команды оболочки через newProcess (вызывается рефлексией)
 -keepclassmembers class rikka.shizuku.Shizuku { *** newProcess(...); }
 -keep class rikka.shizuku.ShizukuRemoteProcess { *; }
+
+# sherpa-onnx (встроенный голос): нативный код читает поля конфигурации по именам через JNI.
+-keep class com.k2fsa.sherpa.onnx.** { *; }

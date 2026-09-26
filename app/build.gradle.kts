@@ -18,7 +18,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "1.7.1"
+val APP_VERSION = "1.8.0"
 
 val releaseKeystoreFile = config("LOLI_KEYSTORE_FILE")
 val hasReleaseSigning = releaseKeystoreFile.isNotEmpty() && file(releaseKeystoreFile).exists()
@@ -97,8 +97,9 @@ android {
             )
         }
         jniLibs {
-            // Нативные библиотеки (SQLCipher, Vosk) не сжимаем — так они грузятся напрямую из APK.
-            useLegacyPackaging = false
+            // Нативные библиотеки сжимаются в APK (синтезатор речи весит десятки мегабайт) —
+            // так обновление скачивается быстрее; при установке Android распаковывает их сам.
+            useLegacyPackaging = true
         }
     }
 
@@ -120,8 +121,28 @@ kotlin {
     }
 }
 
+// Встроенный «Голос Лоли»: офлайн-синтез sherpa-onnx (Apache-2.0). Библиотека берётся из служебного релиза
+// voices-v1 этого репозитория (туда её выкладывает .github/workflows/voices.yml) и проверяется по sha256.
+val sherpaVersion = "1.13.8"
+val sherpaSha256 = "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
+val sherpaAar: File = file("libs/sherpa-onnx-$sherpaVersion.aar")
+if (!sherpaAar.exists()) {
+    sherpaAar.parentFile.mkdirs()
+    val tmp = File(sherpaAar.path + ".part")
+    val url = "https://github.com/Lucky2356/loli_ai/releases/download/voices-v1/sherpa-onnx.aar"
+    logger.lifecycle("Скачиваю sherpa-onnx $sherpaVersion…")
+    uri(url).toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+    if (digest != sherpaSha256) {
+        tmp.delete()
+        throw GradleException("sherpa-onnx.aar: неверная контрольная сумма $digest")
+    }
+    tmp.renameTo(sherpaAar)
+}
+
 dependencies {
     implementation(project(":core"))
+    implementation(files(sherpaAar))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ktor.client.okhttp)
