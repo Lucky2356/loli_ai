@@ -25,6 +25,7 @@ class TestEnv(
     val time: FixedTimeSource = FixedTimeSource(Instant.parse("2026-09-25T09:00:00Z"), ZoneId.of("Europe/Moscow")),
     device: ai.loli.core.assistant.DeviceController = ai.loli.core.assistant.UnsupportedDevice,
     lockPolicy: () -> ai.loli.core.assistant.LockPolicy? = { null },
+    skillsFactory: ((FixedTimeSource) -> ai.loli.core.skills.Skills)? = null,
 ) {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { LoliDatabase.Schema.create(it) }
     val store = LocalStore(driver, time, Dispatchers.Unconfined)
@@ -43,6 +44,7 @@ class TestEnv(
         store.notes, store.tasks, store.reminders, store.memories, store.conversations, search, executor, time,
         settings = { settings }, aiProvider = { ai },
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
+        skills = skillsFactory?.invoke(time),
     )
 }
 

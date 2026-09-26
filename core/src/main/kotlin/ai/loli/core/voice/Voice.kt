@@ -73,8 +73,16 @@ object SpeechText {
             Regex("""(\d+)()\s?дн\.""") to Triple("день", "дня", "дней"),
             Regex("""(\d+)()\s?нед\.""") to Triple("неделя", "недели", "недель"),
             Regex("""(\d+)()\s?мес\.""") to Triple("месяц", "месяца", "месяцев"),
+            Regex("""(\d+)()\s?м/с""") to Triple("метр в секунду", "метра в секунду", "метров в секунду"),
+            Regex("""(\d+)()\s?%""") to Triple("процент", "процента", "процентов"),
         )
         var t = text
+        // «+12°» → «плюс 12 градусов», «−3°» → «минус 3 градуса».
+        t = Regex("""(?:(?<=^|[\s(…:])([+−-]))?(\d+)\s?°\s?[CС]?(?![\p{L}])""").replace(t) { m ->
+            val n = m.groupValues[2].toLongOrNull() ?: return@replace m.value
+            val sign = when (m.groupValues[1]) { "+" -> "плюс "; "−", "-" -> if (n == 0L) "" else "минус "; else -> "" }
+            "$sign$n ${ai.loli.core.assistant.RuFormat.plural(n, "градус", "градуса", "градусов")}"
+        }
         for ((re, forms) in units) {
             t = re.replace(t) { m ->
                 val whole = m.groupValues[1].trim()

@@ -54,6 +54,8 @@ class ActionExecutor(
     private val shopping: ai.loli.core.data.SqlShoppingRepository? = null,
     private val routines: ai.loli.core.data.SqlRoutineRepository? = null,
     private val secrets: ai.loli.core.data.SecretNoteStore? = null,
+    /** Погода и события календаря телефона для плана на день. */
+    private val agendaExtras: suspend (java.time.LocalDate) -> ai.loli.core.skills.AgendaExtras = { ai.loli.core.skills.AgendaExtras() },
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -530,11 +532,14 @@ class ActionExecutor(
         val dayReminders = reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == date }
         val spent = if (!date.isAfter(today)) expenses.between(date, date) else emptyList()
         val dayName = RuFormat.date(date, today)
-        if (dayTasks.isEmpty() && overdue.isEmpty() && dayReminders.isEmpty() && spent.isEmpty()) {
+        val extras = try { agendaExtras(date) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { ai.loli.core.skills.AgendaExtras() }
+        val weather = extras.weather?.let { "$it\n" } ?: ""
+        if (dayTasks.isEmpty() && overdue.isEmpty() && dayReminders.isEmpty() && spent.isEmpty() && extras.events.isEmpty()) {
             val undated = all.count { !it.done && it.dueDate == null }
-            return "На $dayName ничего не запланировано." + if (undated > 0) " Задач без срока: $undated." else ""
+            return weather + "На $dayName ничего не запланировано." + if (undated > 0) " Задач без срока: $undated." else ""
         }
-        val sb = StringBuilder("План на $dayName:")
+        val sb = StringBuilder(weather + "План на $dayName:")
+        if (extras.events.isNotEmpty()) sb.append("\nКалендарь:\n" + extras.events.joinToString("\n") { "• $it" })
         if (dayTasks.isNotEmpty()) sb.append("\nЗадачи:\n" + dayTasks.joinToString("\n") { t -> "• ${t.title}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") })
         if (overdue.isNotEmpty()) sb.append("\nПросрочено:\n" + overdue.joinToString("\n") { "! ${it.title}" })
         if (dayReminders.isNotEmpty()) sb.append("\nНапоминания:\n" + dayReminders.joinToString("\n") { "• ${it.text} — ${RuFormat.time(it.triggerAt.atZone(zone).toLocalTime())}" })

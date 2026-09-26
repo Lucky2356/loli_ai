@@ -95,13 +95,24 @@ object DevicePhrases {
         return total.takeIf { found && it > 0 }
     }
 
+    /** «на пасту 8 минут» → «паста»: название таймера — слова, кроме длительности. */
+    fun timerLabel(text: String): String {
+        val rest = digitize(text)
+            .replace(re("""\d+(?:\.\d+)?\s*(?:часов|часа|час|ч|минут|минуты|минуту|мин|секунд|секунды|секунду|сек)\b"""), " ")
+            .replace(re("""\b(?:минуту|час|на|для|и|по|через)\b"""), " ")
+            .replace(Regex("""\s+"""), " ").trim()
+        if (rest.length < 3) return ""
+        // «пасту» → «паста», «яйца» — как есть: винительный падеж частых слов.
+        return rest.split(' ').take(3).joinToString(" ") { w -> if (w.endsWith("у") && w.length > 3) w.dropLast(1) + "а" else w }
+    }
+
     fun parse(n: String, now: Instant, zone: ZoneId): AssistantAction.Device? {
         fun cmd(c: DeviceCommand) = AssistantAction.Device(c)
         val t = n.trim().trimEnd('.', '!', '?')
 
         // Таймер: «поставь таймер на 5 минут», «засеки 10 минут», «таймер полчаса».
         re("""^(?:поставь|заведи|запусти|включи|установи)?\s*(?:таймер|засеки|отсчитай)\s*(?:на\s+)?(.+)$""").find(t)?.let { m ->
-            duration(m.groupValues[1])?.let { return cmd(DeviceCommand.Timer(it)) }
+            duration(m.groupValues[1])?.let { return cmd(DeviceCommand.Timer(it, timerLabel(m.groupValues[1]))) }
         }
         if (re("""^(?:включи|запусти)\s+секундомер""").containsMatchIn(t) || t == "секундомер") return cmd(DeviceCommand.Stopwatch)
 

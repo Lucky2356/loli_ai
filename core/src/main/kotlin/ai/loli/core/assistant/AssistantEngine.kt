@@ -33,6 +33,10 @@ data class AssistantSettings(
     val dialogMode: Boolean = true,
     /** Телефон заблокирован: облачному AI не передаются память и записи пользователя. */
     val locked: Boolean = false,
+    /** Как зовут пользователя («называй меня …»). */
+    val userName: String? = null,
+    /** Город пользователя — для погоды, если геолокация недоступна. */
+    val city: String? = null,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -59,6 +63,8 @@ data class AssistantReply(
     val speakLanguage: String? = null,
     /** Начать длинную диктовку заметки: голос слушает с большими паузами до «готово». */
     val dictation: Boolean = false,
+    /** Для ответа нужно разрешение — приложение предложит его выдать. */
+    val permission: ai.loli.core.skills.Permission? = null,
 )
 
 /** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
@@ -86,6 +92,8 @@ class AssistantEngine(
     private val routines: suspend () -> List<ai.loli.core.model.Routine> = { emptyList() },
     private val shoppingItems: suspend () -> List<ai.loli.core.model.ShoppingItem> = { emptyList() },
     private val special: SpecialCommands = SpecialCommands(),
+    /** Погода, курсы, новости, сообщения, радио, игры… */
+    val skills: ai.loli.core.skills.Skills? = null,
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
@@ -141,16 +149,43 @@ class AssistantEngine(
     suspend fun endDialog() = mutex.withLock {
         context.dialogMode = false
         context.appendMode = false
+        skills?.reset()
     }
 
     /** Понимает ли Лоли фразу без AI — чтобы из нескольких вариантов распознавания выбрать осмысленный. */
-    fun understandsLocally(text: String): Boolean =
-        runCatching { localParser.parse(stripWakeWord(text, settings().assistantName), time.now(), time.zone()) != null }.getOrDefault(false)
+    fun understandsLocally(text: String): Boolean = runCatching {
+        val t = stripWakeWord(text, settings().assistantName)
+        localParser.parse(t, time.now(), time.zone()) != null || skills?.recognizes(t, settings().assistantName) == true
+    }.getOrDefault(false)
+
+    /** Облачный AI для навыков (пересказ экрана, сказки); null — AI не подключён или недоступен. */
+    private val skillAi: ai.loli.core.skills.SkillAi = { system, user, maxTokens ->
+        if (!settings().useAI) null else try {
+            aiProvider()?.complete(AIRequest(system = system, messages = listOf(ChatMessage(ChatMessage.Role.USER, user)), jsonMode = false, maxTokens = maxTokens))
+                ?.text?.trim()?.also { lastAiFailure = null }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AIException) {
+            lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
+            null
+        }
+    }
+
+    private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? =
+        when (val out = skills?.handle(text, cfg, skillAi)) {
+            is ai.loli.core.skills.SkillOutcome.Say -> AssistantReply(
+                out.text, expectFollowUp = out.followUp, awaitingAnswer = out.followUp, permission = out.permission, speakLanguage = out.speakLanguage,
+            )
+            is ai.loli.core.skills.SkillOutcome.Run -> execute(out.plan, usedAI = false, offline = false, name = cfg.assistantName)
+            null -> null
+        }
 
     /** Подтверждение/отмена кнопкой в UI. */
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
 
     private suspend fun process(text: String, cfg: AssistantSettings): AssistantReply {
+        // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него.
+        if (skills?.busy == true) runSkills(text, cfg)?.let { return it }
         // 1. Ожидаем подтверждение опасного действия.
         context.pendingConfirmation?.let { pending ->
             when {
@@ -213,6 +248,8 @@ class AssistantEngine(
         }
         special.translation(text)?.let { return translate(it, cfg) }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
+        // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
+        runSkills(text, cfg)?.let { return it }
         special.boughtItems(text)?.let { bought ->
             val open = shoppingItems().filter { !it.done }
             val matched = bought.filter { b ->
@@ -381,6 +418,7 @@ class AssistantEngine(
         val memoryItems = if (cfg.locked) emptyList() else memories.all().take(25)
         val system = PromptBuilder.build(
             cfg.assistantName, time.now(), time.zone(), memoryItems, candidates, context.focus, context.topic, context.dialogMode,
+            userName = cfg.userName,
         )
         val request = AIRequest(system = system, messages = context.messages + ChatMessage(ChatMessage.Role.USER, text))
         val response = provider.complete(request)

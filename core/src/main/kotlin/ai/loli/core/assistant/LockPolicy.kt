@@ -19,6 +19,30 @@ data class LockPolicy(
     /** Открывать приложения, сайты, камеру, настройки. */
     val apps: Boolean = false,
 ) {
+    /** Уровень для простых настроек: «ничего», «только безопасное», «всё» или своя настройка. */
+    enum class Level { NONE, SAFE, ALL, CUSTOM }
+
+    val level: Level get() = when (this) {
+        NONE -> Level.NONE
+        SAFE -> Level.SAFE
+        ALL -> Level.ALL
+        else -> Level.CUSTOM
+    }
+
+    companion object {
+        val NONE = LockPolicy(create = false, basicDevice = false, calls = false, view = false, edit = false, apps = false)
+        /** По умолчанию: записать, таймер, погода, музыка, звонки — но не показывать личное. */
+        val SAFE = LockPolicy()
+        val ALL = LockPolicy(create = true, basicDevice = true, calls = true, view = true, edit = true, apps = true)
+
+        fun of(level: Level): LockPolicy? = when (level) {
+            Level.NONE -> NONE
+            Level.SAFE -> SAFE
+            Level.ALL -> ALL
+            Level.CUSTOM -> null
+        }
+    }
+
     fun allows(action: AssistantAction): Boolean = when (action) {
         is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote,

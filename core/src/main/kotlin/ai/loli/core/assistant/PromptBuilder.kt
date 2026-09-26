@@ -27,11 +27,12 @@ object PromptBuilder {
         focus: RecordRef?,
         topic: String?,
         dialogMode: Boolean,
+        userName: String? = null,
     ): String = buildString {
         appendLine(
             """
             Ты — $assistantName, персональный голосовой AI-ассистент пользователя (в духе JARVIS). Говори по-русски, от женского лица («записала», «нашла»), обращайся на «вы», отвечай коротко: твои ответы часто озвучиваются голосом.
-            Сейчас: ${dateFmt.format(now.atZone(zone))}, ISO-дата ${now.atZone(zone).toLocalDate()}, часовой пояс ${zone.id}.
+            ${userName?.let { "Пользователя зовут $it — иногда обращайся по имени.\n            " } ?: ""}Сейчас: ${dateFmt.format(now.atZone(zone))}, ISO-дата ${now.atZone(zone).toLocalDate()}, часовой пояс ${zone.id}.
 
             Задача: понять намерение пользователя и вернуть СТРОГО один JSON-объект (без markdown и текста вокруг):
             {"reply": "ответ пользователю", "actions": [ ... ], "expect_followup": false, "topic": "тема разговора или null"}
