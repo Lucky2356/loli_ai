@@ -22,7 +22,8 @@ object AIProviderFactory {
         val usable = complete.filter { it.isSecureEndpoint }
         if (usable.isEmpty()) throw if (complete.isNotEmpty()) AIException.InsecureEndpoint() else AIException.NotConfigured()
         val providers = usable.map { create(http, it) }
-        return providers.singleOrNull() ?: ChainAIProvider(providers)
+        // Даже один провайдер оборачиваем в цепочку: в ней повтор при кратковременных сбоях.
+        return ChainAIProvider(providers)
     }
 
     /** Список моделей, доступных с ключом (модель в настройках для этого не нужна). */

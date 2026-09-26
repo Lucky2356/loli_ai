@@ -16,9 +16,11 @@ internal suspend fun HttpResponse.throwIfError() {
     if (code in 200..299) return
     val body = runCatching { bodyAsText() }.getOrDefault("")
     val detail = Redactor.redact(extractErrorMessage(body)).take(300)
-    throw when (code) {
-        401, 403 -> AIException.Unauthorized(detail.ifBlank { "HTTP $code" })
-        429 -> AIException.RateLimited()
+    // Gemini и некоторые другие сервисы отвечают на неверный ключ кодом 400 — это тоже «ключ не принят».
+    val badKey = Regex("""api[ _-]?key|API_KEY_INVALID|invalid[_ ]?(api[_ ]?)?key|incorrect api key|authentication""", RegexOption.IGNORE_CASE).containsMatchIn(detail)
+    throw when {
+        code == 401 || code == 403 || (code == 400 && badKey) -> AIException.Unauthorized(detail.ifBlank { "HTTP $code" })
+        code == 429 -> AIException.RateLimited()
         else -> AIException.Server(code, detail.ifBlank { "без описания" })
     }
 }

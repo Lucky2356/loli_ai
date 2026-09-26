@@ -49,7 +49,7 @@ sealed class AIException(message: String, cause: Throwable? = null) : Exception(
     class Unauthorized(detail: String) : AIException("API-ключ не принят провайдером ($detail). Проверьте ключ в настройках.")
     class RateLimited : AIException("Превышен лимит запросов к AI. Попробуйте чуть позже.")
     class Network(cause: Throwable?) : AIException("Нет связи с AI-сервисом. Проверьте интернет.", cause)
-    class Server(code: Int, detail: String) : AIException("AI-сервис вернул ошибку $code: $detail")
+    class Server(val code: Int, detail: String) : AIException("AI-сервис вернул ошибку $code: $detail")
     class InvalidResponse(detail: String) : AIException("AI вернул ответ в неожиданном формате: $detail")
     class Refused : AIException("Модель отказалась отвечать на этот запрос.")
     class InsecureEndpoint : AIException("Незашифрованный адрес (http://) разрешён только для серверов в локальной сети. Используйте https://.")
@@ -114,9 +114,12 @@ class AIConfig(
     val type: AIProviderType,
     endpoint: String?,
     model: String?,
-    val apiKey: String,
+    apiKey: String,
     val embeddingsEnabled: Boolean = true,
 ) {
+    /** Ключ без мусора, который часто попадает при копировании: пробелы, переносы строк, кавычки, «Bearer ». */
+    val apiKey: String = cleanApiKey(apiKey)
+
     val endpoint: String = (endpoint?.takeIf { it.isNotBlank() } ?: type.defaultEndpoint).trim().trimEnd('/')
     val model: String = (model?.takeIf { it.isNotBlank() } ?: type.defaultModel).trim()
 
@@ -131,6 +134,15 @@ class AIConfig(
     }
 
     val isComplete: Boolean get() = model.isNotBlank() && endpoint.isNotBlank() && (apiKey.isNotBlank() || type == AIProviderType.CUSTOM)
+
+    companion object {
+        fun cleanApiKey(raw: String): String {
+            var k = raw.trim().trim('"', '\'', '«', '»', '`').trim()
+            k = k.removePrefix("Bearer ").removePrefix("bearer ").trim()
+            k = k.removePrefix("Authorization:").trim().removePrefix("Bearer ").trim()
+            return k.filterNot { it.isWhitespace() || it == '\u200B' || it == '\uFEFF' }
+        }
+    }
 
     override fun toString(): String = "AIConfig(type=${type.id}, endpoint=$endpoint, model=$model, apiKey=${if (apiKey.isBlank()) "<empty>" else "***"})"
 }

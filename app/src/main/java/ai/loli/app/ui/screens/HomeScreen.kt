@@ -268,7 +268,10 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
     val ui = voiceUi(voice, settings.assistantName)
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
-    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.lastIndex) }
+    // Разговоры по дням: над каждым днём — «Сегодня», «Вчера» или дата.
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    val byDay = remember(history) { history.groupBy { it.createdAt.atZone(zone).toLocalDate() } }
+    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size + byDay.size - 1) }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -299,8 +302,12 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
                     }
                 }
             }
-            items(history, key = { it.id }) { m ->
-                Box(Modifier.animateItem()) { Message(m.content, m.role == MessageRole.USER) }
+            byDay.forEach { (day, messages) ->
+                item(key = "day-$day") { DayHeader(day) }
+                items(messages, key = { it.id }) { m ->
+                    val time = remember(m.id) { "%02d:%02d".format(m.createdAt.atZone(zone).hour, m.createdAt.atZone(zone).minute) }
+                    Box(Modifier.animateItem()) { Message(m.content, m.role == MessageRole.USER, time) }
+                }
             }
             reply?.let { r ->
                 if (r.awaitingConfirmation || r.provider != null || (r.offline && settings.useAI)) {
@@ -313,7 +320,7 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
                                 }
                             }
                             val meta = when {
-                                r.offline && settings.useAI -> "AI недоступен — выполнено на устройстве"
+                                r.offline && settings.useAI -> "AI не ответил${r.aiError?.let { " ($it)" } ?: ""} — выполнено на устройстве. Подробности: Настройки → AI"
                                 r.provider != null -> "Ответил ${r.provider}"
                                 else -> null
                             }
@@ -367,9 +374,33 @@ private fun Suggestion(text: String, onClick: () -> Unit) {
     }
 }
 
+/** Подпись дня над сообщениями: «Сегодня», «Вчера», «Пятница, 12 сентября». */
 @Composable
-private fun Message(text: String, mine: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+private fun DayHeader(day: java.time.LocalDate) {
+    val today = java.time.LocalDate.now()
+    val ru = java.util.Locale("ru")
+    val text = when (day) {
+        today -> "Сегодня"
+        today.minusDays(1) -> "Вчера"
+        else -> {
+            val pattern = if (day.year == today.year) "EEEE, d MMMM" else "d MMMM yyyy"
+            java.time.format.DateTimeFormatter.ofPattern(pattern, ru).format(day).replaceFirstChar { it.uppercase() }
+        }
+    }
+    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Text(
+            text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(groupColor()).padding(horizontal = 12.dp, vertical = 5.dp),
+        )
+    }
+}
+
+@Composable
+private fun Message(text: String, mine: Boolean, time: String? = null) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
+    ) {
         if (mine) {
             Text(
                 text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimary,
@@ -383,13 +414,24 @@ private fun Message(text: String, mine: Boolean) {
                     .background(groupColor()).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
+        time?.let {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+        }
     }
 }
 
 @Composable
 private fun InputBar(value: String, onChange: (String) -> Unit, name: String, active: Boolean, autoFocus: Boolean = false, onSend: () -> Unit, onMic: () -> Unit) {
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
-    LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focus.requestFocus() } }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(autoFocus) {
+        if (autoFocus) {
+            kotlinx.coroutines.delay(250) // окно чата ещё выезжает
+            runCatching { focus.requestFocus() }
+            keyboard?.show()
+        }
+    }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
         Row(
             Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(groupColor()).padding(start = 18.dp, end = 4.dp),

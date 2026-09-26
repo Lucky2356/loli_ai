@@ -77,19 +77,38 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
             return@callbackFlow
         }
         var done = false
+        // Vosk отдаёт результат после каждой короткой паузы. Склеиваем части, пока пауза не станет длиннее
+        // выбранной в настройках, — иначе фраза «купи хлеб… и молоко» обрывалась бы на полуслове.
+        val parts = ArrayList<String>()
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val finish = Runnable {
+            if (!done) {
+                done = true
+                trySend(SpeechEvent.Final(parts.joinToString(" ")))
+                close()
+            }
+        }
+        val waitAfterResult = (options.silenceMillis - VOSK_ENDPOINT_MS).coerceAtLeast(300L)
         service.startListening(object : RecognitionListener {
             private var started = false
             override fun onPartialResult(hypothesis: String?) {
                 voskText(hypothesis, "partial").takeIf { it.isNotEmpty() }?.let {
                     if (!started) { started = true; trySend(SpeechEvent.SpeechStarted) }
-                    trySend(SpeechEvent.Partial(it))
+                    handler.removeCallbacks(finish) // человек продолжает говорить
+                    trySend(SpeechEvent.Partial((parts + it).joinToString(" ")))
                 }
             }
             override fun onResult(hypothesis: String?) {
                 val text = voskText(hypothesis, "text")
-                if (text.isNotEmpty() && !done) { done = true; trySend(SpeechEvent.Final(text)); close() }
+                if (text.isEmpty() || done) return
+                parts += text
+                handler.removeCallbacks(finish)
+                handler.postDelayed(finish, waitAfterResult)
             }
-            override fun onFinalResult(hypothesis: String?) = onResult(hypothesis)
+            override fun onFinalResult(hypothesis: String?) {
+                voskText(hypothesis, "text").takeIf { it.isNotEmpty() && !done }?.let { parts += it }
+                if (parts.isNotEmpty()) { handler.removeCallbacks(finish); finish.run() }
+            }
             override fun onError(exception: Exception?) {
                 if (done) return
                 done = true
@@ -97,12 +116,14 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
             }
             override fun onTimeout() {
                 if (done) return
+                if (parts.isNotEmpty()) { handler.removeCallbacks(finish); finish.run(); return }
                 done = true
                 trySend(SpeechEvent.Error(SpeechError.TIMEOUT, "Не расслышала.")); close()
             }
         }, TIMEOUT_MS)
         trySend(SpeechEvent.Ready)
         awaitClose {
+            handler.removeCallbacks(finish)
             runCatching { service.stop() }
             runCatching { service.shutdown() }
             runCatching { recognizer?.close() }
@@ -111,6 +132,8 @@ class VoskSpeechProvider(private val engine: VoskEngine, private val models: Vos
 
     companion object {
         const val SAMPLE_RATE = 16000f
-        private const val TIMEOUT_MS = 10_000
+        private const val TIMEOUT_MS = 15_000
+        /** Vosk сам ждёт около полусекунды тишины, прежде чем выдать результат. */
+        private const val VOSK_ENDPOINT_MS = 500L
     }
 }

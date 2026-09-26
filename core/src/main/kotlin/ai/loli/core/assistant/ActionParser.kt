@@ -266,7 +266,9 @@ class ActionParser(
 
         /** Достаёт JSON-объект из ответа модели (допускает обёртку ```json и текст вокруг). */
         fun extractJsonObject(raw: String): JsonObject? {
-            val text = raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+            // Рассуждающие модели (DeepSeek R1, Qwen и др.) пишут размышления в <think>…</think> перед ответом.
+            val text = raw.replace(Regex("""(?s)<think>.*?</think>"""), "").trim()
+                .removePrefix("```json").removePrefix("```JSON").removePrefix("```").removeSuffix("```").trim()
             runCatching { return LoliJson.parseToJsonElement(text) as? JsonObject }
             val start = text.indexOf('{')
             val end = text.lastIndexOf('}')

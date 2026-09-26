@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -137,7 +138,9 @@ class UpdateManager(private val context: Context) {
                 ?: return null
             return UpdateInfo(
                 version = version,
-                apkUrl = asset["browser_download_url"]?.jsonPrimitive?.contentOrNull ?: return null,
+                // Скачиваем только с GitHub — никаких сторонних адресов.
+                apkUrl = asset["browser_download_url"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.startsWith("https://github.com/") || it.startsWith("https://objects.githubusercontent.com/") } ?: return null,
                 size = asset["size"]?.jsonPrimitive?.longOrNull ?: 0,
                 notes = json["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 sha256 = asset["digest"]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase(),
@@ -189,7 +192,10 @@ class UpdateManager(private val context: Context) {
 
     /** Файл должен совпасть с контрольной суммой из GitHub — иначе он повреждён или подменён. */
     private fun verify(file: File, info: UpdateInfo) {
-        val expected = info.sha256 ?: return
+        val expected = info.sha256 ?: run {
+            file.delete()
+            error("у файла обновления нет контрольной суммы — установка отменена")
+        }
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buf = ByteArray(64 * 1024)
@@ -203,6 +209,36 @@ class UpdateManager(private val context: Context) {
         if (actual != expected) {
             file.delete()
             error("контрольная сумма не совпала — файл повреждён или подменён, установка отменена")
+        }
+        verifyPackage(file)
+    }
+
+    /**
+     * Вторая линия защиты: внутри APK должна быть именно Лоли, подписанная тем же ключом, и версия новее текущей.
+     * (Android и сам не даст поставить чужую подпись поверх, но так подмена обнаруживается ещё до установки.)
+     */
+    @Suppress("DEPRECATION")
+    private fun verifyPackage(file: File) {
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val archive = pm.getPackageArchiveInfo(file.absolutePath, flags)
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        fun certs(info: android.content.pm.PackageInfo?): Set<String> {
+            val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info?.signingInfo?.apkContentsSigners else info?.signatures
+            return sigs.orEmpty().map { sig ->
+                java.security.MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+            }.toSet()
+        }
+        val problem = when {
+            archive == null -> "файл обновления не является приложением"
+            archive.packageName != context.packageName -> "в файле другое приложение"
+            certs(archive).isEmpty() || certs(archive) != certs(installed) -> "файл подписан другим ключом"
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(archive) <= androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(installed) -> "версия в файле не новее установленной"
+            else -> null
+        }
+        if (problem != null) {
+            file.delete()
+            error("$problem — установка отменена")
         }
     }
 

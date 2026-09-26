@@ -1,0 +1,87 @@
+package ai.loli.app.ui.screens
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.loli.app.AppContainer
+import ai.loli.app.ui.components.Group
+import ai.loli.app.ui.components.GroupDivider
+import ai.loli.app.ui.components.Hint
+import ai.loli.app.ui.components.LoliScreen
+import ai.loli.app.ui.components.RowItem
+import ai.loli.app.ui.components.SectionLabel
+
+private data class Ability(val title: String, val examples: String)
+
+private val LOCAL = listOf(
+    Ability("Расходы и доходы", "«Потратила 850 на продукты», «зарплата пришла 80000», «сколько я потратила на кафе в этом месяце», «на что больше всего трачу»"),
+    Ability("Задачи и списки", "«Нужно сходить в зал в понедельник», «купи молоко, яйца и хлеб», «отметь задачу купить хлеб выполненной», «какие задачи на сегодня»"),
+    Ability("Напоминания и будильники", "«Напомни через час выпить воды», «каждый понедельник в 9 напоминай про планёрку», «разбуди меня в 7:30», «таймер на 5 минут»"),
+    Ability("Заметки, идеи, память", "«Запиши заметку…», «у меня идея…», «добавь к идее…», «запомни, что я не ем сладкое», «найди всё про отпуск»"),
+    Ability("Долги, накопления, дни рождения", "«Саша должен мне 500», «отложил 2000 на ремонт», «у Маши день рождения 12 октября»"),
+    Ability("Телефон", "Звонки и сообщения, открыть приложение, фонарик, громкость, яркость, музыка, камера, скриншот, маршрут, календарь, «не беспокоить»"),
+    Ability("Быстрые ответы", "Время и дата, время в других городах, сколько дней до даты, калькулятор и проценты, перевод единиц, монетка и кубик"),
+    Ability("Сложные фразы", "«Потратил 200 на кофе, нужно в понедельник в зал, забрать дочь из садика» — Лоли разложит на расход и задачи"),
+)
+
+private val AI = listOf(
+    Ability("Любые вопросы", "Объяснить, посоветовать, сравнить, «почему небо голубое», «как приготовить плов», «что подарить маме»"),
+    Ability("Тексты", "Написать поздравление, письмо, пост, сократить или исправить текст, перевести на другой язык"),
+    Ability("Свободная речь", "Команды любыми словами, даже непривычными: AI поймёт намерение и выполнит те же действия, что и локально"),
+    Ability("Мозговой штурм", "«Давай придумаем приложение для склада» — AI развивает идею и сам дописывает её в заметку"),
+    Ability("Планы и анализ", "Составить план на неделю, разобрать расходы, предложить, где сэкономить, спланировать поездку"),
+    Ability("Поиск по смыслу", "Находит записи не по словам, а по смыслу: «что я хотела подарить маме» найдёт заметку «шарф для мамы»"),
+)
+
+/** «Что умеет Лоли»: что работает на устройстве, а что добавляет AI. */
+@Composable
+fun CapabilitiesPage(c: AppContainer, onBack: () -> Unit, openAi: () -> Unit) {
+    val s by c.settings.settings.collectAsStateWithLifecycle()
+    LoliScreen(title = "Что умеет ${s.assistantName}", subtitle = "На устройстве и с AI", onBack = onBack) {
+        item(key = "local") {
+            SectionLabel("Без интернета, на устройстве")
+            AbilityGroup(LOCAL, Icons.Rounded.Bolt)
+            Hint("Всё это работает всегда — даже без интернета и без AI. Данные не покидают телефон.")
+        }
+        item(key = "ai") {
+            SectionLabel("С подключённым AI — дополнительно")
+            AbilityGroup(AI, Icons.Rounded.AutoAwesome)
+            Hint(
+                if (s.useAI) "AI включён. Если он недоступен (нет сети, лимит), команды всё равно выполнятся на устройстве — под ответом будет видна причина."
+                else "AI выключен. Подключите ключ любого провайдера — Лоли станет полноценным AI-помощником, а команды продолжат работать и без сети.",
+            )
+            Group(Modifier.padding(top = 4.dp)) {
+                RowItem(title = if (s.useAI) "Настройки AI" else "Подключить AI", icon = Icons.Rounded.AutoAwesome, chevron = true, onClick = openAi)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AbilityGroup(items: List<Ability>, icon: ImageVector) {
+    Group {
+        items.forEachIndexed { i, a ->
+            if (i > 0) GroupDivider(inset = 52.dp)
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.Top) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 2.dp))
+                Column(Modifier.padding(start = 14.dp)) {
+                    Text(a.title, style = MaterialTheme.typography.titleSmall)
+                    Text(a.examples, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                }
+            }
+        }
+    }
+}

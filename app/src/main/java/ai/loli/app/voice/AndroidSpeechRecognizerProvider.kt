@@ -130,9 +130,10 @@ class AndroidSpeechRecognizerProvider(private val context: Context) : SpeechReco
             override fun onResults(results: Bundle?) {
                 if (finished) return
                 finished = true
-                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull { it.isNotBlank() }.orEmpty()
+                val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().filter { it.isNotBlank() }
+                val text = all.firstOrNull().orEmpty()
                 if (text.isBlank()) trySend(SpeechEvent.Error(SpeechError.NO_MATCH, "Не расслышала. Попробуйте ещё раз."))
-                else trySend(SpeechEvent.Final(text))
+                else trySend(SpeechEvent.Final(text, all.drop(1)))
                 close()
             }
 
@@ -148,13 +149,15 @@ class AndroidSpeechRecognizerProvider(private val context: Context) : SpeechReco
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, options.languageTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, options.languageTag)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, options.partialResults)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             if (options.preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            // Даём договорить: пауза в 2 секунды не обрывает фразу.
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            // Даём договорить: пауза короче выбранной в настройках не обрывает фразу.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, options.silenceMillis)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, (options.silenceMillis * 3 / 4))
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+            // Подсказки распознавателю (Android 13+): имя ассистента и частые слова команд распознаются точнее.
+            if (options.biasing.isNotEmpty()) putStringArrayListExtra("android.speech.extra.BIASING_STRINGS", ArrayList(options.biasing))
         }
         try {
             recognizer.startListening(intent)

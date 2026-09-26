@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -108,6 +109,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 enum class SettingsPage(val route: String, val title: String, val subtitle: String, val icon: ImageVector) {
+    CAPABILITIES("settings/capabilities", "Что умеет Лоли", "Что работает на устройстве, а что — с AI", Icons.Rounded.Lightbulb),
     ASSISTANT("settings/assistant", "Ассистент", "Имя, диалог, голос ответов", Icons.Rounded.Face),
     VOICE("settings/voice", "Голос и распознавание", "Микрофон, офлайн-модель, «Лоли» в фоне", Icons.Rounded.Mic),
     AI("settings/ai", "AI-провайдеры", "Несколько сервисов с автоматическим резервом", Icons.Rounded.AutoAwesome),
@@ -137,6 +139,7 @@ fun SettingsScreen(
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
         SettingsPage.PERMISSIONS -> PermissionsPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
+        SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
     }
 }
 
@@ -302,6 +305,16 @@ private fun VoicePage(c: AppContainer, onBack: () -> Unit) {
                 if (services.isEmpty()) "Системных сервисов распознавания не найдено — используется офлайн-модель. Для лучшего качества установите приложение Google."
                 else "Найдено на телефоне: ${services.joinToString()}. Если один не работает, ${s.assistantName} сама переключится на другой или на офлайн-модель.",
             )
+        }
+        item(key = "pause") {
+            SectionLabel("Пауза до конца фразы")
+            Group {
+                ai.loli.app.settings.SpeechPause.entries.forEachIndexed { i, p ->
+                    if (i > 0) GroupDivider(inset = 52.dp)
+                    RadioRow(p.title, p.hint, s.speechPause == p) { scope.launch { c.settings.setSpeechPause(p) } }
+                }
+            }
+            Hint("Если ${s.assistantName} перебивает или отвечает, пока вы ещё говорите, — выберите «Длинная». Оборванную фразу («купи хлеб и…») ${s.assistantName} дослушает сама.")
         }
         item(key = "model") {
             SectionLabel("Офлайн-модель русской речи")

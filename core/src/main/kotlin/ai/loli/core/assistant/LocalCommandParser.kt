@@ -945,7 +945,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val date = dates.parse(original, today).spec.date?.takeIf { !it.isAfter(today) } ?: (prev as? AssistantAction.CreateExpense)?.date ?: today
         // «Заправился на 2500» — описание берём из глагола.
         val finalDesc = desc.ifEmpty { VERB_DESCRIPTIONS.entries.firstOrNull { (k, _) -> tokens.any { it.norm.startsWith(k) } }?.value.orEmpty() }
-        val category = ExpenseCategories.categorize(finalDesc.ifEmpty { original })
+        val byDesc = ExpenseCategories.categorize(finalDesc.ifEmpty { original })
+        // «Перевёл маме 5000», «скинула Оле 300» — это перевод, даже если описание — просто имя.
+        val category = if (byDesc == ExpenseCategories.OTHER && tokens.any { t -> TRANSFER_VERBS.any { t.norm.startsWith(it) } }) "Переводы" else byDesc
         return plan(AssistantAction.CreateExpense(Money.toMinor(amount), currency, category, finalDesc, date))
     }
 
@@ -1059,6 +1061,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             "дочь", "ночь", "речь", "мощь", "помощь", "есть", "быть", "мать", "путь", "часть", "власть", "память",
             "новость", "радость", "сеть", "кровать", "тетрадь", "площадь", "сети", "пути", "дети", "гости", "новости", "части",
         )
+        private val TRANSFER_VERBS = listOf("перевел", "перевела", "перевёл", "скинул", "закинул", "отправил", "отправила")
         private val VERB_DESCRIPTIONS = mapOf("заправ" to "бензин", "залил" to "бензин", "проездил" to "проезд")
         private val RU_MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
 

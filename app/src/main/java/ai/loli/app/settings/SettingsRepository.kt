@@ -52,6 +52,17 @@ enum class KeyTrigger(val id: String, val title: String, val hint: String) {
     }
 }
 
+/** Пауза, после которой фраза считается законченной. */
+enum class SpeechPause(val id: String, val title: String, val hint: String, val millis: Long) {
+    SHORT("short", "Короткая", "Быстрый ответ, для коротких команд", 1200),
+    NORMAL("normal", "Обычная", "Можно чуть задуматься посреди фразы", 2000),
+    LONG("long", "Длинная", "Для длинных фраз и неторопливой речи", 3500);
+
+    companion object {
+        fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: NORMAL
+    }
+}
+
 /** Цвет Лоли: акцент интерфейса и сферы. [glow] — второй цвет сферы (переливы, прослушивание). */
 enum class AccentColor(val id: String, val title: String, val light: Long, val dark: Long, val glow: Long) {
     INDIGO("indigo", "Индиго", 0xFF6366F1, 0xFF8B8DFF, 0xFF2DD4BF),
@@ -103,6 +114,8 @@ data class AppSettings(
     val wakeWordEnabled: Boolean = false,
     val dialogModeEnabled: Boolean = true,
     val sttMode: SttMode = SttMode.AUTO,
+    /** Сколько ждать тишины, прежде чем считать фразу законченной. */
+    val speechPause: SpeechPause = SpeechPause.NORMAL,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
     val accent: AccentColor = AccentColor.INDIGO,
@@ -118,6 +131,8 @@ data class AppSettings(
     val keyTrigger: KeyTrigger = KeyTrigger.NONE,
     /** Вход в приложение по отпечатку/лицу/PIN-коду телефона. */
     val appLock: Boolean = false,
+    /** Скрывать содержимое в «недавних» и запрещать скриншоты и запись экрана. */
+    val secureScreen: Boolean = false,
     val supabaseUrlOverride: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
@@ -157,6 +172,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val theme = stringPreferencesKey("theme")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val accent = stringPreferencesKey("accent")
+        val speechPause = stringPreferencesKey("speech_pause")
+        val secureScreen = booleanPreferencesKey("secure_screen")
         val pitch = floatPreferencesKey("speech_pitch")
         val voice = stringPreferencesKey("voice_name")
         val autoUpdate = booleanPreferencesKey("auto_update")
@@ -230,6 +247,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             themeMode = ThemeMode.fromId(p[K.theme]),
             dynamicColor = p[K.dynamicColor] ?: false,
             accent = AccentColor.fromId(p[K.accent]),
+            speechPause = SpeechPause.fromId(p[K.speechPause]),
+            secureScreen = p[K.secureScreen] ?: false,
             autoUpdate = p[K.autoUpdate] ?: true,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
             lockPolicy = ai.loli.core.assistant.LockPolicy(
@@ -314,6 +333,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setDynamicColor(v: Boolean) = store.edit { it[K.dynamicColor] = v }
     /** Свой цвет Лоли выключает «цвета обоев» — иначе выбор не был бы виден. */
     suspend fun setAccent(v: AccentColor) = store.edit { it[K.accent] = v.id; it[K.dynamicColor] = false }
+    suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
+    suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }
     suspend fun setVoiceName(v: String) = store.edit { it[K.voice] = v }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }

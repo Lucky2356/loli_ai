@@ -88,6 +88,11 @@ class AssistActivity : ComponentActivity() {
         if (savedInstanceState == null) startListening++
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle()
+            // Защита от скриншотов, записи экрана и показа в «недавних» — по настройке пользователя.
+            androidx.compose.runtime.LaunchedEffect(settings.secureScreen) {
+                if (settings.secureScreen) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
             LoliTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
                 AssistPanel(
                     container, startListening, onClose = { finish() },

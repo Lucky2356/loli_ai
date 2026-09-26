@@ -75,14 +75,7 @@ class HomeViewModel(val c: AppContainer) : ViewModel() {
 /** Проверка подключения к конкретному AI-провайдеру коротким запросом. */
 suspend fun testAiConnection(c: AppContainer, type: AIProviderType): Result<String> = runCatching {
     val cfg = c.aiConfig(type)
-    val provider = AIProviderFactory.create(c.http, cfg)
-    val response = provider.complete(
-        AIRequest(
-            system = "Ты тестируешь подключение. Ответь одним словом: готово.",
-            messages = listOf(ChatMessage(ChatMessage.Role.USER, "Проверка связи")),
-            jsonMode = false,
-            maxTokens = 1024,
-        ),
-    )
-    "Работает (${response.model ?: cfg.model}): ${response.text.trim().take(60)}"
+    // Цепочка из одного провайдера — с теми же повторами при кратковременных сбоях, что и в работе.
+    val provider = ai.loli.core.ai.AIProviderFactory.createChain(c.http, listOf(cfg))
+    ai.loli.core.assistant.AIDiagnostics.check(provider, c.settings.settings.value.assistantName, java.time.Instant.now(), java.time.ZoneId.systemDefault())
 }

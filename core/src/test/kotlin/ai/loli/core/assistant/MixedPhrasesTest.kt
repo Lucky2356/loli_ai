@@ -110,3 +110,47 @@ class MixedPhrasesTest {
         assertNull(parser.parse("дочь", now, zone)?.actions?.firstOrNull { it is AssistantAction.CreateTask })
     }
 }
+
+class SpeechFixesTest {
+    @Test fun fixesName() {
+        assertEquals("Лоли, запиши расход 500", ai.loli.core.voice.SpeechFixes.apply("Лали, запиши расход 500"))
+        assertEquals("Лоли запиши", ai.loli.core.voice.SpeechFixes.apply("лоле запиши"))
+        assertEquals("лапти купить", ai.loli.core.voice.SpeechFixes.apply("лапти купить"))
+    }
+
+    @Test fun fixesCommonMishearings() {
+        assertEquals("потратил 5 тысяч на ремонт", ai.loli.core.voice.SpeechFixes.apply("потратил 5 тыщ на ремонт"))
+        assertEquals("напомни через полчаса", ai.loli.core.voice.SpeechFixes.apply("на помни через пол часа"))
+        assertEquals("потратила 300 рублей", ai.loli.core.voice.SpeechFixes.apply("потратила 300 руб"))
+        assertEquals("запиши заметку", ai.loli.core.voice.SpeechFixes.apply("за пиши заметку"))
+    }
+
+    @Test fun detectsUnfinishedPhrase() {
+        assertTrue(ai.loli.core.voice.SpeechFixes.looksUnfinished("купи хлеб и"))
+        assertTrue(ai.loli.core.voice.SpeechFixes.looksUnfinished("напомни мне завтра в"))
+        assertTrue(!ai.loli.core.voice.SpeechFixes.looksUnfinished("купи хлеб и молоко"))
+    }
+}
+
+class DictionaryTest {
+    private val now = java.time.Instant.parse("2026-09-25T09:00:00Z")
+    private val zone = java.time.ZoneId.of("Europe/Moscow")
+    private val parser = LocalCommandParser()
+    private fun category(p: String) = (parser.parse(p, now, zone)!!.actions.single() as AssistantAction.CreateExpense).category
+
+    @Test fun newCategories() {
+        assertEquals("Переводы", category("перевёл маме 5000"))
+        assertEquals("Автомобиль", category("шиномонтаж 3000"))
+        assertEquals("Налоги и штрафы", category("заплатил штраф 500"))
+        assertEquals("Связь и интернет", category("заплатил за мтс 600"))
+        assertEquals("Подписки", category("кинопоиск 299 рублей"))
+        assertEquals("Развлечения", category("потратила 1500 на зоопарк"))
+        assertEquals("Дом и ЖКХ", category("купила в икеа посуду за 2000"))
+        assertEquals("Продукты", category("пятёрочка 850"))
+    }
+
+    @Test fun noFalseMatches() {
+        assertTrue(ai.loli.core.nlp.ExpenseCategories.categorize("спасибо") != "Красота")
+        assertTrue(ai.loli.core.nlp.ExpenseCategories.categorize("стиральная машина") != "Автомобиль")
+    }
+}

@@ -197,11 +197,11 @@ fun ProviderScreen(c: AppContainer, type: AIProviderType, onBack: () -> Unit) {
                             modifier = Modifier.padding(start = 8.dp),
                         )
                     }
-                    LoliField(key, { key = it.trim() }, if (hasKey) "Новый ключ" else "Вставьте ключ", keyboardType = KeyboardType.Password,
+                    LoliField(key, { key = it }, if (hasKey) "Новый ключ" else "Вставьте ключ", keyboardType = KeyboardType.Password,
                         visualTransformation = PasswordVisualTransformation())
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         PrimaryButton("Сохранить", {
-                            c.secrets.put(KeystoreSecretStore.aiKey(type.id), key); key = ""; keyVersion++; result = null
+                            c.secrets.put(KeystoreSecretStore.aiKey(type.id), ai.loli.core.ai.AIConfig.cleanApiKey(key)); key = ""; keyVersion++; result = null
                             scope.launch { c.settings.setProviderEnabled(type, true); c.settings.setUseAI(true) }
                         }, enabled = key.isNotBlank())
                         if (hasKey) SecondaryButton("Удалить", {
@@ -248,6 +248,14 @@ fun ProviderScreen(c: AppContainer, type: AIProviderType, onBack: () -> Unit) {
                     }) else null,
                     trailing = { if (testing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
                 )
+            }
+        }
+        item(key = "last-failure") {
+            val tick = ai.loli.app.ui.components.rememberResumeTick()
+            val failure = remember(tick, result) { c.engine.lastAiFailure }
+            failure?.let { f ->
+                val at = java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm", java.util.Locale("ru")).format(f.at.atZone(java.time.ZoneId.systemDefault()))
+                Hint("Последний сбой AI ($at): ${f.message}\nИз-за него команда была выполнена на устройстве. Нажмите «Проверить подключение» — проверка делает такой же запрос, как при работе.")
             }
         }
     }

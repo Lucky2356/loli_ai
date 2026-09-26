@@ -37,14 +37,22 @@ class OpenAiCompatibleProvider(
 
     override suspend fun complete(request: AIRequest): AIResponse = aiCall {
         try {
-            send(request, useJsonFormat = request.jsonMode)
+            send(request, useJsonFormat = request.jsonMode, extras = true)
         } catch (e: AIException.Server) {
-            // Некоторые совместимые серверы не поддерживают response_format — повторяем без него.
-            if (request.jsonMode && e.message?.contains("400") == true) send(request, useJsonFormat = false) else throw e
+            // Часть моделей и совместимых серверов не принимает response_format или reasoning_effort —
+            // повторяем самым простым запросом, который понимают все.
+            if (e.code in setOf(400, 404, 415, 422)) send(request, useJsonFormat = false, extras = false) else throw e
         }
     }
 
-    private suspend fun send(request: AIRequest, useJsonFormat: Boolean): AIResponse {
+    /** Рассуждающие модели OpenAI отвечают заметно быстрее с низким усилием — для голосового ассистента это важно. */
+    private fun supportsReasoningEffort(): Boolean {
+        val m = config.model.lowercase().substringAfterLast('/')
+        return config.type in setOf(AIProviderType.OPENAI, AIProviderType.OPENROUTER) &&
+            (m.startsWith("gpt-5") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4"))
+    }
+
+    private suspend fun send(request: AIRequest, useJsonFormat: Boolean, extras: Boolean): AIResponse {
         val body = buildJsonObject {
             put("model", config.model)
             put("messages", buildJsonArray {
@@ -57,6 +65,7 @@ class OpenAiCompatibleProvider(
                 }
             })
             if (useJsonFormat) put("response_format", buildJsonObject { put("type", "json_object") })
+            if (extras && supportsReasoningEffort()) put("reasoning_effort", "low")
         }
         val response = http.post("${config.endpoint}/chat/completions") {
             contentType(ContentType.Application.Json)
@@ -69,7 +78,13 @@ class OpenAiCompatibleProvider(
         val choice = (json["choices"] as? JsonArray)?.firstOrNull()?.jsonObject
             ?: throw AIException.InvalidResponse("нет choices")
         val finish = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
-        val content = choice.obj("message")?.get("content")?.let { it as? JsonPrimitive }?.contentOrNull
+        val message = choice.obj("message")
+        // Обычно content — строка; некоторые серверы отдают массив частей [{type:"text", text:"…"}].
+        val content = when (val c = message?.get("content")) {
+            is JsonPrimitive -> c.contentOrNull
+            is JsonArray -> c.mapNotNull { (it as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull }.joinToString("")
+            else -> null
+        }
         if (content.isNullOrBlank()) {
             if (finish == "content_filter") throw AIException.Refused()
             throw AIException.InvalidResponse("пустой ответ (finish_reason=$finish)")

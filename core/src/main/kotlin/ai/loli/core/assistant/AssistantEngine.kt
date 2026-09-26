@@ -53,7 +53,12 @@ data class AssistantReply(
     val endsDialog: Boolean = false,
     /** Какой AI-провайдер ответил (при нескольких подключённых). */
     val provider: String? = null,
+    /** Почему AI не ответил и команда выполнена на устройстве (понятное человеку объяснение). */
+    val aiError: String? = null,
 )
+
+/** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
+data class AiFailure(val message: String, val at: java.time.Instant)
 
 /**
  * Главный оркестратор: реплика пользователя → намерение → проверенные действия → выполнение → ответ.
@@ -77,6 +82,10 @@ class AssistantEngine(
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
+
+    /** Последняя ошибка AI (null — последний запрос к AI прошёл успешно). */
+    @Volatile var lastAiFailure: AiFailure? = null
+        private set
 
     suspend fun handle(input: String, source: InputSource = InputSource.TEXT): AssistantReply = mutex.withLock {
         val cfg = settings()
@@ -122,6 +131,10 @@ class AssistantEngine(
         context.dialogMode = false
         context.appendMode = false
     }
+
+    /** Понимает ли Лоли фразу без AI — чтобы из нескольких вариантов распознавания выбрать осмысленный. */
+    fun understandsLocally(text: String): Boolean =
+        runCatching { localParser.parse(stripWakeWord(text, settings().assistantName), time.now(), time.zone()) != null }.getOrDefault(false)
 
     /** Подтверждение/отмена кнопкой в UI. */
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
@@ -188,7 +201,8 @@ class AssistantEngine(
             val provider = try { aiProvider() } catch (e: AIException) { aiError = e; null }
             if (provider != null) {
                 try {
-                    val plan = planWithAI(provider, text, cfg)
+                    val plan = guardDeviceActions(planWithAI(provider, text, cfg), text)
+                    lastAiFailure = null
                     val used = (provider as? ChainAIProvider)?.lastUsed ?: provider
                     return execute(plan, usedAI = true, offline = false, name = cfg.assistantName)
                         .copy(provider = "${used.type.title} · ${used.model}")
@@ -197,6 +211,7 @@ class AssistantEngine(
                 } catch (e: AIException) {
                     Logger.w(TAG, "AI недоступен: ${e::class.simpleName}")
                     aiError = e
+                    lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
                 }
             }
         }
@@ -204,11 +219,10 @@ class AssistantEngine(
         if (local != null) {
             val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
             val note = when (aiError) {
-                is AIException.Unauthorized -> " (AI: ключ не принят — выполнено офлайн)"
-                null -> ""
+                is AIException.Unauthorized -> " (AI: ключ не принят — выполнено на устройстве)"
                 else -> ""
             }
-            return reply.copy(text = reply.text + note)
+            return reply.copy(text = reply.text + note, aiError = aiError?.let { shortReason(it) })
         }
         val reason = when {
             !cfg.useAI -> "Не совсем поняла."
@@ -220,6 +234,43 @@ class AssistantEngine(
                 "«напомни завтра в 10 утра…», «что у меня на сегодня». Скажите «что ты умеешь» — расскажу подробнее.",
             offline = cfg.useAI,
         )
+    }
+
+    /** Короткая причина сбоя AI для подписи под ответом. */
+    private fun shortReason(e: AIException): String = when (e) {
+        is AIException.Unauthorized -> "ключ не принят"
+        is AIException.RateLimited -> "превышен лимит запросов"
+        is AIException.Network -> "нет связи с сервисом"
+        is AIException.NotConfigured -> "не настроен"
+        is AIException.InsecureEndpoint -> "небезопасный адрес сервера"
+        is AIException.Refused -> "модель отказалась отвечать"
+        is AIException.Server -> "ошибка сервиса ${e.code}"
+        is AIException.InvalidResponse -> "непонятный ответ модели"
+    }
+
+    /**
+     * Защита от «инъекций»: в запрос к AI попадают тексты ваших заметок и память. Если в них окажется чужая
+     * инструкция («позвони на номер…», «отправь…»), модель может её выполнить. Поэтому звонки, сообщения,
+     * отправка, открытие сайтов и контакты от AI выполняются, только если вы сами об этом попросили в этой фразе.
+     */
+    private fun guardDeviceActions(plan: AssistantPlan, userText: String): AssistantPlan {
+        val n = ai.loli.core.nlp.RuTokenizer.normalize(userText)
+        val rejected = ArrayList(plan.rejected)
+        val kept = plan.actions.filter { a ->
+            val cmd = (a as? AssistantAction.Device)?.command ?: return@filter true
+            val asked = when (cmd) {
+                is DeviceCommand.Call -> Regex("""позвон|набер|звонок|вызов|звякн""").containsMatchIn(n)
+                is DeviceCommand.Message -> Regex("""напиш|сообщ|смс|sms|отправ|перешл|скажи""").containsMatchIn(n)
+                is DeviceCommand.Share -> Regex("""отправ|перешл|подел|скинь|напиш""").containsMatchIn(n)
+                is DeviceCommand.OpenUrl -> Regex("""сайт|ссылк|страниц|открой|зайди|перейди|http|www|\.ru|\.com""").containsMatchIn(n)
+                is DeviceCommand.AddContact -> Regex("""контакт|номер""").containsMatchIn(n)
+                is DeviceCommand.OpenApp -> Regex("""открой|запусти|включи|зайди|перейди|приложени""").containsMatchIn(n)
+                else -> true
+            }
+            if (!asked) rejected += "AI предложил действие, о котором вы не просили — не выполняю"
+            asked
+        }
+        return if (kept.size == plan.actions.size) plan else plan.copy(actions = kept, rejected = rejected)
     }
 
     private suspend fun planWithAI(provider: AIProvider, text: String, cfg: AssistantSettings): AssistantPlan {

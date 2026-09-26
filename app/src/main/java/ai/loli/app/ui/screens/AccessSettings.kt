@@ -173,7 +173,14 @@ fun AccessPage(c: AppContainer, onBack: () -> Unit) {
                     else "Сначала включите блокировку экрана в настройках телефона",
                     s.appLock, enabled = deviceSecure || s.appLock, icon = Icons.Rounded.Fingerprint,
                 ) { v -> scope.launch { c.settings.setAppLock(v) } }
+                GroupDivider(inset = 66.dp)
+                SwitchItem(
+                    "Скрывать экран ${s.assistantName}",
+                    "Не показывать содержимое в недавних приложениях, запретить скриншоты и запись экрана (в том числе другим приложениям)",
+                    s.secureScreen, icon = Icons.Rounded.Visibility,
+                ) { v -> scope.launch { c.settings.setSecureScreen(v) } }
             }
+            Hint("API-ключи, вход в аккаунт и база записей зашифрованы ключом Android Keystore и не попадают в резервные копии. Обновления ставятся только с GitHub, с проверкой контрольной суммы и подписи.")
         }
 
         item(key = "apps-head") {

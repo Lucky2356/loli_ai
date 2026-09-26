@@ -184,6 +184,7 @@ class AppContainer(private val context: Context) {
         VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope).also { v ->
             val stopWords = ai.loli.app.voice.StopWordWatcher(context, voskEngine, voskModels)
             v.stopWatcher = { stopWords.awaitStop() }
+            v.understands = { engine.understandsLocally(it) }
             v.onVoiceReply = { reply ->
                 // Экран заблокирован или приложение свёрнуто — результат придёт уведомлением.
                 if (reply.text.isNotBlank() && (isLocked() || !launcher.isForeground())) {

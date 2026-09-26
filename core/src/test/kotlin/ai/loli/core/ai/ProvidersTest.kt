@@ -44,6 +44,24 @@ class ProvidersTest {
         assertEquals("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", url)
     }
 
+    @Test fun retriesPlainRequestWhenServerRejectsParameters() = runTest {
+        val bodies = ArrayList<String>()
+        val http = HttpClient(MockEngine { r ->
+            bodies += (r.body as TextContent).text
+            if (bodies.size == 1) respond("""{"error":{"message":"Unsupported parameter: reasoning_effort"}}""", HttpStatusCode.BadRequest, json)
+            else respond("""{"choices":[{"message":{"content":[{"type":"text","text":"{\"reply\":\"ok\"}"}]}}]}""", HttpStatusCode.OK, json)
+        })
+        val res = OpenAiCompatibleProvider(http, AIConfig(AIProviderType.OPENAI, null, "gpt-5-mini", "sk-x")).complete(req)
+        assertEquals("{\"reply\":\"ok\"}", res.text)
+        assertTrue(bodies[0].contains("reasoning_effort") && bodies[0].contains("response_format"))
+        assertFalse(bodies[1].contains("reasoning_effort") || bodies[1].contains("response_format"))
+    }
+
+    @Test fun geminiBadKeyWith400IsUnauthorized() = runTest {
+        val http = HttpClient(MockEngine { respond("""[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]""", HttpStatusCode.BadRequest, json) })
+        assertFailsWith<AIException.Unauthorized> { OpenAiCompatibleProvider(http, AIConfig(AIProviderType.GEMINI, null, null, "bad")).complete(req) }
+    }
+
     @Test fun anthropicRequestFormat() = runTest {
         var captured: HttpRequestData? = null
         val http = HttpClient(MockEngine { r ->
@@ -137,7 +155,22 @@ class ChainAIProviderTest {
         val chain = ChainAIProvider(listOf(openai, claude, gemini))
         assertEquals("ответ gemini", chain.complete(req).text)
         assertEquals(AIProviderType.GEMINI, chain.lastUsed?.type)
-        assertEquals(listOf(1, 1, 1), listOf(openai.calls, claude.calls, gemini.calls))
+        // Лимит и сбой сети — кратковременные: одна повторная попытка, затем следующий провайдер.
+        assertEquals(listOf(2, 2, 1), listOf(openai.calls, claude.calls, gemini.calls))
+    }
+
+    @Test fun badKeyIsNotRetried() = runTest {
+        val openai = Fake(AIProviderType.OPENAI, AIException.Unauthorized("401"))
+        val gemini = Fake(AIProviderType.GEMINI, null)
+        val chain = ChainAIProvider(listOf(openai, gemini))
+        assertEquals("ответ gemini", chain.complete(req).text)
+        assertEquals(1, openai.calls)
+    }
+
+    @Test fun apiKeyIsCleaned() {
+        assertEquals("sk-abc123", AIConfig(AIProviderType.OPENAI, null, null, "  sk-abc\n123 \n").apiKey)
+        assertEquals("sk-abc123", AIConfig(AIProviderType.OPENAI, null, null, "Bearer sk-abc123").apiKey)
+        assertEquals("AIzaXYZ", AIConfig(AIProviderType.GEMINI, null, null, "\"AIzaXYZ\"").apiKey)
     }
 
     @Test fun allFailedReportsFirstError() = runTest {

@@ -10,6 +10,7 @@ import ai.loli.core.voice.ListenOptions
 import ai.loli.core.voice.SpeechError
 import ai.loli.core.voice.SpeechEvent
 import ai.loli.core.voice.SpeechRecognitionProvider
+import ai.loli.core.voice.SpeechFixes
 import ai.loli.core.voice.SpeechText
 import ai.loli.core.voice.TextToSpeechProvider
 import kotlinx.coroutines.CoroutineScope
@@ -75,6 +76,8 @@ class VoiceController(
     var onVoiceReply: (AssistantReply) -> Unit = {}
     /** Слушает «стоп», пока Лоли говорит; true — пользователь её остановил (задаётся приложением). */
     var stopWatcher: (suspend () -> Boolean)? = null
+    /** Понимает ли Лоли фразу — для выбора лучшего из вариантов распознавания. */
+    var understands: (String) -> Boolean = { false }
 
     /** Системное распознавание не сработало на этом устройстве — в режиме «Авто» сразу используем Vosk. */
     @Volatile private var systemBroken = false
@@ -144,14 +147,15 @@ class VoiceController(
     suspend fun endDialog() = engine.endDialog()
 
     /** Реплика, уже распознанная фоновым сервисом wake word. */
-    suspend fun handleRecognized(text: String, source: InputSource): AssistantReply = process(text, source, speak = true)
+    suspend fun handleRecognized(text: String, source: InputSource): AssistantReply =
+        process(SpeechFixes.apply(text, settings.value.assistantName), source, speak = true)
 
     /** Результат системного окна распознавания. */
     fun onSystemDialogResult(text: String?) {
         if (text.isNullOrBlank()) { _state.value = VoiceState.Idle; return }
         job?.cancel()
         job = scope.launch {
-            val reply = process(text, InputSource.VOICE, speak = true)
+            val reply = process(SpeechFixes.apply(text, settings.value.assistantName), InputSource.VOICE, speak = true)
             if (reply.expectFollowUp) _systemDialogRequests.tryEmit(Unit) else engine.endDialog()
         }
     }
@@ -169,7 +173,17 @@ class VoiceController(
                 Heard.Stop -> return
                 is Heard.Text -> {
                     silentInRow = 0
-                    val reply = process(heard.text, source, speak = true)
+                    // Фраза оборвалась на «и», «на», «потом»… — дослушиваем продолжение и склеиваем.
+                    var phrase = heard.text
+                    var more = 0
+                    while (SpeechFixes.looksUnfinished(phrase) && more++ < MAX_CONTINUATIONS) {
+                        when (val next = listenOnce(followUp = true, hint = "Продолжайте…")) {
+                            is Heard.Text -> phrase = "$phrase ${next.text}"
+                            Heard.Stop -> return
+                            else -> break
+                        }
+                    }
+                    val reply = process(phrase, source, speak = true)
                     if (!reply.expectFollowUp || reply.endsDialog || followUps >= MAX_FOLLOW_UPS) return
                     followUps++
                     delay(250) // синтезатор отпускает аудио, иначе распознаватель услышит хвост ответа
@@ -192,13 +206,13 @@ class VoiceController(
         }
     }
 
-    private suspend fun listenOnce(followUp: Boolean): Heard {
+    private suspend fun listenOnce(followUp: Boolean, hint: String? = null): Heard {
         val chain = providerChain()
         if (chain.isEmpty()) return Heard.Failed("На телефоне нет распознавания речи. Установите приложение Google или офлайн-модель в настройках.", false)
         var last: Heard.Failed? = null
         for ((i, provider) in chain.withIndex()) {
-            val hint = if (i > 0) (if (provider === offlineStt) "Переключилась на офлайн-распознавание — повторите, пожалуйста" else "Повторите, пожалуйста") else null
-            val result = listenWith(provider, followUp, hint)
+            val switchHint = if (i > 0) (if (provider === offlineStt) "Переключилась на офлайн-распознавание — повторите, пожалуйста" else "Повторите, пожалуйста") else hint
+            val result = listenWith(provider, followUp, switchHint)
             if (result !is Heard.Failed) return result
             last = result
             if (provider === systemStt && result.tryNext && result.serviceBroken) systemBroken = true
@@ -212,7 +226,11 @@ class VoiceController(
         var speechDetected = false
         _state.value = VoiceState.Listening(followUp = followUp, hint = hint)
         val s = settings.value
-        val options = ListenOptions(preferOffline = s.sttMode == SttMode.OFFLINE)
+        val options = ListenOptions(
+            preferOffline = s.sttMode == SttMode.OFFLINE,
+            silenceMillis = s.speechPause.millis,
+            biasing = listOf(s.assistantName) + BIASING,
+        )
         try {
             val name = s.assistantName
             // «Стоп» останавливает сразу, не дожидаясь конца фразы.
@@ -225,7 +243,7 @@ class VoiceController(
                     SpeechEvent.SpeechStarted -> speechDetected = true
                     is SpeechEvent.Partial -> _state.value = VoiceState.Listening(e.text, (_state.value as? VoiceState.Listening)?.level ?: 0f, followUp)
                     is SpeechEvent.Level -> (_state.value as? VoiceState.Listening)?.let { _state.value = it.copy(level = e.value) }
-                    is SpeechEvent.Final -> result = if (e.text.isBlank()) Heard.Silence else Heard.Text(e.text)
+                    is SpeechEvent.Final -> result = if (e.text.isBlank()) Heard.Silence else Heard.Text(bestVariant(e.text, e.alternatives, name))
                     is SpeechEvent.Error -> result = when (e.kind) {
                         SpeechError.NO_MATCH, SpeechError.TIMEOUT -> Heard.Silence
                         SpeechError.NO_PERMISSION -> Heard.Failed(e.message, tryNext = false)
@@ -247,6 +265,16 @@ class VoiceController(
             return Heard.Failed("Не разобрала фразу.", tryNext = true, serviceBroken = false)
         }
         return result
+    }
+
+    /**
+     * Из нескольких вариантов услышанного берём первый, который Лоли понимает как команду
+     * («запиши расход» вместо «запиши рас ход»). Если не понятен ни один — самый вероятный (его поймёт AI).
+     */
+    private fun bestVariant(top: String, alternatives: List<String>, name: String): String {
+        val variants = (listOf(top) + alternatives).map { SpeechFixes.apply(it, name) }.filter { it.isNotBlank() }.distinct()
+        if (variants.size <= 1) return variants.firstOrNull() ?: top
+        return variants.firstOrNull { runCatching { understands(it) }.getOrDefault(false) } ?: variants.first()
     }
 
     private suspend fun process(text: String, source: InputSource, speak: Boolean): AssistantReply {
@@ -286,5 +314,12 @@ class VoiceController(
         private const val MAX_FOLLOW_UPS = 30
         /** Сколько пауз подряд завершают разговор. */
         private const val SILENT_LIMIT = 2
+        /** Сколько раз дослушивать оборванную фразу. */
+        private const val MAX_CONTINUATIONS = 2
+        /** Частые слова команд — подсказка распознавателю. */
+        private val BIASING = listOf(
+            "напомни", "запиши", "заметку", "идею", "задачу", "расход", "потратила", "потратил", "рублей", "будильник", "таймер",
+            "стоп", "хватит", "позвони", "напиши", "открой", "запомни", "удали", "покажи", "сколько",
+        )
     }
 }
