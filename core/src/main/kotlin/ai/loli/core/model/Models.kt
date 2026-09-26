@@ -104,3 +104,31 @@ data class ConversationMessage(
     val content: String,
     val createdAt: Instant,
 )
+
+/** Пункт списка покупок или чек-листа. */
+data class ShoppingItem(
+    val id: String,
+    val listName: String,
+    val text: String,
+    val done: Boolean,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+) {
+    companion object { const val DEFAULT_LIST = "Покупки" }
+}
+
+/** Сценарий: по фразе [trigger] Лоли выполняет [commands] по очереди. */
+data class Routine(
+    val id: String,
+    val trigger: String,
+    val commands: List<String>,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+) {
+    companion object {
+        fun normalize(s: String): String = s.lowercase().replace('ё', 'е').replace(Regex("""[^\p{L}\d ]"""), " ").replace(Regex("""\s+"""), " ").trim()
+    }
+}
+
+/** Секретная заметка: только на устройстве, открывается по отпечатку. */
+data class SecretNote(val id: String, val title: String, val content: String, val createdAt: Instant, val updatedAt: Instant)

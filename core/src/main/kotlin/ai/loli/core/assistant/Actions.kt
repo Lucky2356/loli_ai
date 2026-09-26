@@ -100,6 +100,26 @@ sealed interface AssistantAction {
 
     /** Команда самому телефону: таймер, будильник, фонарик, звонок, открыть приложение… */
     data class Device(val command: DeviceCommand) : AssistantAction
+
+    // --- 1.7.0: списки, сценарии, дни рождения, секретные заметки ---
+    /** «Добавь в покупки молоко и хлеб». */
+    data class AddToList(val listName: String, val items: List<String>) : AssistantAction
+    /** «Что купить?», «покажи список в дорогу». */
+    data class QueryList(val listName: String) : AssistantAction
+    /** «Купила молоко», «вычеркни хлеб». */
+    data class CheckListItem(val listName: String, val item: String, val done: Boolean = true) : AssistantAction
+    /** «Очисти список покупок» / «убери купленное». */
+    data class ClearList(val listName: String, val onlyDone: Boolean) : AssistantAction
+    /** «Когда я говорю „спокойной ночи“ — поставь будильник на 7 и включи не беспокоить». */
+    data class CreateRoutine(val trigger: String, val commands: List<String>) : AssistantAction
+    data object QueryRoutines : AssistantAction
+    data class DeleteRoutine(val trigger: String) : AssistantAction
+    /** «День рождения мамы 5 мая». */
+    data class AddBirthday(val person: String, val month: Int, val day: Int) : AssistantAction
+    /** «Когда день рождения у Саши?», «чьи дни рождения в этом месяце?» (person = null). */
+    data class QueryBirthdays(val person: String?, val thisMonth: Boolean = false) : AssistantAction
+    /** Секретная заметка: только на устройстве, открывается по отпечатку. */
+    data class CreateSecretNote(val title: String, val content: String) : AssistantAction
 }
 
 /** Недостающие данные, которые ассистент спросит у пользователя и дозаполнит следующей репликой. */

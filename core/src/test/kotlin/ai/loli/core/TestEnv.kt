@@ -32,13 +32,17 @@ class TestEnv(
     var embeddings: EmbeddingProvider? = null
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
-    val executor = ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy)
+    val executor = ActionExecutor(
+        store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
+        shopping = store.shopping, routines = store.routines, secrets = store.secrets,
+    )
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
 
     val engine = AssistantEngine(
         store.notes, store.tasks, store.reminders, store.memories, store.conversations, search, executor, time,
         settings = { settings }, aiProvider = { ai },
+        routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
     )
 }
 

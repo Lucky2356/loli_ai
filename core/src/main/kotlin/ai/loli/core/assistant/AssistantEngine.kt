@@ -55,6 +55,10 @@ data class AssistantReply(
     val provider: String? = null,
     /** Почему AI не ответил и команда выполнена на устройстве (понятное человеку объяснение). */
     val aiError: String? = null,
+    /** Язык озвучки ответа (перевод), ISO-код; null — русский. */
+    val speakLanguage: String? = null,
+    /** Начать длинную диктовку заметки: голос слушает с большими паузами до «готово». */
+    val dictation: Boolean = false,
 )
 
 /** Последний сбой AI — для экрана настроек: что именно не так с подключением. */
@@ -79,6 +83,9 @@ class AssistantEngine(
     private val settings: () -> AssistantSettings,
     private val aiProvider: suspend () -> AIProvider?,
     private val localParser: LocalCommandParser = LocalCommandParser(),
+    private val routines: suspend () -> List<ai.loli.core.model.Routine> = { emptyList() },
+    private val shoppingItems: suspend () -> List<ai.loli.core.model.ShoppingItem> = { emptyList() },
+    private val special: SpecialCommands = SpecialCommands(),
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
@@ -87,7 +94,11 @@ class AssistantEngine(
     @Volatile var lastAiFailure: AiFailure? = null
         private set
 
+    /** Откуда пришла текущая фраза: диктовка возможна только голосом. */
+    @Volatile private var currentSource: InputSource = InputSource.TEXT
+
     suspend fun handle(input: String, source: InputSource = InputSource.TEXT): AssistantReply = mutex.withLock {
+        currentSource = source
         val cfg = settings()
         val text = stripWakeWord(input, cfg.assistantName)
         if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
@@ -195,7 +206,25 @@ class AssistantEngine(
         if ((context.dialogMode || context.appendMode) && LocalCommandParser.isDialogEnd(text)) {
             return AssistantReply("Хорошо! Если что — зовите.", endsDialog = true)
         }
-        // 4. Облачный AI → при недоступности офлайн-парсер.
+        // 4. Сценарии, перевод, списки, дни рождения, секретные заметки — точные команды, выполняются на устройстве.
+        runRoutine(text, cfg)?.let { return it }
+        if (currentSource != InputSource.TEXT && SpecialCommands.isDictationStart(text)) {
+            return AssistantReply("Диктуйте — я записываю. Можно делать паузы. Когда закончите, скажите «готово».", dictation = true, expectFollowUp = false)
+        }
+        special.translation(text)?.let { return translate(it, cfg) }
+        special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
+        special.boughtItems(text)?.let { bought ->
+            val open = shoppingItems().filter { !it.done }
+            val matched = bought.filter { b ->
+                val stems = ai.loli.core.nlp.TextAnalysis.stems(b).toSet()
+                open.any { i -> i.text.equals(b, true) || ai.loli.core.nlp.TextAnalysis.stems(i.text).any { it in stems } }
+            }
+            if (matched.isNotEmpty()) {
+                val list = open.first().listName
+                return execute(AssistantPlan("", matched.map { AssistantAction.CheckListItem(list, it) }), usedAI = false, offline = false, name = cfg.assistantName)
+            }
+        }
+        // 5. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
         if (cfg.useAI) {
             val provider = try { aiProvider() } catch (e: AIException) { aiError = e; null }
@@ -234,6 +263,65 @@ class AssistantEngine(
                 "«напомни завтра в 10 утра…», «что у меня на сегодня». Скажите «что ты умеешь» — расскажу подробнее.",
             offline = cfg.useAI,
         )
+    }
+
+    /** Сохраняет надиктованный текст заметкой. */
+    suspend fun saveDictation(raw: String): AssistantReply = mutex.withLock {
+        val text = SpecialCommands.cleanDictation(raw)
+        if (text.isBlank()) return@withLock AssistantReply("Ничего не услышала — заметку не сохраняю.")
+        val title = text.split(Regex("""\s+""")).take(6).joinToString(" ").trimEnd(',', '.', ':').replaceFirstChar { it.uppercase() }
+        val note = notes.create(ai.loli.core.model.NoteKind.NOTE, title, text.replaceFirstChar { it.uppercase() })
+        context.touchRecord(RecordRef(RecordType.NOTE, note.id, note.title))
+        runCatching { conversations.add(context.conversationId, MessageRole.USER, text) }
+        val words = text.split(Regex("""\s+""")).size
+        AssistantReply("Сохранила заметку ${RuFormat.quote(note.title)} — ${RuFormat.count(words, "слово", "слова", "слов")}.", changedData = true)
+    }
+
+    /** Фраза совпала со сценарием («спокойной ночи») — выполняем его команды по очереди. */
+    private suspend fun runRoutine(text: String, cfg: AssistantSettings): AssistantReply? {
+        val list = runCatching { routines() }.getOrDefault(emptyList())
+        if (list.isEmpty()) return null
+        val key = ai.loli.core.model.Routine.normalize(text)
+            .replace(Regex("""^(?:запусти|включи|выполни)\s+(?:сценарий\s+)?"""), "")
+        val routine = list.firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key } ?: return null
+        val replies = ArrayList<String>()
+        var changed = false
+        for (cmd in routine.commands.take(10)) {
+            val r = runCatching { process(cmd, cfg) }.getOrElse { AssistantReply("Не получилось: $cmd") }
+            // Сценарий не ведёт диалог: вопросы и подтверждения внутри него не ждём.
+            context.pendingConfirmation = null; context.pendingChoice = null; context.pendingSlot = null
+            if (r.text.isNotBlank()) replies += r.text
+            changed = changed || r.changedData
+        }
+        return AssistantReply("Сценарий ${RuFormat.quote(routine.trigger)}:\n" + replies.joinToString("\n") { "• $it" }, changedData = changed)
+    }
+
+    /** Перевод: с AI — любой текст, без AI — небольшой словарь частых фраз. */
+    private suspend fun translate(t: SpecialCommands.Translation, cfg: AssistantSettings): AssistantReply {
+        val offline = SpecialCommands.OFFLINE[t.language]?.get(ai.loli.core.nlp.RuTokenizer.normalize(t.phrase).trim(' ', ',', '.', '!', '?'))
+        if (cfg.useAI) {
+            val provider = runCatching { aiProvider() }.getOrNull()
+            if (provider != null) {
+                try {
+                    val out = provider.complete(
+                        AIRequest(
+                            system = "Ты переводчик. Переведи текст пользователя на ${t.languageRu} язык. Ответь только переводом — без кавычек, пояснений и транслитерации.",
+                            messages = listOf(ChatMessage(ChatMessage.Role.USER, t.phrase.take(2000))),
+                            jsonMode = false,
+                            maxTokens = 600,
+                        ),
+                    ).text.trim().trim('"', '«', '»')
+                    lastAiFailure = null
+                    if (out.isNotEmpty()) return AssistantReply(out, usedAI = true, speakLanguage = t.language)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: AIException) {
+                    lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
+                }
+            }
+        }
+        if (offline != null) return AssistantReply(offline, speakLanguage = t.language, offline = cfg.useAI)
+        return AssistantReply("Чтобы переводить любые фразы, подключите облачный AI в настройках. Без интернета я знаю только самые частые: «привет», «спасибо», «как дела»…")
     }
 
     /** Короткая причина сбоя AI для подписи под ответом. */

@@ -110,6 +110,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
         }
         when (segment) {
             0, 1 -> {
+                if (segment == 0) item(key = "secret") { SecretNotesEntry(c) }
                 val list = if (segment == 0) notes else ideas
                 if (list.isEmpty()) item(key = "empty") {
                     EmptyState(

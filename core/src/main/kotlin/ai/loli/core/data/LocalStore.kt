@@ -29,9 +29,12 @@ class LocalStore(
     val memories = SqlMemoryRepository(db, stamp, changes, dispatcher)
     val conversations = SqlConversationRepository(db, stamp, changes, dispatcher)
     val embeddings = EmbeddingStore(db, dispatcher)
+    val shopping = SqlShoppingRepository(db, stamp, changes, dispatcher)
+    val routines = SqlRoutineRepository(db, stamp, changes, dispatcher)
+    val secrets = SecretNoteStore(db, dispatcher) { time.now() }
 
     /** Порядок важен только для удобства отладки; таблицы независимы. */
-    val syncTables: List<SyncableTable> = listOf(notes, expenses, tasks, reminders, memories, conversations)
+    val syncTables: List<SyncableTable> = listOf(notes, expenses, tasks, reminders, memories, conversations, shopping, routines)
 
     suspend fun cursor(table: String): String? = withContext(dispatcher) { db.syncStateQueries.selectCursor(table).executeAsOneOrNull() }
     suspend fun setCursor(table: String, value: String) = withContext(dispatcher) { db.syncStateQueries.upsertCursor(table, value); Unit }
@@ -42,6 +45,7 @@ class LocalStore(
             db.noteQueries.deleteAll(); db.expenseQueries.deleteAll(); db.taskQueries.deleteAll()
             db.reminderQueries.deleteAll(); db.memoryQueries.deleteAll(); db.conversationQueries.deleteAll()
             db.embeddingQueries.deleteAll(); db.syncStateQueries.deleteAll()
+            db.shoppingItemQueries.deleteAll(); db.routineQueries.deleteAll()
         }
     }
 

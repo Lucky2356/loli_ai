@@ -67,6 +67,30 @@ class AppLock(private val context: Context) {
         }
     }
 
+    /**
+     * Отдельное подтверждение для секретных заметок — даже если приложение уже разблокировано.
+     * [legacy] — экран PIN-кода на Android 9 и ниже (результат приходит через ActivityResult).
+     */
+    fun confirm(activity: Activity, title: String, onSuccess: () -> Unit, legacy: (Intent) -> Unit) {
+        if (!deviceSecure()) { onSuccess(); return }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val builder = BiometricPrompt.Builder(activity).setTitle(title).setSubtitle("Подтвердите, что это вы")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            } else {
+                @Suppress("DEPRECATION")
+                builder.setDeviceCredentialAllowed(true)
+            }
+            builder.build().authenticate(CancellationSignal(), activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) = onSuccess()
+            })
+        } else {
+            @Suppress("DEPRECATION")
+            val intent = context.getSystemService(KeyguardManager::class.java)?.createConfirmDeviceCredentialIntent(title, "Подтвердите, что это вы")
+            if (intent == null) onSuccess() else legacy(intent)
+        }
+    }
+
     private companion object {
         const val RELOCK_MS = 60_000L
     }

@@ -1,0 +1,30 @@
+-- Сценарии: фраза-триггер («спокойной ночи») → список команд, которые Лоли выполнит по очереди.
+-- commands — JSON-массив строк-команд («поставь будильник на 7», «включи не беспокоить»).
+CREATE TABLE routine (
+    id TEXT NOT NULL PRIMARY KEY,
+    trigger_phrase TEXT NOT NULL,
+    commands TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    synced_updated_at INTEGER
+);
+
+selectActive:
+SELECT * FROM routine WHERE deleted = 0 ORDER BY created_at ASC;
+
+selectById:
+SELECT * FROM routine WHERE id = ?;
+
+upsert:
+INSERT OR REPLACE INTO routine VALUES ?;
+
+selectDirty:
+SELECT * FROM routine WHERE dirty = 1;
+
+markSynced:
+UPDATE routine SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
+
+deleteAll:
+DELETE FROM routine;

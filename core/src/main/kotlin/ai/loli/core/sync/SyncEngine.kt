@@ -71,10 +71,19 @@ class SyncEngine(
         var conflicts = 0
         val report = try {
             for (table in local.syncTables) {
-                val p = pull(table)
-                pulled += p.first
-                conflicts += p.second
-                pushed += push(table)
+                try {
+                    val p = pull(table)
+                    pulled += p.first
+                    conflicts += p.second
+                    pushed += push(table)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: RemoteException.Offline) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!table.optionalRemote) throw e
+                    Logger.w(TAG, "Таблица ${table.remoteTable} пока не синхронизируется (нет на сервере?)", e)
+                }
             }
             syncProfile()
             SyncReport(pulled, pushed, conflicts, finishedAt = clock())

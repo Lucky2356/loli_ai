@@ -43,6 +43,8 @@ interface TextToSpeechProvider {
     val isReady: Boolean
     /** Проговаривает текст и возвращается, когда речь закончена (или прервана). */
     suspend fun speak(text: String)
+    /** Озвучить на другом языке (перевод). [language] — ISO-код; null — как обычно. */
+    suspend fun speakIn(text: String, language: String?) = speak(text)
     fun stop()
     fun shutdown()
 }

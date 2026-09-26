@@ -183,7 +183,8 @@ class VoiceController(
                             else -> break
                         }
                     }
-                    val reply = process(phrase, source, speak = true)
+                    var reply = process(phrase, source, speak = true)
+                    if (reply.dictation) reply = dictate(source)
                     if (!reply.expectFollowUp || reply.endsDialog || followUps >= MAX_FOLLOW_UPS) return
                     followUps++
                     delay(250) // синтезатор отпускает аудио, иначе распознаватель услышит хвост ответа
@@ -206,13 +207,42 @@ class VoiceController(
         }
     }
 
-    private suspend fun listenOnce(followUp: Boolean, hint: String? = null): Heard {
+    /**
+     * Длинная диктовка: слушаем кусками с большими паузами и склеиваем, пока человек не скажет «готово»
+     * (или «стоп», или не помолчит дважды подряд). Потом сохраняем заметку и называем её.
+     */
+    private suspend fun dictate(source: InputSource): AssistantReply {
+        val parts = ArrayList<String>()
+        var silent = 0
+        while (parts.sumOf { it.length } < 20_000) {
+            when (val heard = listenOnce(followUp = true, hint = if (parts.isEmpty()) "Диктуйте…" else "Записываю… Скажите «готово», когда закончите", silenceMillis = DICTATION_PAUSE_MS)) {
+                is Heard.Text -> {
+                    silent = 0
+                    parts += heard.text
+                    _state.value = VoiceState.Listening(parts.joinToString(" ").takeLast(160), 0f, true)
+                    if (ai.loli.core.assistant.SpecialCommands.endsDictation(heard.text)) break
+                }
+                Heard.Stop -> break
+                Heard.Silence -> if (++silent >= 2) break
+                is Heard.Failed -> break
+            }
+        }
+        _state.value = VoiceState.Thinking(parts.joinToString(" ").take(120))
+        val reply = engine.saveDictation(parts.joinToString(" "))
+        _lastReply.value = reply
+        if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
+        if (settings.value.ttsEnabled) { _state.value = VoiceState.Speaking(reply.text); tts.speak(SpeechText.forSpeech(reply.text)) }
+        _state.value = VoiceState.Idle
+        return reply
+    }
+
+    private suspend fun listenOnce(followUp: Boolean, hint: String? = null, silenceMillis: Long? = null): Heard {
         val chain = providerChain()
         if (chain.isEmpty()) return Heard.Failed("На телефоне нет распознавания речи. Установите приложение Google или офлайн-модель в настройках.", false)
         var last: Heard.Failed? = null
         for ((i, provider) in chain.withIndex()) {
             val switchHint = if (i > 0) (if (provider === offlineStt) "Переключилась на офлайн-распознавание — повторите, пожалуйста" else "Повторите, пожалуйста") else hint
-            val result = listenWith(provider, followUp, switchHint)
+            val result = listenWith(provider, followUp, switchHint, silenceMillis)
             if (result !is Heard.Failed) return result
             last = result
             if (provider === systemStt && result.tryNext && result.serviceBroken) systemBroken = true
@@ -221,14 +251,14 @@ class VoiceController(
         return last ?: Heard.Failed("Распознавание речи недоступно.", false)
     }
 
-    private suspend fun listenWith(provider: SpeechRecognitionProvider, followUp: Boolean, hint: String?): Heard {
+    private suspend fun listenWith(provider: SpeechRecognitionProvider, followUp: Boolean, hint: String?, silenceOverride: Long? = null): Heard {
         var result: Heard = Heard.Silence
         var speechDetected = false
         _state.value = VoiceState.Listening(followUp = followUp, hint = hint)
         val s = settings.value
         val options = ListenOptions(
             preferOffline = s.sttMode == SttMode.OFFLINE,
-            silenceMillis = s.speechPause.millis,
+            silenceMillis = silenceOverride ?: s.speechPause.millis,
             biasing = listOf(s.assistantName) + BIASING,
         )
         try {
@@ -297,7 +327,7 @@ class VoiceController(
                 val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
                     launch { if (w()) { interrupted = true; tts.stop() } }
                 }
-                tts.speak(SpeechText.forSpeech(reply.text))
+                if (reply.speakLanguage != null) tts.speakIn(reply.text, reply.speakLanguage) else tts.speak(SpeechText.forSpeech(reply.text))
                 watcher?.cancel()
             }
         }
@@ -312,6 +342,8 @@ class VoiceController(
     companion object {
         private const val TAG = "Voice"
         private const val MAX_FOLLOW_UPS = 30
+        /** В диктовке человек думает дольше: пауза до конца куска — 5 секунд. */
+        private const val DICTATION_PAUSE_MS = 5000L
         /** Сколько пауз подряд завершают разговор. */
         private const val SILENT_LIMIT = 2
         /** Сколько раз дослушивать оборванную фразу. */

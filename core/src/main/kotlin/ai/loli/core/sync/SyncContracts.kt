@@ -19,6 +19,8 @@ data class SyncRow(
 interface SyncableTable {
     /** Имя таблицы в Supabase. */
     val remoteTable: String
+    /** Новая таблица: если на сервере её нет (старая схема Supabase), ошибка не прерывает синхронизацию остальных. */
+    val optionalRemote: Boolean get() = false
     suspend fun dirtyRows(): List<SyncRow>
     suspend fun row(id: String): SyncRow?
     /**

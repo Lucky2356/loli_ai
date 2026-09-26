@@ -64,6 +64,7 @@ import kotlinx.coroutines.launch
 fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
     val tasks by remember { c.store.tasks.observe() }.collectAsStateWithLifecycle(emptyList())
     val reminders by remember { c.store.reminders.observe() }.collectAsStateWithLifecycle(emptyList())
+    val shopping by remember { c.store.shopping.observe() }.collectAsStateWithLifecycle(emptyList())
     val name = c.settings.settings.collectAsStateWithLifecycle().value.assistantName
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var adding by remember { mutableStateOf(false) }
@@ -81,10 +82,10 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
     val scheduled = reminders.count { it.active }
     LoliScreen(
         title = "Планы",
-        subtitle = "$active задач · $scheduled напоминаний",
-        fab = { LoliFab(Icons.Rounded.Add, if (segment == 0) "Добавить задачу" else "Добавить напоминание") { adding = true } },
+        subtitle = "${RuFormat.count(active, "задача", "задачи", "задач")} · ${RuFormat.count(scheduled, "напоминание", "напоминания", "напоминаний")}",
+        fab = { LoliFab(Icons.Rounded.Add, when (segment) { 0 -> "Добавить задачу"; 1 -> "Добавить напоминание"; else -> "Добавить в список" }) { adding = true } },
     ) {
-        item(key = "segments") { Segmented(listOf("Задачи", "Напоминания"), segment, onSegment, Modifier.padding(bottom = 12.dp)) }
+        item(key = "segments") { Segmented(listOf("Задачи", "Напоминания", "Покупки"), segment, onSegment, Modifier.padding(bottom = 12.dp)) }
         if (segment == 0) {
             item(key = "filters") { Pills(listOf("Активные", "Просроченные", "Готово"), filter, { filter = it }) }
             val shown = when (filter) {
@@ -118,6 +119,8 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
                     }
                 }
             }
+        } else if (segment == 2) {
+            listsPane(c, shopping, name, scope)
         } else {
             if (!exact && Build.VERSION.SDK_INT >= 31) item(key = "exact") {
                 Surface(
@@ -169,7 +172,11 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
     }
 
     if (adding) {
-        if (segment == 0) TaskEditor(c, null, onDismiss = { adding = false }) else ReminderCreator(c, onDismiss = { adding = false })
+        when (segment) {
+            0 -> TaskEditor(c, null, onDismiss = { adding = false })
+            1 -> ReminderCreator(c, onDismiss = { adding = false })
+            else -> ShoppingAdder(c, onDismiss = { adding = false })
+        }
     }
     editTask?.let { t -> TaskEditor(c, t, onDismiss = { editTask = null }) }
     editReminder?.let { r ->

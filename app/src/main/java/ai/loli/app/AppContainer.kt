@@ -158,7 +158,10 @@ class AppContainer(private val context: Context) {
     }
 
     private val executor by lazy {
-        ActionExecutor(store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device) { lockPolicy() }
+        ActionExecutor(
+            store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
+            lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
+        )
     }
 
     val engine: AssistantEngine by lazy { AssistantEngine(
@@ -166,6 +169,7 @@ class AppContainer(private val context: Context) {
         conversations = store.conversations, search = search, executor = executor, time = time,
         settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked()) } },
         aiProvider = { aiProvider() },
+        routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
     ) }
 
     // --- Голос ---

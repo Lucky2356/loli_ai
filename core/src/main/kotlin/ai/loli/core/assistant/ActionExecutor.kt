@@ -51,6 +51,9 @@ class ActionExecutor(
      * Что разрешено — решает пользователь в настройках; по умолчанию личные данные скрыты.
      */
     private val lockPolicy: () -> LockPolicy? = { null },
+    private val shopping: ai.loli.core.data.SqlShoppingRepository? = null,
+    private val routines: ai.loli.core.data.SqlRoutineRepository? = null,
+    private val secrets: ai.loli.core.data.SecretNoteStore? = null,
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -315,6 +318,119 @@ class ActionExecutor(
                 if (r.ok) query(r.text) else error(r.text)
             }
 
+            is AssistantAction.AddToList -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val added = repo.add(action.listName, action.items)
+                if (added.isEmpty()) return error("Не поняла, что добавить в список.")
+                val where = if (action.listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "в покупки" else "в список ${RuFormat.quote(action.listName)}"
+                changed("Добавила $where: ${added.joinToString(", ") { it.text.lowercase() }}.")
+            }
+
+            is AssistantAction.QueryList -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val items = repo.all().filter { it.listName.equals(action.listName, true) }
+                val left = items.filter { !it.done }
+                query(
+                    when {
+                        items.isEmpty() -> "Список ${RuFormat.quote(action.listName)} пуст."
+                        left.isEmpty() -> "Всё из списка ${RuFormat.quote(action.listName)} уже куплено."
+                        else -> "${if (action.listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "Купить" else action.listName} (${left.size}):\n" +
+                            left.joinToString("\n") { "• ${it.text}" }
+                    },
+                )
+            }
+
+            is AssistantAction.CheckListItem -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val stem = ai.loli.core.nlp.TextAnalysis.stems(action.item).toSet()
+                val items = repo.all().filter { it.listName.equals(action.listName, true) && it.done != action.done }
+                val hit = items.firstOrNull { it.text.equals(action.item, true) }
+                    ?: items.firstOrNull { i -> ai.loli.core.nlp.TextAnalysis.stems(i.text).any { it in stem } }
+                    ?: return error("В списке нет ${RuFormat.quote(action.item)}.")
+                repo.setDone(hit.id, action.done)
+                val left = repo.all().count { it.listName.equals(action.listName, true) && !it.done }
+                changed(if (action.done) "Вычеркнула ${RuFormat.quote(hit.text)}." + (if (left == 0) " Всё куплено!" else " Осталось: $left.") else "Вернула ${RuFormat.quote(hit.text)} в список.")
+            }
+
+            is AssistantAction.ClearList -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val n = repo.clear(action.listName, action.onlyDone)
+                changed(if (n == 0) "Убирать нечего." else "Убрала из списка ${RuFormat.count(n, "пункт", "пункта", "пунктов")}.")
+            }
+
+            is AssistantAction.CreateRoutine -> {
+                val repo = routines ?: return error("Сценарии пока недоступны.")
+                if (action.commands.isEmpty()) return error("Не поняла, что делать по этой фразе.")
+                val r = repo.save(action.trigger, action.commands)
+                changed("Готово! Когда скажете ${RuFormat.quote(r.trigger)}, я выполню: ${r.commands.joinToString("; ")}.")
+            }
+
+            AssistantAction.QueryRoutines -> {
+                val list = routines?.all().orEmpty()
+                query(
+                    if (list.isEmpty()) "Сценариев пока нет. Скажите, например: «когда я говорю спокойной ночи — поставь будильник на 7 и включи не беспокоить»."
+                    else "Сценарии:\n" + list.joinToString("\n") { "• «${it.trigger}» → ${it.commands.joinToString("; ")}" },
+                )
+            }
+
+            is AssistantAction.DeleteRoutine -> {
+                val repo = routines ?: return error("Сценарии пока недоступны.")
+                val key = ai.loli.core.model.Routine.normalize(action.trigger)
+                val r = repo.all().firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key }
+                    ?: repo.all().firstOrNull { key in ai.loli.core.model.Routine.normalize(it.trigger) }
+                    ?: return error("Не нашла сценарий ${RuFormat.quote(action.trigger)}.")
+                repo.delete(r.id)
+                changed("Удалила сценарий ${RuFormat.quote(r.trigger)}.")
+            }
+
+            is AssistantAction.AddBirthday -> {
+                val person = action.person.trim()
+                val date = runCatching { java.time.LocalDate.of(2000, action.month, action.day) }.getOrNull() ?: return error("Такой даты нет.")
+                val title = "День рождения $person"
+                // Дубликаты не плодим: старые напоминания об этом дне рождения заменяются.
+                reminders.all().filter { it.recurrence?.frequency == ai.loli.core.model.Recurrence.Frequency.YEARLY && it.text.lowercase().contains("день рождения ${person.lowercase()}") }
+                    .forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
+                val onDay = ai.loli.core.model.Recurrence(ai.loli.core.model.Recurrence.Frequency.YEARLY, time = java.time.LocalTime.of(9, 0), dayOfMonth = date.dayOfMonth, month = date.monthValue)
+                val before = date.minusDays(1)
+                val dayBefore = ai.loli.core.model.Recurrence(ai.loli.core.model.Recurrence.Frequency.YEARLY, time = java.time.LocalTime.of(19, 0), dayOfMonth = before.dayOfMonth, month = before.monthValue)
+                val first = reminders.create("$title — сегодня! Поздравить?", onDay.nextAfter(now, zone, now), onDay, zone.id)
+                val second = reminders.create("Завтра ${title.replaceFirstChar { it.lowercase() }}", dayBefore.nextAfter(now, zone, now), dayBefore, zone.id)
+                scheduler.schedule(first); scheduler.schedule(second)
+                memories.create("$title — ${date.dayOfMonth} ${MONTHS_GEN[date.monthValue - 1]}", "Даты")
+                changed("Запомнила: $title — ${date.dayOfMonth} ${MONTHS_GEN[date.monthValue - 1]}. Напомню накануне вечером и в сам день.")
+            }
+
+            is AssistantAction.QueryBirthdays -> {
+                val all = reminders.all().filter { it.recurrence?.frequency == ai.loli.core.model.Recurrence.Frequency.YEARLY && it.text.startsWith("День рождения") }
+                val entries = all.mapNotNull { r ->
+                    val rule = r.recurrence ?: return@mapNotNull null
+                    val name = r.text.removePrefix("День рождения").substringBefore(" — ").trim()
+                    Triple(name, rule.month ?: return@mapNotNull null, rule.dayOfMonth ?: return@mapNotNull null)
+                }.distinctBy { it.first.lowercase() }
+                val filtered = when {
+                    action.person != null -> {
+                        val stems = ai.loli.core.nlp.TextAnalysis.stems(action.person).toSet()
+                        entries.filter { e -> ai.loli.core.nlp.TextAnalysis.stems(e.first).any { it in stems } }
+                    }
+                    action.thisMonth -> entries.filter { it.second == today.monthValue }
+                    else -> entries
+                }.sortedWith(compareBy({ it.second }, { it.third }))
+                query(
+                    when {
+                        filtered.isEmpty() && action.person != null -> "Не знаю, когда день рождения ${action.person}. Скажите, например: «день рождения ${action.person} 5 мая»."
+                        filtered.isEmpty() -> if (action.thisMonth) "В этом месяце дней рождения нет." else "Дней рождения пока не записано."
+                        filtered.size == 1 -> "День рождения ${filtered[0].first} — ${filtered[0].third} ${MONTHS_GEN[filtered[0].second - 1]}."
+                        else -> "Дни рождения:\n" + filtered.joinToString("\n") { "• ${it.first} — ${it.third} ${MONTHS_GEN[it.second - 1]}" }
+                    },
+                )
+            }
+
+            is AssistantAction.CreateSecretNote -> {
+                val store = secrets ?: return error("Секретные заметки пока недоступны.")
+                store.save(action.title, action.content)
+                changed("Сохранила секретную заметку. Она только на этом телефоне и открывается по отпечатку.")
+            }
+
             is AssistantAction.UpdateLastExpense -> {
                 val lastId = ctx.lastCreated?.takeIf { it.type == RecordType.EXPENSE }?.id
                 val e = (lastId?.let { expenses.get(it) } ?: expenses.all().maxByOrNull { it.createdAt })
@@ -459,3 +575,5 @@ class ActionExecutor(
 internal object SqlBullet {
     fun item(text: String) = ai.loli.core.data.SqlNoteRepository.appendLine("", text)
 }
+
+private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")

@@ -79,14 +79,23 @@ class AndroidTtsProvider(
 
     override val isReady: Boolean get() = readyOk
 
-    override suspend fun speak(text: String) {
+    override suspend fun speak(text: String) = speakIn(text, null)
+
+    /** Перевод озвучивается голосом нужного языка, если он есть; после — снова русский. */
+    override suspend fun speakIn(text: String, language: String?) {
         if (text.isBlank()) return
         if (!ensureEngine()) return
-        val locale = Locale("ru", "RU")
-        if (tts.isLanguageAvailable(locale) >= TextToSpeech.LANG_AVAILABLE) tts.language = locale
-        // Выбранный пользователем голос (если он всё ещё установлен).
-        voiceName().takeIf { it.isNotBlank() }?.let { name ->
-            runCatching { tts.voices?.firstOrNull { it.name == name } }.getOrNull()?.let { v -> runCatching { tts.setVoice(v) } }
+        val foreign = language?.takeIf { it != "ru" }?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { tts.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE }
+        if (foreign != null) {
+            tts.language = foreign
+        } else {
+            val locale = Locale("ru", "RU")
+            if (tts.isLanguageAvailable(locale) >= TextToSpeech.LANG_AVAILABLE) tts.language = locale
+            // Выбранный пользователем голос (если он всё ещё установлен).
+            voiceName().takeIf { it.isNotBlank() }?.let { name ->
+                runCatching { tts.voices?.firstOrNull { it.name == name } }.getOrNull()?.let { v -> runCatching { tts.setVoice(v) } }
+            }
         }
         tts.setSpeechRate(rate())
         tts.setPitch(pitch())
