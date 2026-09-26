@@ -89,6 +89,14 @@ jobs:
           mkdir -p dist
           cp app/build/outputs/apk/${{ steps.v.outputs.type }}/*.apk "dist/loli-${{ steps.v.outputs.version }}-${{ steps.v.outputs.type }}.apk"
 
+      - name: Check native libraries in APK
+        run: |
+          apk=$(ls dist/*.apk | head -1)
+          unzip -l "$apk" | grep -E "lib/arm64-v8a/.*\.so" | awk '{print $1, $4}'
+          for lib in libloli_llm.so libsherpa-onnx-jni.so; do
+            unzip -l "$apk" | grep -q "lib/arm64-v8a/$lib" || { echo "::error::$lib не попала в APK"; exit 1; }
+          done
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
