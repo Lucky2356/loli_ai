@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -132,7 +133,7 @@ if (!sherpaAar.exists()) {
     val url = "https://github.com/Lucky2356/loli_ai/releases/download/voices-v1/sherpa-onnx.aar"
     logger.lifecycle("Скачиваю sherpa-onnx $sherpaVersion…")
     uri(url).toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
-    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+    val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
     if (digest != sherpaSha256) {
         tmp.delete()
         throw GradleException("sherpa-onnx.aar: неверная контрольная сумма $digest")
