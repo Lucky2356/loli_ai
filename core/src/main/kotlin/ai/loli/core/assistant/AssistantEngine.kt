@@ -304,12 +304,19 @@ class AssistantEngine(
                 }
             }
         }
+        // «Посоветуй, чем заняться в выходные» — просьба, а не задача на выходные.
+        if (ai.loli.core.ai.LocalChat.isStrongChat(text)) localAnswer(text, cfg)?.let { return it }
         val parsed = localParser.parse(text, time.now(), time.zone())
         // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
         if (parsed == null && ai.loli.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
         val local = parsed ?: localFallback(text, cfg)
         if (local != null) {
             val reply = execute(local, usedAI = false, offline = cfg.useAI, name = cfg.assistantName)
+            // «Как приготовить плов» — не поиск по записям: если в записях пусто, отвечает офлайн-модель.
+            // Вопрос о себе («что я люблю…», «где мой паспорт») модели не отдаём — она не знает ваших записей.
+            if (local.actions.isNotEmpty() && local.actions.all { it is AssistantAction.Search } && reply.text.startsWith("Ничего не нашла") &&
+                ai.loli.core.ai.LocalChat.looksLikeChat(text) && !Regex("""(?:^|\s)(?:я|мой|моя|моё|мое|мои|моего|моей|моих)(?:\s|$)""").containsMatchIn(text.lowercase())
+            ) localAnswer(text, cfg)?.let { return it }
             val note = when (aiError) {
                 is AIException.Unauthorized -> " (AI: ключ не принят — выполнено на устройстве)"
                 else -> ""

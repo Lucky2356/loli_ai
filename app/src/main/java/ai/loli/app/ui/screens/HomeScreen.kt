@@ -155,8 +155,10 @@ fun HomeScreen(
                 Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(settings.assistantName, style = MaterialTheme.typography.headlineMedium)
             }
+            val cloud = vm.cloudActive()
             val (icon, label) = when {
-                !online && settings.useAI -> Icons.Rounded.CloudOff to "Офлайн"
+                !online && (settings.useAI || cloud) -> Icons.Rounded.CloudOff to "Офлайн"
+                cloud -> Icons.Rounded.AutoAwesome to "Облако Лоли"
                 !settings.useAI -> Icons.Rounded.Bolt to "На устройстве"
                 vm.aiConfigured() -> Icons.Rounded.AutoAwesome to (settings.primaryProvider?.type?.title ?: "AI")
                 else -> Icons.Rounded.AutoAwesome to "AI: нет ключа"

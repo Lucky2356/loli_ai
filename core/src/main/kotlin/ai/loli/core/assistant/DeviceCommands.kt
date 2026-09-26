@@ -149,8 +149,8 @@ object DevicePhrases {
         re("""^(?:выключи|отключи)\s+(?:режим\s+)?не беспокоить""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(false)) }
         re("""^(?:сделай\s+)?яркость\s+(?:на\s+)?(\d+)""").find(digitize(t))?.let { return cmd(DeviceCommand.Brightness(it.groupValues[1].toInt().coerceIn(0, 100))) }
         when {
-            re("""^(?:сделай\s+)?(?:ярче|поярче|прибавь яркость|увеличь яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, 20))
-            re("""^(?:сделай\s+)?(?:темнее|потемнее|убавь яркость|уменьши яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, -20))
+            re("""^(?:сделай\s+)?(?:экран\s+)?(?:ярче|поярче|прибавь яркость|увеличь яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, 20))
+            re("""^(?:сделай\s+)?(?:экран\s+)?(?:темнее|потемнее|убавь яркость|уменьши яркость)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(null, -20))
             re("""^(?:максимальная яркость|яркость на максимум)""").containsMatchIn(t) -> return cmd(DeviceCommand.Brightness(100))
         }
 

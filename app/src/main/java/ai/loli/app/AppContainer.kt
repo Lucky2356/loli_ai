@@ -115,9 +115,19 @@ class AppContainer(private val context: Context) {
     /** Списки моделей, загруженные с серверов провайдеров (на время работы приложения). */
     val modelCache = mutableMapOf<AIProviderType, List<ai.loli.core.ai.ModelInfo>>()
 
-    fun aiConfigured(): Boolean = aiConfigs().any { it.isComplete }
+    fun aiConfigured(): Boolean = aiConfigs().any { it.isComplete } || cloudActive()
 
-    private fun aiProvider(): AIProvider = AIProviderFactory.createChain(http, aiConfigs())
+    /** «Облако Лоли» доступно: сервер настроен в сборке, пользователь вошёл и не выключил облако. */
+    fun cloudActive(): Boolean = settings.settings.value.loliCloud && auth.state.value is AuthState.SignedIn && supabaseConfig().isConfigured
+
+    /** Облако Лоли идёт первым (без ключа пользователя), затем провайдеры пользователя. */
+    private suspend fun aiProvider(): AIProvider {
+        val cloud = if (cloudActive()) auth.accessToken()?.let { token ->
+            AIConfig(AIProviderType.LOLI_CLOUD, supabaseConfig().url.trimEnd('/') + "/functions/v1/ai-proxy", "auto", token, embeddingsEnabled = false)
+        } else null
+        val user = if (settings.settings.value.useAI) aiConfigs() else emptyList()
+        return AIProviderFactory.createChain(http, listOfNotNull(cloud) + user)
+    }
     private fun embeddingProvider(): EmbeddingProvider? =
         if (network.online.value && settings.settings.value.useAI) AIProviderFactory.createEmbeddings(http, aiConfigs()) else null
 
@@ -190,7 +200,7 @@ class AppContainer(private val context: Context) {
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
         AssistantSettings(
-            it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked(),
+            it.assistantName, it.useAI || cloudActive(), it.dialogModeEnabled, locked = isLocked() || appLocked(),
             userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
         )
     }

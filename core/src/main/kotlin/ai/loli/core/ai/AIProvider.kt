@@ -99,9 +99,17 @@ enum class AIProviderType(
     CUSTOM(
         "custom", "Свой сервер (Ollama, LM Studio, vLLM)", "http://192.168.1.10:11434/v1", "",
         emptyList(), null, true,
+    ),
+    /** «Облако Лоли»: сервер-посредник разработчика (Supabase Edge Function). Ключ — вход в аккаунт Лоли. */
+    LOLI_CLOUD(
+        "loli", "Облако Лоли", "", "auto",
+        emptyList(), null, false,
     );
 
     val isOpenAiCompatible: Boolean get() = this != ANTHROPIC
+
+    /** Встроенный провайдер: не показывается в списке для ручной настройки. */
+    val builtIn: Boolean get() = this == LOLI_CLOUD
 
     companion object {
         fun fromId(id: String?): AIProviderType = entries.firstOrNull { it.id == id } ?: OPENAI

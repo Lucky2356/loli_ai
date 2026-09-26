@@ -98,7 +98,7 @@ data class ProviderSettings(val type: AIProviderType, val enabled: Boolean, val 
 data class AppSettings(
     val assistantName: String = "Лоли",
     /** Порядок провайдеров = приоритет: при ошибке первого запрос уходит следующему. */
-    val aiOrder: List<AIProviderType> = AIProviderType.entries,
+    val aiOrder: List<AIProviderType> = AIProviderType.entries.filter { !it.builtIn },
     val aiEnabled: Set<AIProviderType> = emptySet(),
     val aiModels: Map<AIProviderType, String> = emptyMap(),
     val aiEndpoints: Map<AIProviderType, String> = emptyMap(),
@@ -135,6 +135,8 @@ data class AppSettings(
     val autoUpdate: Boolean = true,
     /** Получать бета-версии. */
     val betaUpdates: Boolean = false,
+    /** «Облако Лоли»: свободный разговор через сервер Лоли после входа в аккаунт. */
+    val loliCloud: Boolean = true,
     /** Разрешено ли вообще пользоваться Лоли на заблокированном экране. */
     val lockScreenEnabled: Boolean = true,
     val lockPolicy: ai.loli.core.assistant.LockPolicy = ai.loli.core.assistant.LockPolicy(),
@@ -201,6 +203,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val city = stringPreferencesKey("city")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val betaUpdates = booleanPreferencesKey("beta_updates")
+        val loliCloud = booleanPreferencesKey("loli_cloud")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
         val lockBasic = booleanPreferencesKey("lock_basic")
@@ -235,7 +238,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val saved = this[K.aiOrder]?.split(',')?.mapNotNull { AIProviderType.fromIdOrNull(it) }.orEmpty()
         val legacy = AIProviderType.fromIdOrNull(this[K.legacyProvider])
         val head = saved.ifEmpty { listOfNotNull(legacy) }
-        return (head + AIProviderType.entries).distinct()
+        return (head + AIProviderType.entries).distinct().filter { !it.builtIn }
     }
 
     private fun Preferences.enabled(): Set<AIProviderType> {
@@ -282,6 +285,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             morningBrief = p[K.morningBrief] ?: true,
             autoUpdate = p[K.autoUpdate] ?: true,
             betaUpdates = p[K.betaUpdates] ?: false,
+            loliCloud = p[K.loliCloud] ?: true,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
             lockPolicy = ai.loli.core.assistant.LockPolicy(
                 create = p[K.lockCreate] ?: true, basicDevice = p[K.lockBasic] ?: true, calls = p[K.lockCalls] ?: true,
@@ -380,6 +384,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setVoiceStyle(pitch: Float, rate: Float) = store.edit { it[K.pitch] = pitch.coerceIn(0.5f, 2f); it[K.rate] = rate.coerceIn(0.5f, 2f) }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setBetaUpdates(v: Boolean) = store.edit { it[K.betaUpdates] = v }
+    suspend fun setLoliCloud(v: Boolean) = store.edit { it[K.loliCloud] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }
     suspend fun setLockPolicy(v: ai.loli.core.assistant.LockPolicy) = store.edit {
         it[K.lockCreate] = v.create; it[K.lockBasic] = v.basicDevice; it[K.lockCalls] = v.calls

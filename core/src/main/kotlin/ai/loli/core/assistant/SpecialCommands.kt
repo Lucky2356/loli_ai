@@ -32,6 +32,9 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         // «добавь молоко в покупки», «запиши хлеб и яйца в список покупок»
         Regex("""^(?:добавь|допиши|запиши|внеси|закинь|кинь)\s+(.+?)\s+в\s+(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки)$""")
             .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «в список покупок добавь сметану», «в покупки запиши хлеб»
+        Regex("""^в\s+(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки)\s+(?:добавь|допиши|запиши|внеси|закинь)[:,]?\s+(.+)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
         // «купить: молоко, хлеб» / «в магазин: …»
         Regex("""^(?:список\s+покупок|в\s+магазин|купить)\s*:\s*(.+)$""")
             .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }

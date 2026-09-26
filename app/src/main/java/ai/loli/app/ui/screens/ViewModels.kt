@@ -65,6 +65,7 @@ class HomeViewModel(val c: AppContainer) : ViewModel() {
     }.stateIn(viewModelScope, started, HomeSummary())
 
     fun aiConfigured(): Boolean = c.aiConfigured()
+    fun cloudActive(): Boolean = c.cloudActive()
     fun listen() = c.voice.startListening()
     fun stop() = c.voice.stop()
     fun send(text: String) = c.voice.submitText(text)

@@ -80,6 +80,7 @@ private fun AIProviderType.about(): String = when (this) {
     AIProviderType.GROQ -> "Llama и другие открытые модели, очень быстро · console.groq.com"
     AIProviderType.XAI -> "Grok · console.x.ai"
     AIProviderType.CUSTOM -> "Ollama, LM Studio, vLLM на вашем компьютере — без облака"
+    AIProviderType.LOLI_CLOUD -> "Сервер Лоли: работает после входа в аккаунт, без своего ключа"
 }
 
 @Composable
@@ -88,6 +89,7 @@ fun AiPage(c: AppContainer, onBack: () -> Unit, openProvider: (AIProviderType) -
     val scope = rememberCoroutineScope()
     val resumeTick = rememberResumeTick()
     LoliScreen(title = "AI", subtitle = "Необязательно: команды и так понимаются на устройстве", onBack = onBack) {
+        if (c.supabaseConfig().isConfigured) item(key = "cloud") { LoliCloudSection(c) }
         item(key = "offline") { OfflineModelSection(c) }
         item(key = "use") {
             SectionLabel("Облачный AI")
@@ -396,4 +398,26 @@ private fun OfflineModelSection(c: AppContainer) {
         }
     }
     Hint("Модель Qwen 2.5 (Apache-2.0) работает прямо на телефоне: вопросы никуда не отправляются. По уму она проще облачных AI — для бытовых вопросов и советов.")
+}
+
+
+/** «Облако Лоли»: умный разговор через сервер Лоли, без своего ключа — нужен только вход в аккаунт. */
+@Composable
+private fun LoliCloudSection(c: AppContainer) {
+    val s by c.settings.settings.collectAsStateWithLifecycle()
+    val auth by c.auth.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val signedIn = auth is ai.loli.core.auth.AuthState.SignedIn
+    SectionLabel("Облако ${s.assistantName}")
+    Group(Modifier.padding(top = 4.dp)) {
+        SwitchItem(
+            "Облако ${s.assistantName}",
+            when {
+                !signedIn -> "Войдите в аккаунт («Настройки → Аккаунт») — и ${s.assistantName} ответит на любые вопросы без своего ключа"
+                s.loliCloud -> "Включено: любые вопросы и сложные фразы через сервер ${s.assistantName}. Есть дневной лимит"
+                else -> "Выключено"
+            },
+            s.loliCloud && signedIn, enabled = signedIn, icon = Icons.Rounded.AutoAwesome,
+        ) { v -> scope.launch { c.settings.setLoliCloud(v) } }
+    }
 }
