@@ -1,0 +1,83 @@
+name: Voices
+
+# Один раз готовит встроенный русский голос Лоли:
+#  1) берёт офлайн-синтезатор sherpa-onnx (Apache-2.0) — Android-библиотеку .aar;
+#  2) берёт русские голоса Piper (Ирина, Денис, Дмитрий, Руслан) из релиза sherpa-onnx «tts-models»;
+#  3) перепаковывает голоса в .zip (их распаковывает приложение), считает sha256;
+#  4) выкладывает всё в пререлиз voices-v1 этого репозитория — оттуда приложение и сборка скачивают файлы.
+# Пререлиз не считается «последней версией», поэтому проверка обновлений его не видит.
+on:
+  # Новый файл процесса на ветке нельзя запустить вручную, пока он не в main, — поэтому и по push этого файла.
+  push:
+    paths: [".github/workflows/voices.yml"]
+  workflow_dispatch:
+    inputs:
+      sherpa_version:
+        description: "Версия sherpa-onnx (пусто — последняя)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  voices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: sherpa-onnx Android library
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          TAG="${{ inputs.sherpa_version }}"
+          if [ -z "$TAG" ]; then TAG=$(gh release view --repo k2-fsa/sherpa-onnx --json tagName -q .tagName); fi
+          echo "sherpa-onnx: $TAG"
+          gh release view "$TAG" --repo k2-fsa/sherpa-onnx --json assets -q '.assets[].name' | grep -i '\.aar$' || true
+          AAR=$(gh release view "$TAG" --repo k2-fsa/sherpa-onnx --json assets -q '.assets[].name' | grep -iE '^sherpa-onnx-[0-9.]+\.aar$' | head -1)
+          test -n "$AAR"
+          gh release download "$TAG" --repo k2-fsa/sherpa-onnx --pattern "$AAR" --dir out
+          mv "out/$AAR" out/sherpa-onnx.aar
+          echo "$TAG" > out/sherpa-onnx.version
+          # Что внутри: нативные библиотеки и Kotlin-API синтеза речи (чтобы код писался по точному API).
+          unzip -l out/sherpa-onnx.aar | grep -E '\.so$|classes.jar' || true
+          mkdir -p tmp/aar && unzip -q out/sherpa-onnx.aar -d tmp/aar
+          unzip -l tmp/aar/classes.jar | grep -i tts || true
+          for c in OfflineTts OfflineTtsConfig OfflineTtsModelConfig OfflineTtsVitsModelConfig GeneratedAudio; do
+            javap -classpath tmp/aar/classes.jar "com.k2fsa.sherpa.onnx.$c" || true
+          done
+
+      - name: Russian Piper voices
+        run: |
+          set -euo pipefail
+          for v in irina denis dmitri ruslan; do
+            NAME="vits-piper-ru_RU-$v-medium"
+            gh release download tts-models --repo k2-fsa/sherpa-onnx --pattern "$NAME.tar.bz2" --dir tmp
+            tar -xjf "tmp/$NAME.tar.bz2" -C tmp
+            ls -la "tmp/$NAME" | head -20
+            (cd tmp && zip -qr "../out/loli-voice-ru-$v.zip" "$NAME")
+            cat "tmp/$NAME"/MODEL_CARD 2>/dev/null | head -20 || true
+          done
+
+      - name: Checksums
+        run: |
+          cd out
+          sha256sum * | tee SHA256SUMS
+          ls -la
+
+      - name: Publish voices-v1 (prerelease)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: voices-v1
+          name: Голоса Лоли (служебный)
+          body: Встроенный русский голос Лоли (sherpa-onnx + Piper). Служебный релиз — приложение скачивает файлы отсюда.
+          prerelease: true
+          make_latest: false
+          files: out/*
