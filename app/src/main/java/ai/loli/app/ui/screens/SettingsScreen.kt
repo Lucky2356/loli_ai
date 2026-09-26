@@ -225,8 +225,24 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
             val context = LocalContext.current
             var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
             var engines by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.EngineOption>>(emptyList()) }
-            LaunchedEffect(s.ttsEngine) { voices = null; engines = c.tts.engines(); voices = c.tts.russianVoices() }
+            val resume = ai.loli.app.ui.components.rememberResumeTick()
+            LaunchedEffect(s.ttsEngine, resume) { voices = null; c.tts.recheck(); engines = c.tts.engines(); voices = c.tts.russianVoices() }
+            val ru by c.tts.russianStatus.collectAsStateWithLifecycle()
+            val engineLabel by c.tts.engineLabel.collectAsStateWithLifecycle()
             val sample = "Привет! Я ${s.assistantName}. Так звучит мой голос."
+            if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA) {
+                androidx.compose.material3.Surface(
+                    onClick = { ai.loli.app.voice.RussianVoiceHelp.act(context, ru, c.tts.activeEngine()) },
+                    shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(ai.loli.app.voice.RussianVoiceHelp.title(ru), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(ai.loli.app.voice.RussianVoiceHelp.hint(ru), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+            if (engineLabel.isNotBlank()) Hint("Сейчас говорит: $engineLabel · " + if (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.OK) "русский есть" else "русского нет")
             // Готовые стили: работают с любым движком, даже если в нём всего один голос.
             SectionLabel("Характер голоса")
             Group {

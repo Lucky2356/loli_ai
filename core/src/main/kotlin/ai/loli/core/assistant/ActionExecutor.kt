@@ -208,7 +208,7 @@ class ActionExecutor(
 
             is AssistantAction.CreateTask -> {
                 val t = tasks.create(action.title, action.details, action.dueDate, action.dueTime)
-                val due = t.dueDate?.let { d -> " на ${RuFormat.date(d, today)}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
+                val due = t.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today)}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
                 changed("Добавила задачу ${RuFormat.quote(t.title)}$due.", RecordRef(RecordType.TASK, t.id, t.title))
             }
 

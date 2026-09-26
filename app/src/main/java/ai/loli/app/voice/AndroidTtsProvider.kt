@@ -8,40 +8,65 @@ import android.speech.tts.UtteranceProgressListener
 import ai.loli.core.util.Logger
 import ai.loli.core.voice.TextToSpeechProvider
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 
-/** Озвучивание ответов системным синтезатором речи Android (русский голос). */
+/**
+ * Озвучивание ответов системным синтезатором речи Android (русский голос).
+ *
+ * На многих телефонах (Xiaomi, Huawei, Honor, Oppo, Vivo) синтезатор по умолчанию не знает русского
+ * и читает кириллицу «по-китайски» или молчит. Поэтому, если пользователь не выбрал синтезатор сам,
+ * Лоли проверяет все установленные и берёт тот, что говорит по-русски (сначала Google).
+ * Если русского нет нигде — не озвучивает чужим языком, а сообщает, что установить.
+ */
 class AndroidTtsProvider(
     context: Context,
     private val rate: () -> Float,
     private val pitch: () -> Float = { 1f },
     private val voiceName: () -> String = { "" },
+    /** Синтезатор, выбранный пользователем вручную; пусто — выбирает Лоли. */
     private val engineName: () -> String = { "" },
+    /** Найденный автоматически синтезатор с русским (запоминается между запусками). */
+    private val autoEngine: () -> String = { "" },
+    private val saveAutoEngine: suspend (String) -> Unit = {},
 ) : TextToSpeechProvider {
     private val appContext = context.applicationContext
     @Volatile private var ready = CompletableDeferred<Boolean>()
     @Volatile private var readyOk = false
     private val pending = ConcurrentHashMap<String, (Unit) -> Unit>()
-    @Volatile private var currentEngine: String = engineName()
+    private val switchLock = Mutex()
+    @Volatile private var probed = false
+    @Volatile private var currentEngine: String = engineName().ifBlank { autoEngine() }
     @Volatile private var tts: TextToSpeech = create(currentEngine)
 
-    /** Синтезатор (движок) можно сменить: Google, Samsung, RHVoice… Пустое имя — системный по умолчанию. */
-    private fun create(engine: String): TextToSpeech {
-        val done = CompletableDeferred<Boolean>()
-        ready = done
-        readyOk = false
+    /** Есть ли русский голос в текущем синтезаторе. */
+    enum class RuStatus { UNKNOWN, OK, MISSING_DATA, NO_RUSSIAN }
+
+    private val _russian = MutableStateFlow(RuStatus.UNKNOWN)
+    val russianStatus: StateFlow<RuStatus> = _russian.asStateFlow()
+    private val _engineLabel = MutableStateFlow("")
+    /** Название синтезатора, которым сейчас говорит Лоли. */
+    val engineLabel: StateFlow<String> = _engineLabel.asStateFlow()
+
+    private fun create(engine: String, onReady: CompletableDeferred<Boolean>? = null): TextToSpeech {
+        val done = onReady ?: CompletableDeferred<Boolean>().also { ready = it; readyOk = false }
         val listener = TextToSpeech.OnInitListener { status ->
             val ok = status == TextToSpeech.SUCCESS
-            readyOk = ok
+            if (onReady == null) readyOk = ok
             done.complete(ok)
             if (!ok) Logger.w(TAG, "TTS недоступен (status=$status, engine=$engine)")
         }
         val t = if (engine.isBlank()) TextToSpeech(appContext, listener) else TextToSpeech(appContext, listener, engine)
+        if (onReady != null) return t
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
             override fun onDone(utteranceId: String?) { utteranceId?.let { pending.remove(it)?.invoke(Unit) } }
@@ -56,15 +81,84 @@ class AndroidTtsProvider(
         return t
     }
 
-    /** Пересоздаёт синтезатор, если в настройках выбран другой движок. */
-    private suspend fun ensureEngine(): Boolean {
-        val wanted = engineName()
-        if (wanted != currentEngine) {
-            runCatching { tts.shutdown() }
-            currentEngine = wanted
-            tts = create(wanted)
+    private fun ruSupport(t: TextToSpeech): RuStatus = when (runCatching { t.isLanguageAvailable(RU) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)) {
+        TextToSpeech.LANG_AVAILABLE, TextToSpeech.LANG_COUNTRY_AVAILABLE, TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE -> RuStatus.OK
+        TextToSpeech.LANG_MISSING_DATA -> RuStatus.MISSING_DATA
+        else -> RuStatus.NO_RUSSIAN
+    }
+
+    private fun switchTo(engine: String) {
+        runCatching { tts.shutdown() }
+        currentEngine = engine
+        tts = create(engine)
+    }
+
+    /**
+     * Готовит синтезатор: ручной выбор пользователя → он; иначе запомненный автоматически → он;
+     * если он не говорит по-русски — перебор установленных синтезаторов (один раз за запуск).
+     */
+    private suspend fun ensureEngine(): Boolean = switchLock.withLock {
+        val manual = engineName()
+        val wanted = manual.ifBlank { autoEngine() }
+        if (wanted != currentEngine) switchTo(wanted)
+        if (withTimeoutOrNull(5000) { ready.await() } != true) return@withLock false
+        var status = ruSupport(tts)
+        if (status != RuStatus.OK && manual.isBlank() && !probed) {
+            probed = true
+            findRussianEngine()?.let { found ->
+                if (found != currentEngine) {
+                    switchTo(found)
+                    if (withTimeoutOrNull(5000) { ready.await() } != true) return@withLock false
+                }
+                runCatching { saveAutoEngine(found) }
+                status = ruSupport(tts)
+            }
         }
-        return withTimeoutOrNull(4000) { ready.await() } ?: false
+        _russian.value = status
+        _engineLabel.value = runCatching {
+            val name = currentEngine.ifBlank { tts.defaultEngine }
+            tts.engines.firstOrNull { it.name == name }?.label ?: name
+        }.getOrDefault("")
+        true
+    }
+
+    /** Перебирает установленные синтезаторы и возвращает тот, что знает русский (Google — первым). */
+    private suspend fun findRussianEngine(): String? {
+        val engines = runCatching { tts.engines.map { it.name } }.getOrDefault(emptyList())
+            .sortedBy { if (it == GOOGLE_TTS) 0 else 1 }
+        var missingData: String? = null
+        for (name in engines) {
+            val done = CompletableDeferred<Boolean>()
+            val probe = runCatching { create(name, done) }.getOrNull() ?: continue
+            val ok = withTimeoutOrNull(5000) { done.await() } == true
+            val st = if (ok) ruSupport(probe) else RuStatus.NO_RUSSIAN
+            runCatching { probe.shutdown() }
+            Logger.i(TAG, "Синтезатор $name: русский — $st")
+            if (st == RuStatus.OK) return name
+            if (st == RuStatus.MISSING_DATA && missingData == null) missingData = name
+        }
+        // Русский есть, но голос не скачан — берём этот синтезатор, чтобы кнопка «Скачать» вела к нему.
+        return missingData
+    }
+
+    /** Повторная проверка (после установки синтезатора или голоса). */
+    suspend fun recheck() {
+        // Уже говорит по-русски — перебирать синтезаторы незачем.
+        if (_russian.value != RuStatus.OK) probed = false
+        ensureEngine()
+    }
+
+    /** Выставляет русский и выбранный голос. false — русского нет, говорить нельзя (выйдет чужой язык). */
+    private fun applyRussian(voice: String): Boolean {
+        val st = ruSupport(tts)
+        _russian.value = st
+        if (st != RuStatus.OK) return false
+        runCatching { tts.language = RU }
+        voice.takeIf { it.isNotBlank() }?.let { name ->
+            runCatching { tts.voices?.firstOrNull { it.name == name && it.locale.language == "ru" } }.getOrNull()
+                ?.let { v -> runCatching { tts.setVoice(v) } }
+        }
+        return true
     }
 
     /** Установленные синтезаторы речи. */
@@ -77,25 +171,27 @@ class AndroidTtsProvider(
 
     fun defaultEngine(): String = runCatching { tts.defaultEngine }.getOrNull().orEmpty()
 
+    /** Синтезатор, которым Лоли говорит сейчас (с учётом автовыбора). */
+    fun activeEngine(): String = currentEngine.ifBlank { defaultEngine() }
+
+    /** Проверить русский (для экрана настроек и шага «Русский голос»). */
+    suspend fun checkRussian(): RuStatus { ensureEngine(); return _russian.value }
+
     override val isReady: Boolean get() = readyOk
 
     override suspend fun speak(text: String) = speakIn(text, null)
 
-    /** Перевод озвучивается голосом нужного языка, если он есть; после — снова русский. */
+    /** Перевод озвучивается голосом нужного языка, если он есть; всё остальное — только русским. */
     override suspend fun speakIn(text: String, language: String?) {
         if (text.isBlank()) return
         if (!ensureEngine()) return
         val foreign = language?.takeIf { it != "ru" }?.let { Locale.forLanguageTag(it) }
-            ?.takeIf { tts.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE }
+            ?.takeIf { runCatching { tts.isLanguageAvailable(it) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED) >= TextToSpeech.LANG_AVAILABLE }
         if (foreign != null) {
             tts.language = foreign
-        } else {
-            val locale = Locale("ru", "RU")
-            if (tts.isLanguageAvailable(locale) >= TextToSpeech.LANG_AVAILABLE) tts.language = locale
-            // Выбранный пользователем голос (если он всё ещё установлен).
-            voiceName().takeIf { it.isNotBlank() }?.let { name ->
-                runCatching { tts.voices?.firstOrNull { it.name == name } }.getOrNull()?.let { v -> runCatching { tts.setVoice(v) } }
-            }
+        } else if (!applyRussian(voiceName())) {
+            Logger.w(TAG, "Русского голоса нет — ответ только текстом")
+            return
         }
         tts.setSpeechRate(rate())
         tts.setPitch(pitch())
@@ -109,6 +205,7 @@ class AndroidTtsProvider(
                 if (result != TextToSpeech.SUCCESS) pending.remove(id)?.invoke(Unit)
             }
         }
+        if (foreign != null) runCatching { tts.language = RU }
     }
 
     override fun stop() { runCatching { tts.stop() } }
@@ -143,7 +240,7 @@ class AndroidTtsProvider(
             }
             val gender = v.name.lowercase().let { n ->
                 when {
-                    "female" in n || "#female" in n -> " · женский"
+                    "female" in n -> " · женский"
                     "male" in n -> " · мужской"
                     else -> ""
                 }
@@ -152,10 +249,10 @@ class AndroidTtsProvider(
         }
     }
 
-    /** Прослушать голос без сохранения настроек. */
+    /** Прослушать голос без сохранения настроек. Всегда по-русски; без русского голоса молчит, а экран показывает, что установить. */
     suspend fun preview(text: String, name: String, pitchOverride: Float? = null, rateOverride: Float? = null) {
         if (!ensureEngine()) return
-        if (name.isNotBlank()) runCatching { tts.voices?.firstOrNull { it.name == name } }.getOrNull()?.let { runCatching { tts.setVoice(it) } }
+        if (!applyRussian(name.ifBlank { voiceName() })) return
         tts.setPitch(pitchOverride ?: pitch())
         tts.setSpeechRate(rateOverride ?: rate())
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), "preview")
@@ -163,5 +260,9 @@ class AndroidTtsProvider(
 
     override fun shutdown() { runCatching { tts.shutdown() } }
 
-    companion object { private const val TAG = "TTS" }
+    companion object {
+        private const val TAG = "TTS"
+        const val GOOGLE_TTS = "com.google.android.tts"
+        private val RU = Locale("ru", "RU")
+    }
 }

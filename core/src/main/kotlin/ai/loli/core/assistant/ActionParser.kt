@@ -280,11 +280,7 @@ class ActionParser(
 
 /** Страховка от AI: убирает из названия задачи обращение и слова команды («Лоли, поставь задачу …»). */
 internal fun cleanTaskTitle(raw: String): String {
-    var t = raw.trim()
-    repeat(2) {
-        t = t.replace(Regex("""^(?:[\p{L}]+,\s+)?(?:(?:мне\s+)?(?:надо|нужно)\s+)?(?:добавь|добавить|создай|создать|запиши|записать|поставь|поставить|заведи|завести|сделай|запланируй)\s+(?:мне\s+)?(?:новую\s+)?(?:задачу|задачку|в\s+задачи)[:,]?\s+""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""^(?:задача|задачу)[:,]?\s+""", RegexOption.IGNORE_CASE), "")
-            .trim()
-    }
-    return t.replaceFirstChar { it.uppercase() }
+    // AI иногда оставляет в названии «завтра», «в 17:00» — дата и время уже в due_date/due_time.
+    val noDates = ai.loli.core.nlp.RuDateTimeParser().parse(ai.loli.core.nlp.SpokenTime.normalize(raw), java.time.LocalDate.now()).remainder
+    return ActionTitle.clean(noDates.ifBlank { raw })
 }

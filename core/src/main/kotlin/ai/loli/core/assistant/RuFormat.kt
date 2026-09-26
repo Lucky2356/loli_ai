@@ -26,6 +26,12 @@ object RuFormat {
         }
     }
 
+    /** «завтра, 26 сентября» — относительное слово и точная дата, чтобы не было сомнений. */
+    fun dateFull(date: LocalDate, today: LocalDate): String {
+        val rel = date(date, today)
+        return if (rel in setOf("сегодня", "завтра", "послезавтра", "вчера")) "$rel, ${dayMonth.format(date)}" else rel
+    }
+
     fun time(t: LocalTime): String = "%02d:%02d".format(t.hour, t.minute)
 
     fun dateTime(instant: Instant, zone: ZoneId, now: Instant): String {

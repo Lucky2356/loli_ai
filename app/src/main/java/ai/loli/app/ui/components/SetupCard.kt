@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.loli.app.AppContainer
 import ai.loli.app.device.BackgroundLauncher
 import ai.loli.app.device.LoliAccessibilityService
@@ -110,7 +111,7 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
     val oem = remember { OemHints.current() }
     // Шаги производителя (автозапуск Xiaomi/Huawei/Oppo) нельзя проверить — отмечаем пройденными после посещения.
     var oemDone by remember { mutableStateOf(prefs.getBoolean("oem_autostart_done", false)) }
-    val todo = listOfNotNull(
+    val baseTodo = listOfNotNull(
         if (!basePerms) SetupStep("perms", Icons.Rounded.Mic, "Микрофон и уведомления",
             "В окне «Разрешить?» нажимайте «Разрешить» или «При использовании приложения».") { permsLauncher.launch(allPerms) } else null,
         if (!assistant) SetupStep("assistant", Icons.Rounded.TouchApp, "Сделать $name ассистентом",
@@ -134,6 +135,16 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
             OemHints.openAutostart(context)
         } else null,
     )
+    // Русский голос: без него Лоли молчит или читает ответы чужим языком.
+    val ttsOn = c.settings.settings.collectAsStateWithLifecycle().value.ttsEnabled
+    val ru by c.tts.russianStatus.collectAsStateWithLifecycle()
+    LaunchedEffect(tick, ttsOn) { if (ttsOn) c.tts.recheck() }
+    val voiceStep = if (ttsOn && (ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.NO_RUSSIAN || ru == ai.loli.app.voice.AndroidTtsProvider.RuStatus.MISSING_DATA)) {
+        SetupStep("voice", Icons.Rounded.VolumeUp, ai.loli.app.voice.RussianVoiceHelp.title(ru), ai.loli.app.voice.RussianVoiceHelp.hint(ru)) {
+            ai.loli.app.voice.RussianVoiceHelp.act(context, ru, c.tts.activeEngine())
+        }
+    } else null
+    val todo = listOfNotNull(voiceStep) + baseTodo
     val required = todo.filter { !it.optional }
     val optional = todo.filter { it.optional }
     var showOptional by rememberSaveable { mutableStateOf(false) }
