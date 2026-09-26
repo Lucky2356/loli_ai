@@ -278,7 +278,11 @@ class AssistantEngine(
     }
 
     /** Фраза совпала со сценарием («спокойной ночи») — выполняем его команды по очереди. */
+    private var routineDepth = 0
+
     private suspend fun runRoutine(text: String, cfg: AssistantSettings): AssistantReply? {
+        // Сценарий внутри сценария не запускается — иначе фраза, ссылающаяся на себя, зациклится.
+        if (routineDepth > 0) return null
         val list = runCatching { routines() }.getOrDefault(emptyList())
         if (list.isEmpty()) return null
         val key = ai.loli.core.model.Routine.normalize(text)
@@ -287,7 +291,16 @@ class AssistantEngine(
         val replies = ArrayList<String>()
         var changed = false
         for (cmd in routine.commands.take(10)) {
-            val r = runCatching { process(cmd, cfg) }.getOrElse { AssistantReply("Не получилось: $cmd") }
+            routineDepth++
+            val r = try {
+                process(cmd, cfg)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AssistantReply("Не получилось: $cmd")
+            } finally {
+                routineDepth--
+            }
             // Сценарий не ведёт диалог: вопросы и подтверждения внутри него не ждём.
             context.pendingConfirmation = null; context.pendingChoice = null; context.pendingSlot = null
             if (r.text.isNotBlank()) replies += r.text

@@ -45,7 +45,7 @@ class LocalStore(
             db.noteQueries.deleteAll(); db.expenseQueries.deleteAll(); db.taskQueries.deleteAll()
             db.reminderQueries.deleteAll(); db.memoryQueries.deleteAll(); db.conversationQueries.deleteAll()
             db.embeddingQueries.deleteAll(); db.syncStateQueries.deleteAll()
-            db.shoppingItemQueries.deleteAll(); db.routineQueries.deleteAll()
+            db.shoppingItemQueries.deleteAll(); db.routineQueries.deleteAll(); db.secretNoteQueries.deleteAll()
         }
     }
 

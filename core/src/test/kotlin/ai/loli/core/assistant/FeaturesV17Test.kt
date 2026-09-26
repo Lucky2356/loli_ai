@@ -103,3 +103,12 @@ class DictationTest {
         assertEquals("Идеи для ремонта кухни поменять плитку и не забыть купить краску", note.content)
     }
 }
+
+class RoutineLoopTest {
+    @Test fun selfReferencingRoutineDoesNotLoop() = kotlinx.coroutines.test.runTest {
+        val env = TestEnv().apply { settings = AssistantSettings(useAI = false) }
+        env.store.routines.save("Поехали", listOf("поехали", "добавь задачу проверить шины"))
+        env.engine.handle("поехали")
+        assertEquals(listOf("Проверить шины"), env.store.tasks.all().map { it.title })
+    }
+}
