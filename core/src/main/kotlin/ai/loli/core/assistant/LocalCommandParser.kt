@@ -46,9 +46,14 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     }
 
     private fun parseCleaned(input: String, now: Instant, zone: ZoneId): AssistantPlan? {
-        val text = cleanup(input)
+        var text = cleanup(input)
         if (text.isEmpty()) return null
         val today = now.atZone(zone).toLocalDate()
+        // «мне надо сходить на стрижку, запиши задачу» — команда в конце фразы
+        TRAILING_TASK.find(text)?.let { m ->
+            val body = m.groupValues[1].replace(Regex("""^(?:(?:мне|нам)\s+)?(?:надо|нужно|необходимо|пора)\s+""", RegexOption.IGNORE_CASE), "").trim()
+            if (body.isNotEmpty()) text = "добавь задачу $body"
+        }
 
         wholePhrase(text, now, zone)?.let { return it }
 
@@ -166,7 +171,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             .ifEmpty { listOf(text) }
 
     private fun segment(part: String, now: Instant, zone: ZoneId, today: LocalDate): List<String> {
-        val seps = SEGMENT_SEP.findAll(part).toList()
+        // «напомни, что надо…», «запиши, чтобы…» — придаточное после запятой не отдельная команда.
+        val seps = SEGMENT_SEP.findAll(part).filterNot { it.value.trim() == "," && SUBORDINATE.containsMatchIn(part.substring(it.range.last + 1)) }.toList()
         if (seps.isEmpty()) return listOf(part)
         if (seps.size > MAX_SEPARATORS) return splitByConjunction(part)
         val starts = listOf(0) + seps.map { it.range.last + 1 }
@@ -509,6 +515,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val isReference = Regex("""^(об этом|про это|это|о ней|о нем|о нём|про неё|про нее|про него)$""").matches(RuTokenizer.normalize(rawText))
         var text = if (isReference) "" else rawText
             .replace(Regex("""^(что|о том,? что|о том|про|о|об|чтобы|,)\s+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^(?:(?:мне|нам)\s+)?(?:надо|нужно|необходимо|пора|следует|не забыть|не забудь)\s+""", RegexOption.IGNORE_CASE), "")
             .trim().trim(',', '.').trim()
         if (wake && text.isEmpty()) text = "Подъём!"
         val parsed = if (wake) parsedRaw.copy(spec = parsedRaw.spec.copy(ambiguousHour = false)) else parsedRaw
@@ -571,7 +578,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     }
 
     private fun parseTaskCreateExplicit(original: String, n: String, today: LocalDate): AssistantAction? {
-        val m = Regex("""^(?:(?:добавь|создай|запиши|поставь|заведи|внеси|сделай)\s+)?(?:мне\s+)?(?:(?:новую\s+)?задачу|в\s+(?:мои\s+)?задачи|в\s+список\s+задач|в\s+список\s+дел|в\s+(?:мои\s+)?дела|новая\s+задача|задача|в\s+туду|туду)[:,]?\s+(.+)$""").find(n) ?: return null
+        Regex("""^запланируй\s+(.+)$""").find(n)?.let { p ->
+            if (!Regex("""^(?:задач|напомин|встреч|событ)""").containsMatchIn(p.groupValues[1])) return taskFrom(sub(original, p.groups[1]!!), today)
+        }
+        val m = Regex("""^(?:(?:мне\s+)?(?:надо|нужно)\s+)?(?:(?:добавь|добавить|создай|создать|запиши|записать|поставь|поставить|заведи|завести|внеси|сделай|запланируй)\s+)?(?:мне\s+)?(?:(?:новую\s+)?(?:задачу|задачку)|в\s+(?:мои\s+)?(?:задачи|задачки)|в\s+список\s+задач|в\s+список\s+дел|в\s+(?:мои\s+)?дела|новая\s+задача|задача|в\s+туду|туду)[:,]?\s+(.+)$""").find(n) ?: return null
         // «задачи на завтра» / «задача на сегодня какая?» — это вопрос, а не создание
         if (Regex("""^(?:задачи|задача)\s""").containsMatchIn(n) && dates.parse(sub(original, m.groups[1]!!), today).remainder.isBlank()) return null
         return taskFrom(sub(original, m.groups[1]!!), today)
@@ -1150,6 +1160,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         /** Выход из диалогового режима. */
         /** Места, где фразу можно разрезать: запятые и союзы «и», «а», «но», «потом», «затем», «после этого». */
         private val SEGMENT_SEP = Regex(""",\s*(?:(?:а|и|но)\s+)?(?:(?:ещё|еще|потом|затем|также|кроме того|после этого|после)\s+)?|\s+(?:и|а|но)\s+(?:(?:ещё|еще|потом|затем|также)\s+)?|\s+(?:а потом|потом|затем|после этого|а ещё|а еще|кроме того)\s+""", RegexOption.IGNORE_CASE)
+        private val SUBORDINATE = Regex("""^\s*(?:что|чтобы|о том|об этом|будто|который|которая|которое|которые)(?=[\s,]|$)""", RegexOption.IGNORE_CASE)
+        private val TRAILING_TASK = Regex("""^(.+?)[,.]?\s+(?:запиши|добавь|поставь|заведи|создай|сделай)\s+(?:это\s+)?(?:как\s+|в\s+)?(?:задачу|задачи|задачку|дела)$""", RegexOption.IGNORE_CASE)
         private const val MAX_SEPARATORS = 12
 
         private val LEADING_CONJUNCTION = Regex("""^(?:(?:и|а|ещё|еще|теперь|также|кстати|потом)[,\s]+)+""", RegexOption.IGNORE_CASE)

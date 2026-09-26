@@ -429,8 +429,26 @@ class AssistantEngine(
         /** Убирает обращение «Лоли, …» из начала текстовой команды. */
         fun stripWakeWord(input: String, name: String): String {
             val trimmed = input.trim()
-            val match = WakeWordMatcher(name, threshold = 0.85).match(trimmed) ?: return trimmed
-            return match.command
+            WakeWordMatcher(name, threshold = 0.85).match(trimmed)?.let { return it.command }
+            // Распознаватель пишет имя по-разному («Лоля», «Лолли»). Мягче сравниваем, если дальше идёт команда.
+            WakeWordMatcher(name, threshold = 0.7).match(trimmed)?.let { m ->
+                val first = ai.loli.core.nlp.RuTokenizer.normalize(m.command.substringBefore(' ').trim(',', '.'))
+                if (first in COMMAND_WORDS || first.endsWith("ть") && first.length >= 5) return m.command
+            }
+            // «поставь, Лоли, задачу…», «напомни мне, Лоли, …», «…, Лоли»
+            val strict = WakeWordMatcher(name, threshold = 0.85)
+            val cut = Regex(""",\s*([\p{L}-]+)\s*(?:,|$)""").findAll(trimmed).firstOrNull { strict.similarity(ai.loli.core.nlp.RuTokenizer.normalize(it.groupValues[1])) >= 0.85 }
+            if (cut != null) {
+                val joined = trimmed.substring(0, cut.range.first) + " " + trimmed.substring(cut.range.last + 1)
+                return joined.replace(Regex("""\s{2,}"""), " ").trim().trim(',').trim()
+            }
+            return trimmed
         }
+
+        private val COMMAND_WORDS = setOf(
+            "добавь", "поставь", "заведи", "создай", "запиши", "напомни", "найди", "покажи", "удали", "отметь", "запомни",
+            "сохрани", "внеси", "запланируй", "позвони", "напиши", "открой", "включи", "выключи", "сделай", "скажи", "расскажи",
+            "сколько", "какая", "какой", "какие", "что", "когда", "где", "мне", "у", "разбуди", "переведи", "стоп", "задача", "задачу",
+        )
     }
 }

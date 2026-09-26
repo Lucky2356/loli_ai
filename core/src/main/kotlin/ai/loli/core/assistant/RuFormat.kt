@@ -41,4 +41,19 @@ object RuFormat {
     }
 
     fun quote(s: String): String = "«${s.trim().take(80)}»"
+
+    /** Форма слова для числа: plural(1, "задача", "задачи", "задач") → «задача»; 2 → «задачи»; 5 → «задач». */
+    fun plural(n: Long, one: String, few: String, many: String): String {
+        val m10 = Math.floorMod(n, 10L); val m100 = Math.floorMod(n, 100L)
+        return when {
+            m10 == 1L && m100 != 11L -> one
+            m10 in 2..4 && m100 !in 12..14 -> few
+            else -> many
+        }
+    }
+
+    fun plural(n: Int, one: String, few: String, many: String): String = plural(n.toLong(), one, few, many)
+
+    /** «5 задач», «1 задача», «22 задачи». */
+    fun count(n: Int, one: String, few: String, many: String): String = "$n ${plural(n, one, few, many)}"
 }

@@ -117,12 +117,15 @@ data class Recurrence(
         }
     }
 
+    /** «каждый 21 день», «каждые 3 дня». */
+    private fun every(n: Int): String = if (n % 10 == 1 && n % 100 != 11) "каждый" else "каждые"
+
     /** Описание на русском для UI и голосового ответа. */
     fun describeRu(): String {
         val timePart = time?.let { " в %02d:%02d".format(it.hour, it.minute) } ?: ""
         return when (frequency) {
-            Frequency.HOURLY -> if (interval == 1) "каждый час" else "каждые $interval ч."
-            Frequency.DAILY -> (if (interval == 1) "каждый день" else "каждые $interval дн.") + timePart
+            Frequency.HOURLY -> if (interval == 1) "каждый час" else "${every(interval)} $interval ${ai.loli.core.assistant.RuFormat.plural(interval, "час", "часа", "часов")}"
+            Frequency.DAILY -> (if (interval == 1) "каждый день" else "${every(interval)} $interval ${ai.loli.core.assistant.RuFormat.plural(interval, "день", "дня", "дней")}") + timePart
             Frequency.WEEKLY -> {
                 val days = daysOfWeek.sorted()
                 val dayText = when {
@@ -131,11 +134,11 @@ data class Recurrence(
                     days.size == 2 && days.containsAll(listOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) -> "по выходным"
                     else -> days.joinToString(", ") { EVERY_DAY_RU.getValue(it) }
                 }
-                (if (interval > 1) "раз в $interval нед., " else "") + dayText + timePart
+                (if (interval > 1) "раз в $interval ${ai.loli.core.assistant.RuFormat.plural(interval, "неделю", "недели", "недель")}, " else "") + dayText + timePart
             }
-            Frequency.MONTHLY -> (if (interval == 1) "каждый месяц" else "каждые $interval мес.") +
+            Frequency.MONTHLY -> (if (interval == 1) "каждый месяц" else "${every(interval)} $interval ${ai.loli.core.assistant.RuFormat.plural(interval, "месяц", "месяца", "месяцев")}") +
                 (dayOfMonth?.let { " $it-го числа" } ?: "") + timePart
-            Frequency.YEARLY -> (if (interval == 1) "каждый год" else "раз в $interval г.") +
+            Frequency.YEARLY -> (if (interval == 1) "каждый год" else "раз в $interval ${ai.loli.core.assistant.RuFormat.plural(interval, "год", "года", "лет")}") +
                 (if (month != null && dayOfMonth != null) " $dayOfMonth ${MONTHS_GEN[month - 1]}" else "") + timePart
         }
     }

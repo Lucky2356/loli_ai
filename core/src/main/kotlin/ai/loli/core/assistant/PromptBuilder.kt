@@ -44,7 +44,7 @@ object PromptBuilder {
             - create_expense {amount:число, currency:"RUB", category, description, date:"YYYY-MM-DD"}
             - query_expenses {period:"today"|"yesterday"|"this_week"|"last_7_days"|"this_month"|"last_month"|"last_30_days"|"this_year"|"all", from?:"YYYY-MM-DD", to?:"YYYY-MM-DD", category?, mode:"total"|"by_category"|"top"|"list"}
             - delete_expenses {targets?:[], period?, from?, to?, category?}
-            - create_task {title, details?, due_date?:"YYYY-MM-DD", due_time?:"HH:MM"}
+            - create_task {title, details?, due_date?:"YYYY-MM-DD", due_time?:"HH:MM"} — title только само действие с большой буквы, без слов команды и обращения: «Лоли, поставь задачу сходить на стрижку» → title «Сходить на стрижку». Относительные даты («через 3 дня», «в следующую пятницу», «2 дня назад») переводи в due_date / date от сегодняшней даты.
             - complete_task {target|query, done?:true}
             - query_tasks {filter:"today"|"tomorrow"|"week"|"overdue"|"active"|"completed"|"all"}
             - delete_task {target|query}

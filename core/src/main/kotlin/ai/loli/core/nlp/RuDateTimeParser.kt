@@ -52,6 +52,10 @@ class RuDateTimeParser {
 
     /** Вычисляет момент первого срабатывания (для напоминаний). null — если времени в фразе нет. */
     fun resolveTrigger(spec: WhenSpec, now: Instant, zone: ZoneId, defaultTime: LocalTime = LocalTime.of(9, 0)): Instant? {
+        // «через 2 дня в 9» — дата из сдвига, время из фразы
+        if (spec.offset != null && spec.time != null && spec.date != null && spec.recurrence == null) {
+            return ZonedDateTime.of(spec.date, spec.time, zone).toInstant()
+        }
         if (spec.offset != null) return now.plus(spec.offset)
         val nowZ = now.atZone(zone)
         spec.recurrence?.let { rule ->
@@ -148,6 +152,43 @@ class RuDateTimeParser {
             }
         }
 
+        // --- «2 дня назад», «неделю тому назад», «пару месяцев назад» ---
+        run {
+            val num = t[i].number ?: SOME_WORDS[w]
+            val unitIdx = if (num != null) i + 1 else i
+            val unit = at(unitIdx) ?: return@run
+            var k = unitIdx + 1
+            if (at(k) == "тому") k++
+            if (at(k) != "назад") return@run
+            val n = (num ?: 1.0).toLong().takeIf { it in 0..3650 } ?: return@run
+            val date = when {
+                unit == "день" || unit == "дня" || unit == "дней" || unit == "сутки" || unit == "суток" -> today.minusDays(n)
+                unit.startsWith("недел") -> today.minusWeeks(n)
+                unit.startsWith("месяц") -> today.minusMonths(n)
+                unit == "год" || unit == "года" || unit == "лет" -> today.minusYears(n)
+                else -> return@run
+            }
+            return Match(k - i + 1, spec.copy(date = date))
+        }
+
+        // --- «на прошлой неделе (в среду)», «на следующей неделе», «на этой неделе в пятницу» ---
+        if (w == "на" && at(i + 2) == "неделе") {
+            val shift = WEEK_SHIFT.entries.firstOrNull { at(i + 1)?.startsWith(it.key) == true }?.value
+            if (shift != null) {
+                val monday = today.with(DayOfWeek.MONDAY).plusWeeks(shift.toLong())
+                var count = 3
+                val dayIdx = if (at(i + 3) == "в" || at(i + 3) == "во") i + 4 else i + 3
+                val day = WEEKDAY_ANY[at(dayIdx)]
+                val date = when {
+                    day != null -> { count = dayIdx - i + 1; monday.plusDays((day.value - 1).toLong()) }
+                    shift < 0 -> today.minusWeeks(-shift.toLong())
+                    shift == 0 -> today
+                    else -> monday
+                }
+                return Match(count, spec.copy(date = date))
+            }
+        }
+
         // --- Относительные дни ---
         val prepOffset = if (w in DAY_PREPOSITIONS && RELATIVE_DAYS.containsKey(at(i + 1))) 1 else 0
         RELATIVE_DAYS[at(i + prepOffset)]?.let { days ->
@@ -158,23 +199,40 @@ class RuDateTimeParser {
         if (w == "через") {
             val next = t.getOrNull(i + 1) ?: return null
             if (next.norm == "полчаса") return Match(2, spec.copy(offset = Duration.ofMinutes(30)))
-            val (amount, unitIdx) = if (next.number != null) next.number to i + 2 else 1.0 to i + 1
+            val lead = next.number ?: SOME_WORDS[next.norm]
+            val (amount, unitIdx) = if (lead != null) lead to i + 2 else 1.0 to i + 1
             val unit = at(unitIdx) ?: return null
-            val minutes = when {
+            var minutes = when {
                 unit.startsWith("мин") -> amount
                 unit.startsWith("час") -> amount * 60
-                unit == "день" || unit == "дня" || unit == "дней" || unit == "сутки" -> amount * 60 * 24
+                unit == "день" || unit == "дня" || unit == "дней" || unit == "сутки" || unit == "суток" -> amount * 60 * 24
                 unit.startsWith("недел") -> amount * 60 * 24 * 7
                 unit.startsWith("месяц") -> amount * 60 * 24 * 30
+                unit == "год" || unit == "года" || unit == "лет" -> amount * 60 * 24 * 365
                 unit.startsWith("сек") -> maxOf(1.0, amount / 60)
                 else -> return null
             }
-            val count = unitIdx - i + 1
-            return if (unit.startsWith("месяц") && amount == Math.floor(amount)) {
-                Match(count, spec.copy(date = today.plusMonths(amount.toLong())))
-            } else {
-                Match(count, spec.copy(offset = Duration.ofSeconds((minutes * 60).toLong())))
+            var count = unitIdx - i + 1
+            // «через час двадцать», «через 2 часа 15 минут»
+            if (unit.startsWith("час")) {
+                val extra = t.getOrNull(unitIdx + 1)?.intValue
+                val after = at(unitIdx + 2)
+                if (extra != null && extra in 1..59 && (after == null || after.startsWith("мин") || after !in NOT_MINUTE_FOLLOWERS && !after.first().isDigit() && after !in Money.currencyWords)) {
+                    minutes += extra
+                    count += if (after?.startsWith("мин") == true) 2 else 1
+                }
             }
+            val whole = amount == Math.floor(amount)
+            val date = when {
+                !whole -> null
+                unit.startsWith("месяц") -> today.plusMonths(amount.toLong())
+                unit == "год" || unit == "года" || unit == "лет" -> today.plusYears(amount.toLong())
+                unit.startsWith("недел") -> today.plusWeeks(amount.toLong())
+                unit == "день" || unit == "дня" || unit == "дней" || unit == "сутки" || unit == "суток" -> today.plusDays(amount.toLong())
+                else -> null
+            }
+            // Дни и больше — это дата (для задач и событий); для напоминаний сохраняется и точный сдвиг.
+            return Match(count, spec.copy(date = date ?: spec.date, offset = Duration.ofSeconds((minutes * 60).toLong())))
         }
 
         // --- День недели: «в пятницу», «в следующий вторник», «до пятницы», «к среде» ---
@@ -182,6 +240,16 @@ class RuDateTimeParser {
             var k = i + 1
             var forceNextWeek = false
             if (at(k)?.startsWith("следующ") == true) { forceNextWeek = true; k++ }
+            // «в прошлую пятницу», «в позапрошлый вторник»
+            val back = when {
+                at(k)?.startsWith("позапрошл") == true -> 2L
+                at(k)?.startsWith("прошл") == true -> 1L
+                else -> 0L
+            }
+            if (back > 0) {
+                val day = WEEKDAY_ANY[at(k + 1)]
+                if (day != null) return Match(k - i + 2, spec.copy(date = today.with(TemporalAdjusters.previous(day)).minusWeeks(back - 1)))
+            }
             if (at(k)?.startsWith("эт") == true) k++ // «в эту пятницу»
             val day = WEEKDAY_ANY[at(k)]
             if (day != null) {
@@ -365,6 +433,9 @@ class RuDateTimeParser {
             "в конце" to null, "с утра" to LocalTime.of(9, 0), "рано утром" to LocalTime.of(7, 0),
             "поздно вечером" to LocalTime.of(22, 0),
         ).filterValues { it != null }.mapValues { it.value!! }
+        private val SOME_WORDS = mapOf("несколько" to 3.0, "пару" to 2.0, "пара" to 2.0)
+        private val WEEK_SHIFT = linkedMapOf("позапрошл" to -2, "прошл" to -1, "следующ" to 1, "эт" to 0, "текущ" to 0)
+        private val NOT_MINUTE_FOLLOWERS = setOf("дня", "дней", "день", "недели", "недель", "раз", "раза", "человек", "штук")
         private val RELATIVE_DAYS = mapOf("сегодня" to 0, "завтра" to 1, "послезавтра" to 2, "вчера" to -1, "позавчера" to -2)
         private val WORKDAYS = setOf(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
 

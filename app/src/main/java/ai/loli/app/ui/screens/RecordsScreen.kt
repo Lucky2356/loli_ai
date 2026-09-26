@@ -88,7 +88,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
 
     LoliScreen(
         title = "Записи",
-        subtitle = "${notes.size} заметок · ${ideas.size} идей · ${memories.size} в памяти",
+        subtitle = "${ai.loli.core.assistant.RuFormat.count(notes.size, "заметка", "заметки", "заметок")} · ${ai.loli.core.assistant.RuFormat.count(ideas.size, "идея", "идеи", "идей")} · ${memories.size} в памяти",
         actions = { IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История разговоров") } },
         fab = { if (query.isBlank()) LoliFab(Icons.Rounded.Add, "Добавить") { creating = true } },
     ) {

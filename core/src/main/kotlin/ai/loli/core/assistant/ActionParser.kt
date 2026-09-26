@@ -120,7 +120,7 @@ class ActionParser(
                 AssistantAction.DeleteExpenses(ids, preset, from, to ?: from, a.s("category")?.takeIf { it.isNotBlank() })
             }
             "create_task" -> {
-                val title = text(a.s("title"), 300)
+                val title = cleanTaskTitle(text(a.s("title"), 300))
                 if (title.isEmpty()) throw ValidationException("пустая задача")
                 AssistantAction.CreateTask(
                     title, text(a.s("details"), MAX_TEXT),
@@ -276,4 +276,15 @@ class ActionParser(
             return runCatching { LoliJson.parseToJsonElement(text.substring(start, end + 1)) as? JsonObject }.getOrNull()
         }
     }
+}
+
+/** Страховка от AI: убирает из названия задачи обращение и слова команды («Лоли, поставь задачу …»). */
+internal fun cleanTaskTitle(raw: String): String {
+    var t = raw.trim()
+    repeat(2) {
+        t = t.replace(Regex("""^(?:[\p{L}]+,\s+)?(?:(?:мне\s+)?(?:надо|нужно)\s+)?(?:добавь|добавить|создай|создать|запиши|записать|поставь|поставить|заведи|завести|сделай|запланируй)\s+(?:мне\s+)?(?:новую\s+)?(?:задачу|задачку|в\s+задачи)[:,]?\s+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^(?:задача|задачу)[:,]?\s+""", RegexOption.IGNORE_CASE), "")
+            .trim()
+    }
+    return t.replaceFirstChar { it.uppercase() }
 }

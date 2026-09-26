@@ -57,7 +57,33 @@ object SpeechText {
             if (i > 0) sb.append(if (limited[i - 1].endsWith(":") || limited[i - 1].endsWith(".")) " " else ". ")
             sb.append(line)
         }
-        return sb.toString().replace(Regex("[«»]"), "")
+        return declineUnits(sb.toString().replace(Regex("[«»]"), ""))
+    }
+
+    /** «1 ₽» → «1 рубль», «22 ₽» → «22 рубля», «3 дн.» → «3 дня»: движок речи не склоняет символы и сокращения. */
+    fun declineUnits(text: String): String {
+        val units = listOf(
+            Regex("""(\d[\d  ]*)(?:,(\d+))?\s?₽""") to Triple("рубль", "рубля", "рублей"),
+            Regex("""(\d[\d  ]*)(?:,(\d+))?\s?\$""") to Triple("доллар", "доллара", "долларов"),
+            Regex("""(\d[\d  ]*)(?:,(\d+))?\s?€""") to Triple("евро", "евро", "евро"),
+            Regex("""(\d+)()\s?мин\.""") to Triple("минута", "минуты", "минут"),
+            Regex("""(\d+)()\s?ч\.""") to Triple("час", "часа", "часов"),
+            Regex("""(\d+)()\s?дн\.""") to Triple("день", "дня", "дней"),
+            Regex("""(\d+)()\s?нед\.""") to Triple("неделя", "недели", "недель"),
+            Regex("""(\d+)()\s?мес\.""") to Triple("месяц", "месяца", "месяцев"),
+        )
+        var t = text
+        for ((re, forms) in units) {
+            t = re.replace(t) { m ->
+                val whole = m.groupValues[1].trim()
+                val n = whole.replace(" ", "").replace(" ", "").toLongOrNull() ?: return@replace m.value
+                val frac = m.groupValues[2]
+                // С копейками — родительный падеж единственного числа: «12,50 рубля»
+                val word = if (frac.isNotEmpty()) forms.second else ai.loli.core.assistant.RuFormat.plural(n, forms.first, forms.second, forms.third)
+                "$whole${if (frac.isNotEmpty()) ",$frac" else ""} $word"
+            }
+        }
+        return t
     }
 }
 
