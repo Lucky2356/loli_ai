@@ -22,6 +22,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -110,7 +112,7 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                 onDispose { }
             }
-            LoliTheme(settings.themeMode, settings.dynamicColor) {
+            LoliTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest, openSettingsRequest) }
             }
         }
@@ -266,7 +268,8 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
     val imeVisible = WindowInsets.isImeVisible
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = { if (!imeVisible) BottomBar(nav) },
+        // Чат открыт на весь экран — как отдельное окно, без нижнего меню.
+        bottomBar = { if (!imeVisible && nav.route?.startsWith("chat") != true) BottomBar(nav) },
     ) { padding ->
         val holder = rememberSaveableStateHolder()
         AnimatedContent(
@@ -275,6 +278,11 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
                 val (fromTab, fromRoute) = initialState
                 val (toTab, toRoute) = targetState
                 when {
+                    // Чат выезжает снизу, как отдельное окно, и уезжает вниз.
+                    toRoute?.startsWith("chat") == true && fromRoute == null ->
+                        (slideInVertically(tween(320)) { it / 2 } + fadeIn(tween(220))) togetherWith fadeOut(tween(200))
+                    fromRoute?.startsWith("chat") == true && toRoute == null ->
+                        fadeIn(tween(220)) togetherWith (slideOutVertically(tween(280)) { it / 2 } + fadeOut(tween(220)))
                     // Вложенный экран открывается справа, «Назад» — уезжает вправо.
                     fromTab == toTab && fromRoute == null && toRoute != null ->
                         (slideInHorizontally(tween(280)) { it / 3 } + fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(280)) { -it / 8 } + fadeOut(tween(180)))
@@ -314,6 +322,10 @@ private fun Screen(
     when (tab) {
         Tab.HOME -> {
             val vm: HomeViewModel = viewModel { HomeViewModel(c) }
+            if (route?.startsWith("chat") == true) {
+                ai.loli.app.ui.screens.ChatScreen(vm, onMic = listen, onBack = back, keyboard = route == "chat/input")
+                return
+            }
             HomeScreen(
                 vm,
                 onMic = listen,
@@ -322,6 +334,7 @@ private fun Screen(
                 openExpenses = { nav.showRoot(Tab.EXPENSES) },
                 openSettings = { page -> if (page == null) nav.showRoot(Tab.SETTINGS) else { nav.showRoot(Tab.SETTINGS); nav.open(page, Tab.SETTINGS) } },
                 openHistory = { nav.open("history", Tab.RECORDS) },
+                openChat = { keyboard -> nav.open(if (keyboard) "chat/input" else "chat") },
             )
         }
         Tab.RECORDS -> when (route) {

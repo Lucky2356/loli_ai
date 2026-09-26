@@ -42,6 +42,11 @@ class HomeViewModel(val c: AppContainer) : ViewModel() {
         .map { it.reversed() }
         .stateIn(viewModelScope, started, emptyList())
 
+    /** Вся недавняя переписка — для полноэкранного чата. */
+    val fullHistory: StateFlow<List<ConversationMessage>> = c.store.conversations.observeRecent(200)
+        .map { it.reversed() }
+        .stateIn(viewModelScope, started, emptyList())
+
     val summary: StateFlow<HomeSummary> = combine(
         c.store.notes.observe(null), c.store.tasks.observe(), c.store.expenses.observe(), c.store.reminders.observe(), c.store.memories.observe(),
     ) { notes, tasks, expenses, reminders, memories ->

@@ -139,7 +139,10 @@ class WakeWordService : LifecycleService() {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onPartialResult(hypothesis: String?) = Unit
+        override fun onPartialResult(hypothesis: String?) {
+            // Пока Лоли отвечает, микрофон слушает только «стоп».
+            if (mode == Mode.PROCESSING && StopWords.isStop(voskText(hypothesis, "partial"), matcherName)) userStopped()
+        }
 
         override fun onResult(hypothesis: String?) {
             val text = voskText(hypothesis, "text")
@@ -154,7 +157,7 @@ class WakeWordService : LifecycleService() {
                     }
                 }
                 Mode.COMMAND -> dispatch(matcher.match(text)?.command?.ifBlank { null } ?: text)
-                Mode.PROCESSING -> Unit
+                Mode.PROCESSING -> if (StopWords.isStop(text, matcherName)) userStopped()
             }
         }
 
@@ -180,9 +183,20 @@ class WakeWordService : LifecycleService() {
         updateNotification(getString(R.string.wake_command))
     }
 
+    @Volatile private var stoppedByUser = false
+    private val matcherName get() = container.settings.settings.value.assistantName
+
+    /** «Стоп» во время ответа: замолкаем и возвращаемся к ожиданию имени. */
+    private fun userStopped() {
+        if (stoppedByUser) return
+        stoppedByUser = true
+        container.voice.stop()
+    }
+
     private fun dispatch(command: String) {
         mode = Mode.PROCESSING
-        speechService?.setPause(true) // не слушаем собственный голосовой ответ
+        stoppedByUser = false
+        // Микрофон не выключаем: во время ответа распознаётся только «стоп», остальное (в том числе голос Лоли) игнорируется.
         updateNotification(getString(R.string.wake_thinking))
         lifecycleScope.launch {
             val reply = try {
@@ -192,11 +206,13 @@ class WakeWordService : LifecycleService() {
                 null
             }
             delay(300)
+            // Сбрасываем хвост собственного ответа; на время сброса распознавание на паузе (без гонки потоков).
+            speechService?.setPause(true)
             recognizer?.reset()
             speechService?.setPause(false)
             val s = container.settings.settings.value
             val wantsMore = reply != null && reply.expectFollowUp && (s.dialogModeEnabled || reply.awaitingAnswer || reply.awaitingConfirmation)
-            if (wantsMore && followUps < MAX_FOLLOW_UPS) {
+            if (wantsMore && !stoppedByUser && followUps < MAX_FOLLOW_UPS) {
                 followUps++
                 enterCommandMode()
             } else {

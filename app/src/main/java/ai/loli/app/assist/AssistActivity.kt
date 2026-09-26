@@ -88,7 +88,7 @@ class AssistActivity : ComponentActivity() {
         if (savedInstanceState == null) startListening++
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle()
-            LoliTheme(settings.themeMode, settings.dynamicColor) {
+            LoliTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
                 AssistPanel(
                     container, startListening, onClose = { finish() },
                     onOpenApp = {

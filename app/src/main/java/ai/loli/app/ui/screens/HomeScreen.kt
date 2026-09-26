@@ -1,6 +1,11 @@
 package ai.loli.app.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
@@ -87,6 +92,31 @@ private val suggestions = listOf(
     "Что ты умеешь?",
 )
 
+/** Состояние голоса для экранов Лоли: режим сферы, подпись и услышанный текст. */
+private data class VoiceUi(val mode: OrbMode, val status: String, val heard: String, val level: Float) {
+    val active get() = mode == OrbMode.LISTENING || mode == OrbMode.THINKING || mode == OrbMode.SPEAKING
+}
+
+private fun voiceUi(voice: VoiceState, name: String): VoiceUi {
+    val (mode, status) = when (voice) {
+        VoiceState.Idle -> OrbMode.IDLE to "Нажмите на сферу или скажите «$name»"
+        is VoiceState.Listening -> OrbMode.LISTENING to (voice.hint ?: if (voice.followUp) "Слушаю дальше…" else "Слушаю…")
+        is VoiceState.Thinking -> OrbMode.THINKING to "Думаю…"
+        is VoiceState.Speaking -> OrbMode.SPEAKING to "Отвечаю… Скажите «стоп», чтобы прервать"
+        is VoiceState.Error -> OrbMode.ERROR to voice.message
+    }
+    val heard = when (voice) {
+        is VoiceState.Listening -> voice.partial
+        is VoiceState.Thinking -> voice.heard
+        else -> ""
+    }
+    return VoiceUi(mode, status, heard, (voice as? VoiceState.Listening)?.level ?: 0f)
+}
+
+/**
+ * Главная: сфера, закреплённые переходы в разделы и небольшое окно чата внизу.
+ * Нажатие на чат открывает его на весь экран.
+ */
 @Composable
 fun HomeScreen(
     vm: HomeViewModel,
@@ -96,6 +126,7 @@ fun HomeScreen(
     openExpenses: () -> Unit,
     openSettings: (String?) -> Unit,
     openHistory: () -> Unit,
+    openChat: (keyboard: Boolean) -> Unit,
 ) {
     val voice by vm.voice.collectAsStateWithLifecycle()
     val reply by vm.lastReply.collectAsStateWithLifecycle()
@@ -103,29 +134,10 @@ fun HomeScreen(
     val summary by vm.summary.collectAsStateWithLifecycle()
     val online by vm.online.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
-    var input by rememberSaveable { mutableStateOf("") }
-
-    val (mode, status) = when (val v = voice) {
-        VoiceState.Idle -> OrbMode.IDLE to "Нажмите на сферу или скажите «${settings.assistantName}»"
-        is VoiceState.Listening -> OrbMode.LISTENING to (v.hint ?: if (v.followUp) "Слушаю дальше…" else "Слушаю…")
-        is VoiceState.Thinking -> OrbMode.THINKING to "Думаю…"
-        is VoiceState.Speaking -> OrbMode.SPEAKING to "Отвечаю…"
-        is VoiceState.Error -> OrbMode.ERROR to v.message
-    }
-    val active = mode == OrbMode.LISTENING || mode == OrbMode.THINKING || mode == OrbMode.SPEAKING
-    val level = (voice as? VoiceState.Listening)?.level ?: 0f
-    val heard = when (val v = voice) {
-        is VoiceState.Listening -> v.partial
-        is VoiceState.Thinking -> v.heard
-        else -> ""
-    }
-    val listState = rememberLazyListState()
-    // Пока есть шаги настройки, сфера поменьше — чтобы список с шагами было удобно листать.
+    val ui = voiceUi(voice, settings.assistantName)
     var setupShown by remember { mutableStateOf(false) }
-    // Новая реплика — прокрутка к ней (индекс 0 — карточки «Сегодня», дальше сообщения).
-    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.size + 2) }
 
-    Column(Modifier.fillMaxSize().imePadding()) {
+    Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(greeting(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -140,49 +152,155 @@ fun HomeScreen(
             Pill(label, icon, onClick = { openSettings("settings/ai") })
             IconButton(onClick = openHistory) { Icon(Icons.Rounded.History, contentDescription = "История", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        // Сфера и статус всегда на виду — даже когда история разговора длинная.
-        Column(Modifier.fillMaxWidth().padding(top = 4.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Середина листается: обновление, шаги настройки, сфера.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+        val viewport = maxHeight
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = viewport),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            UpdateCard(vm.c)
+            SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it })
             Box(
                 Modifier.clip(CircleShape).clickable(
                     interactionSource = remember { MutableInteractionSource() }, indication = null,
-                ) { if (active) vm.stop() else onMic() },
-            ) { AssistantOrb(mode, level, size = if (history.isEmpty() && !active && !setupShown) 220.dp else 120.dp) }
+                ) { if (ui.active) vm.stop() else onMic() },
+            ) { AssistantOrb(ui.mode, ui.level, size = if (setupShown) 150.dp else 210.dp) }
             Text(
-                status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
-                color = if (mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                ui.status, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
+                color = if (ui.mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 3, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 32.dp).clickable(enabled = mode == OrbMode.ERROR) { vm.clearError() },
+                modifier = Modifier.padding(horizontal = 32.dp).clickable(enabled = ui.mode == OrbMode.ERROR) { vm.clearError() },
             )
-            AnimatedVisibility(heard.isNotBlank()) {
-                Text(heard, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            AnimatedVisibility(ui.heard.isNotBlank()) {
+                Text(ui.heard, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 32.dp, vertical = 6.dp))
             }
         }
-        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 12.dp)) {
-            // Обновление и шаги настройки листаются вместе со всем экраном.
-            item(key = "update") { UpdateCard(vm.c) }
-            item(key = "setup") { SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it }) }
-            item(key = "today") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Stat(Modifier.weight(1f), "Задачи", "${summary.activeTasks}", if (summary.overdueTasks > 0) "просрочено ${summary.overdueTasks}" else "активных") { openPlans(0) }
-                    Stat(Modifier.weight(1f), "Сегодня", Money.format(summary.todayExpensesMinor, "RUB"), "потрачено") { openExpenses() }
-                    Stat(Modifier.weight(1f), "Напомнить", "${summary.activeReminders}", "запланировано") { openPlans(1) }
-                }
-            }
-            if (history.isEmpty()) {
-                item(key = "suggest") {
-                    Column {
-                        Text("Попробуйте сказать", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(suggestions) { s -> Suggestion(s) { vm.send(s) } }
-                        }
-                    }
+        }
+        // Закреплённые переходы в разделы.
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Stat(Modifier.weight(1f), "Задачи", "${summary.activeTasks}", if (summary.overdueTasks > 0) "просрочено ${summary.overdueTasks}" else "активных") { openPlans(0) }
+            Stat(Modifier.weight(1f), "Сегодня", Money.format(summary.todayExpensesMinor, "RUB"), "потрачено") { openExpenses() }
+            Stat(Modifier.weight(1f), "Напомнить", "${summary.activeReminders}", "запланировано") { openPlans(1) }
+        }
+        ChatPreview(
+            history = history, name = settings.assistantName, active = ui.active,
+            awaitingConfirmation = reply?.awaitingConfirmation == true,
+            onOpen = { openChat(false) }, onType = { openChat(true) },
+            onSuggestion = { vm.send(it); openChat(false) },
+            onConfirm = { vm.confirm(it) },
+            onMic = { if (ui.active) vm.stop() else onMic() },
+        )
+    }
+}
+
+/** Небольшое окно чата на главной: последняя реплика и строка ввода. Нажатие — чат на весь экран. */
+@Composable
+private fun ChatPreview(
+    history: List<ai.loli.core.model.ConversationMessage>,
+    name: String,
+    active: Boolean,
+    awaitingConfirmation: Boolean,
+    onOpen: () -> Unit,
+    onType: () -> Unit,
+    onSuggestion: (String) -> Unit,
+    onConfirm: (Boolean) -> Unit,
+    onMic: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        onClick = onOpen, interactionSource = interaction,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), color = groupColor(),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(top = 10.dp).animateContentSize()) {
+            // «Ручка» — окно можно открыть.
+            Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)))
+            val last = history.takeLast(2)
+            if (last.isEmpty()) {
+                Text("Попробуйте сказать", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 8.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(suggestions) { s -> Suggestion(s) { onSuggestion(s) } }
                 }
             } else {
-                items(history, key = { it.id }) { m ->
-                    Box(Modifier.animateItem()) { Message(m.content, m.role == MessageRole.USER) }
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    last.forEach { m ->
+                        val mine = m.role == MessageRole.USER
+                        Text(
+                            (if (mine) "Вы: " else "$name: ") + m.content,
+                            style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            color = if (mine) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Text("Открыть чат ›", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
+            }
+            if (awaitingConfirmation) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Да, подтверждаю", { onConfirm(true) })
+                    SecondaryButton("Отмена", { onConfirm(false) })
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp))
+                        .background(MaterialTheme.colorScheme.background).clickable(onClick = onType).padding(horizontal = 18.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) { Text("Написать $name…", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Spacer(Modifier.width(10.dp))
+                RoundButton(if (active) Icons.Rounded.Stop else Icons.Rounded.Mic, if (active) "Остановить" else "Говорить", onMic)
+            }
+        }
+    }
+}
+
+/** Чат на весь экран: вся переписка, подтверждения, ввод текстом и голосом. */
+@Composable
+fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboard: Boolean) {
+    val voice by vm.voice.collectAsStateWithLifecycle()
+    val reply by vm.lastReply.collectAsStateWithLifecycle()
+    val history by vm.fullHistory.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val ui = voiceUi(voice, settings.assistantName)
+    var input by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    LaunchedEffect(history.size) { if (history.isNotEmpty()) listState.animateScrollToItem(history.lastIndex) }
+
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад") }
+            AssistantOrb(ui.mode, ui.level, size = 40.dp)
+            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                Text(settings.assistantName, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (ui.mode == OrbMode.IDLE) "На связи" else ui.status, style = MaterialTheme.typography.bodySmall,
+                    color = if (ui.mode == OrbMode.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp)) {
+            if (history.isEmpty()) {
+                item(key = "empty") {
+                    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Здесь будет ваш разговор с ${settings.assistantName}", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                        Text("Напишите или скажите, что нужно сделать", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+                item(key = "suggest") {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(suggestions) { s -> Suggestion(s) { vm.send(s) } }
+                    }
+                }
+            }
+            items(history, key = { it.id }) { m ->
+                Box(Modifier.animateItem()) { Message(m.content, m.role == MessageRole.USER) }
             }
             reply?.let { r ->
                 if (r.awaitingConfirmation || r.provider != null || (r.offline && settings.useAI)) {
@@ -205,10 +323,14 @@ fun HomeScreen(
                 }
             }
         }
+        AnimatedVisibility(ui.heard.isNotBlank()) {
+            Text(ui.heard, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp))
+        }
         InputBar(
-            value = input, onChange = { input = it }, name = settings.assistantName, active = active,
+            value = input, onChange = { input = it }, name = settings.assistantName, active = ui.active, autoFocus = keyboard,
             onSend = { if (input.isNotBlank()) { vm.send(input.trim()); input = "" } },
-            onMic = { if (active) vm.stop() else onMic() },
+            onMic = { if (ui.active) vm.stop() else onMic() },
         )
     }
 }
@@ -265,7 +387,9 @@ private fun Message(text: String, mine: Boolean) {
 }
 
 @Composable
-private fun InputBar(value: String, onChange: (String) -> Unit, name: String, active: Boolean, onSend: () -> Unit, onMic: () -> Unit) {
+private fun InputBar(value: String, onChange: (String) -> Unit, name: String, active: Boolean, autoFocus: Boolean = false, onSend: () -> Unit, onMic: () -> Unit) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focus.requestFocus() } }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
         Row(
             Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(groupColor()).padding(start = 18.dp, end = 4.dp),
@@ -279,7 +403,7 @@ private fun InputBar(value: String, onChange: (String) -> Unit, name: String, ac
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { onSend() }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
             }
             if (value.isNotBlank()) IconButton(onClick = onSend) { Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.primary) }

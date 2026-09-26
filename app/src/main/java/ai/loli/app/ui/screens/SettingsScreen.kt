@@ -1,5 +1,13 @@
 package ai.loli.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.luminance
+import ai.loli.app.settings.AccentColor
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.verticalScroll
 import android.Manifest
@@ -201,11 +209,51 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                 SwitchItem("Отвечать голосом", "Системный синтезатор речи", s.ttsEnabled) { v -> scope.launch { c.settings.setTts(v) } }
             }
         }
+        if (s.ttsEnabled) item(key = "voice") {
+            val context = LocalContext.current
+            var voices by remember { mutableStateOf<List<ai.loli.app.voice.AndroidTtsProvider.VoiceOption>?>(null) }
+            LaunchedEffect(Unit) { voices = c.tts.russianVoices() }
+            val sample = "Привет! Я ${s.assistantName}. Так звучит мой голос."
+            SectionLabel("Голос")
+            Group {
+                RadioRow("Как в системе", "Голос по умолчанию синтезатора речи", s.voiceName.isBlank()) {
+                    scope.launch { c.settings.setVoiceName(""); c.tts.speak(sample) }
+                }
+                val list = voices
+                if (list == null) {
+                    GroupDivider(inset = 52.dp)
+                    Hint("Загружаю голоса…")
+                } else {
+                    list.forEach { v ->
+                        GroupDivider(inset = 52.dp)
+                        RadioRow(v.title, v.subtitle, s.voiceName == v.name) {
+                            scope.launch { c.settings.setVoiceName(v.name); c.tts.preview(sample, v.name) }
+                        }
+                    }
+                }
+            }
+            Hint(
+                if (voices?.isEmpty() == true) "Русских голосов не найдено. Установите их кнопкой ниже или выберите другой синтезатор (например, RHVoice)."
+                else "Нажмите на голос — ${s.assistantName} сразу им заговорит. Больше голосов: установите другой синтезатор речи (например, RHVoice из Google Play) и выберите его ниже.",
+            )
+            Row(Modifier.padding(horizontal = 8.dp)) {
+                TextButton(onClick = {
+                    runCatching { context.startActivity(Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }) { Text("Скачать голоса") }
+                TextButton(onClick = {
+                    runCatching { context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+                }) { Text("Синтезатор речи") }
+            }
+        }
         if (s.ttsEnabled) item(key = "rate") {
-            SectionLabel("Скорость речи · ${"%.1f".format(s.speechRate)}×")
+            SectionLabel("Скорость · ${"%.1f".format(s.speechRate)}×   Высота · ${"%.1f".format(s.speechPitch)}")
             Group {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("Скорость", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = s.speechRate, onValueChange = { v -> scope.launch { c.settings.setSpeechRate(v) } }, valueRange = 0.5f..2f)
+                    Text("Высота голоса", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value = s.speechPitch, onValueChange = { v -> scope.launch { c.settings.setSpeechPitch(v) } }, valueRange = 0.5f..2f)
                     TextButton(onClick = { scope.launch { c.tts.speak("Привет! Я ${s.assistantName}. Так звучит мой голос.") } }) { Text("Прослушать") }
                 }
             }
@@ -325,12 +373,47 @@ private fun AppearancePage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) item(key = "dynamic") {
-            SectionLabel("Цвета")
+        item(key = "accent") {
+            SectionLabel("Цвет ${s.assistantName}")
             Group {
-                SwitchItem("Цвета обоев", "Акцентный цвет подстраивается под обои (Android 12+)", s.dynamicColor) { v -> scope.launch { c.settings.setDynamicColor(v) } }
+                Column(Modifier.padding(16.dp)) {
+                    // 10 цветов: 2 ряда по 5, выбранный — с кольцом и галочкой.
+                    AccentColor.entries.chunked(5).forEach { row ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            row.forEach { a -> AccentSwatch(a, selected = !s.dynamicColor && s.accent == a) { scope.launch { c.settings.setAccent(a) } } }
+                        }
+                    }
+                    Text(
+                        if (s.dynamicColor) "Сейчас цвет берётся из обоев" else s.accent.title,
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    GroupDivider()
+                    SwitchItem("Цвета обоев", "Вместо своего цвета — под обои (Android 12+)", s.dynamicColor) { v -> scope.launch { c.settings.setDynamicColor(v) } }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AccentSwatch(a: AccentColor, selected: Boolean, onClick: () -> Unit) {
+    val color = androidx.compose.ui.graphics.Color(a.dark)
+    val glow = androidx.compose.ui.graphics.Color(a.glow)
+    val circle = androidx.compose.foundation.shape.CircleShape
+    Box(
+        Modifier.size(48.dp).clip(circle)
+            .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, circle) else Modifier)
+            .padding(if (selected) 6.dp else 3.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(color, glow)))
+            .border(1.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+            .clickable(onClickLabel = a.title, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) Icon(Icons.Rounded.Check, contentDescription = a.title, tint = if (color.luminance() > 0.5f) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White)
     }
 }
 

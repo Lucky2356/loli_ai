@@ -31,6 +31,14 @@
 
     <!-- Android 11+: видимость системных сервисов распознавания и синтеза речи. -->
     <queries>
+        <!-- Платёжные приложения (оплата по NFC) закрыты для Лоли по умолчанию. -->
+        <intent>
+            <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+        </intent>
+        <!-- Платёжные приложения (оплата по NFC) закрыты для Лоли по умолчанию. -->
+        <intent>
+            <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+        </intent>
         <package android:name="moe.shizuku.privileged.api" />
         <intent>
             <action android:name="android.speech.RecognitionService" />

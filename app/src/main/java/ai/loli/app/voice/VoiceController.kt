@@ -22,7 +22,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -71,6 +73,8 @@ class VoiceController(
     var systemDialogAvailable: () -> Boolean = { false }
     /** Вызывается после каждого голосового ответа (приложение показывает уведомление, если экран заблокирован или свёрнут). */
     var onVoiceReply: (AssistantReply) -> Unit = {}
+    /** Слушает «стоп», пока Лоли говорит; true — пользователь её остановил (задаётся приложением). */
+    var stopWatcher: (suspend () -> Boolean)? = null
 
     /** Системное распознавание не сработало на этом устройстве — в режиме «Авто» сразу используем Vosk. */
     @Volatile private var systemBroken = false
@@ -80,6 +84,8 @@ class VoiceController(
     private sealed interface Heard {
         data class Text(val text: String) : Heard
         data object Silence : Heard
+        /** Пользователь сказал «стоп». */
+        data object Stop : Heard
         /** [serviceBroken] — сервис не работает на этом телефоне (а не просто не разобрал фразу). */
         data class Failed(val message: String, val tryNext: Boolean, val serviceBroken: Boolean = true) : Heard
     }
@@ -160,10 +166,11 @@ class VoiceController(
         while (true) {
             val followUp = followUps > 0
             when (val heard = listenOnce(followUp)) {
+                Heard.Stop -> return
                 is Heard.Text -> {
                     silentInRow = 0
                     val reply = process(heard.text, source, speak = true)
-                    if (!reply.expectFollowUp || followUps >= MAX_FOLLOW_UPS) return
+                    if (!reply.expectFollowUp || reply.endsDialog || followUps >= MAX_FOLLOW_UPS) return
                     followUps++
                     delay(250) // синтезатор отпускает аудио, иначе распознаватель услышит хвост ответа
                 }
@@ -207,7 +214,13 @@ class VoiceController(
         val s = settings.value
         val options = ListenOptions(preferOffline = s.sttMode == SttMode.OFFLINE)
         try {
-            provider.listen(options).collect { e ->
+            val name = s.assistantName
+            // «Стоп» останавливает сразу, не дожидаясь конца фразы.
+            provider.listen(options).takeWhile { e ->
+                val stop = (e is SpeechEvent.Partial && StopWords.isStop(e.text, name)) || (e is SpeechEvent.Final && StopWords.isStop(e.text, name))
+                if (stop) result = Heard.Stop
+                !stop
+            }.collect { e ->
                 when (e) {
                     SpeechEvent.SpeechStarted -> speechDetected = true
                     is SpeechEvent.Partial -> _state.value = VoiceState.Listening(e.text, (_state.value as? VoiceState.Listening)?.level ?: 0f, followUp)
@@ -237,15 +250,34 @@ class VoiceController(
     }
 
     private suspend fun process(text: String, source: InputSource, speak: Boolean): AssistantReply {
+        // Голосом «стоп» — молча останавливаемся и выходим из разговора.
+        if (source != InputSource.TEXT && StopWords.isStop(text, settings.value.assistantName)) {
+            tts.stop()
+            engine.endDialog()
+            _state.value = VoiceState.Idle
+            return AssistantReply("", endsDialog = true)
+        }
         _state.value = VoiceState.Thinking(text)
         val reply = engine.handle(text, source)
         _lastReply.value = reply
         if (source != InputSource.TEXT) runCatching { onVoiceReply(reply) }
+        var interrupted = false
         if (speak && settings.value.ttsEnabled && reply.text.isNotBlank()) {
             _state.value = VoiceState.Speaking(reply.text)
-            tts.speak(SpeechText.forSpeech(reply.text))
+            coroutineScope {
+                // Пока Лоли говорит, её можно перебить словом «стоп» (если микрофон не занят фоновой службой — та ловит «стоп» сама).
+                val watcher = stopWatcher?.takeIf { !wakeHoldsMic.value }?.let { w ->
+                    launch { if (w()) { interrupted = true; tts.stop() } }
+                }
+                tts.speak(SpeechText.forSpeech(reply.text))
+                watcher?.cancel()
+            }
         }
         _state.value = VoiceState.Idle
+        if (interrupted) {
+            engine.endDialog()
+            return reply.copy(expectFollowUp = false, endsDialog = true)
+        }
         return reply
     }
 

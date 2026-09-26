@@ -52,6 +52,24 @@ enum class KeyTrigger(val id: String, val title: String, val hint: String) {
     }
 }
 
+/** Цвет Лоли: акцент интерфейса и сферы. [glow] — второй цвет сферы (переливы, прослушивание). */
+enum class AccentColor(val id: String, val title: String, val light: Long, val dark: Long, val glow: Long) {
+    INDIGO("indigo", "Индиго", 0xFF6366F1, 0xFF8B8DFF, 0xFF2DD4BF),
+    GREEN("green", "Зелёный", 0xFF16A34A, 0xFF4ADE80, 0xFFA3E635),
+    SKY("sky", "Голубой", 0xFF0284C7, 0xFF7DD3FC, 0xFF22D3EE),
+    WHITE("white", "Белый", 0xFF52525B, 0xFFF4F4F5, 0xFFBAE6FD),
+    PURPLE("purple", "Фиолетовый", 0xFF9333EA, 0xFFC084FC, 0xFFF0ABFC),
+    RED("red", "Красный", 0xFFDC2626, 0xFFF87171, 0xFFFB923C),
+    PINK("pink", "Розовый", 0xFFDB2777, 0xFFF9A8D4, 0xFFC4B5FD),
+    YELLOW("yellow", "Жёлтый", 0xFFCA8A04, 0xFFFDE047, 0xFFFB923C),
+    ORANGE("orange", "Оранжевый", 0xFFEA580C, 0xFFFDBA74, 0xFFFACC15),
+    TEAL("teal", "Бирюзовый", 0xFF0D9488, 0xFF5EEAD4, 0xFF60A5FA);
+
+    companion object {
+        fun fromId(id: String?) = entries.firstOrNull { it.id == id } ?: INDIGO
+    }
+}
+
 enum class ThemeMode(val id: String, val title: String) {
     SYSTEM("system", "Как в системе"), LIGHT("light", "Светлая"), DARK("dark", "Тёмная");
 
@@ -78,11 +96,16 @@ data class AppSettings(
     val embeddingsEnabled: Boolean = true,
     val ttsEnabled: Boolean = true,
     val speechRate: Float = 1.0f,
+    /** Высота голоса (1.0 — как задумал синтезатор). */
+    val speechPitch: Float = 1.0f,
+    /** Имя голоса синтезатора; пусто — голос по умолчанию для русского. */
+    val voiceName: String = "",
     val wakeWordEnabled: Boolean = false,
     val dialogModeEnabled: Boolean = true,
     val sttMode: SttMode = SttMode.AUTO,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
+    val accent: AccentColor = AccentColor.INDIGO,
     /** Сама скачивать и ставить новые версии. */
     val autoUpdate: Boolean = true,
     /** Разрешено ли вообще пользоваться Лоли на заблокированном экране. */
@@ -133,6 +156,9 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val sttMode = stringPreferencesKey("stt_mode")
         val theme = stringPreferencesKey("theme")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
+        val accent = stringPreferencesKey("accent")
+        val pitch = floatPreferencesKey("speech_pitch")
+        val voice = stringPreferencesKey("voice_name")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
@@ -196,11 +222,14 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             embeddingsEnabled = p[K.embeddings] ?: true,
             ttsEnabled = p[K.tts] ?: true,
             speechRate = p[K.rate] ?: 1.0f,
+            speechPitch = p[K.pitch] ?: 1.0f,
+            voiceName = p[K.voice].orEmpty(),
             wakeWordEnabled = p[K.wake] ?: false,
             dialogModeEnabled = p[K.dialog] ?: true,
             sttMode = SttMode.fromId(p[K.sttMode]) ?: if (p[K.legacyOfflineStt] == true) SttMode.OFFLINE else SttMode.AUTO,
             themeMode = ThemeMode.fromId(p[K.theme]),
             dynamicColor = p[K.dynamicColor] ?: false,
+            accent = AccentColor.fromId(p[K.accent]),
             autoUpdate = p[K.autoUpdate] ?: true,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
             lockPolicy = ai.loli.core.assistant.LockPolicy(
@@ -283,6 +312,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setSttMode(v: SttMode) = store.edit { it[K.sttMode] = v.id }
     suspend fun setTheme(v: ThemeMode) = store.edit { it[K.theme] = v.id }
     suspend fun setDynamicColor(v: Boolean) = store.edit { it[K.dynamicColor] = v }
+    /** Свой цвет Лоли выключает «цвета обоев» — иначе выбор не был бы виден. */
+    suspend fun setAccent(v: AccentColor) = store.edit { it[K.accent] = v.id; it[K.dynamicColor] = false }
+    suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }
+    suspend fun setVoiceName(v: String) = store.edit { it[K.voice] = v }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }
     suspend fun setLockPolicy(v: ai.loli.core.assistant.LockPolicy) = store.edit {

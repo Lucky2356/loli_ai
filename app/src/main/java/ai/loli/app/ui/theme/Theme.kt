@@ -18,7 +18,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ai.loli.app.settings.AccentColor
 import ai.loli.app.settings.ThemeMode
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 
 /** Акцент — спокойный индиго; второй цвет (бирюза) — только для голоса и прогресса. */
 val Accent = Color(0xFF6366F1)
@@ -117,7 +120,7 @@ private val LoliShapes = Shapes(
 )
 
 @Composable
-fun LoliTheme(mode: ThemeMode = ThemeMode.SYSTEM, dynamic: Boolean = false, content: @Composable () -> Unit) {
+fun LoliTheme(mode: ThemeMode = ThemeMode.SYSTEM, dynamic: Boolean = false, accent: AccentColor = AccentColor.INDIGO, content: @Composable () -> Unit) {
     val dark = when (mode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
@@ -126,8 +129,31 @@ fun LoliTheme(mode: ThemeMode = ThemeMode.SYSTEM, dynamic: Boolean = false, cont
     val context = LocalContext.current
     val scheme: ColorScheme = when {
         dynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> Dark
-        else -> Light
+        else -> withAccent(if (dark) Dark else Light, accent, dark)
     }
-    MaterialTheme(colorScheme = scheme, typography = LoliTypography, shapes = LoliShapes, content = content)
+    // Сфера всегда в «чистом» выбранном цвете (белая Лоли остаётся белой и в светлой теме).
+    val orb = if (dynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || accent == AccentColor.INDIGO) null else Color(accent.dark)
+    androidx.compose.runtime.CompositionLocalProvider(LocalOrbColor provides orb) {
+        MaterialTheme(colorScheme = scheme, typography = LoliTypography, shapes = LoliShapes, content = content)
+    }
+}
+
+/** Основной цвет сферы Лоли; null — акцент темы. */
+val LocalOrbColor = androidx.compose.runtime.staticCompositionLocalOf<Color?> { null }
+
+/** Цвет, выбранный пользователем: акцент, контейнеры и второй цвет сферы (tertiary). */
+private fun withAccent(base: ColorScheme, accent: AccentColor, dark: Boolean): ColorScheme {
+    if (accent == AccentColor.INDIGO) return base
+    val primary = Color(if (dark) accent.dark else accent.light)
+    val glow = Color(accent.glow)
+    val onPrimary = if (primary.luminance() > 0.45f) Color(0xFF111114) else Color.White
+    val container = primary.copy(alpha = if (dark) 0.22f else 0.14f).compositeOver(base.background)
+    return base.copy(
+        primary = primary,
+        onPrimary = onPrimary,
+        primaryContainer = container,
+        onPrimaryContainer = if (dark) primary.copy(alpha = 0.95f).compositeOver(Color.White) else primary.copy(alpha = 0.9f).compositeOver(Color.Black),
+        tertiary = glow,
+        onTertiary = if (glow.luminance() > 0.45f) Color(0xFF111114) else Color.White,
+    )
 }

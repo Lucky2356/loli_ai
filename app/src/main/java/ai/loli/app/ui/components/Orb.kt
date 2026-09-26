@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ai.loli.app.ui.theme.Coral
-import ai.loli.app.ui.theme.Mint
 
 enum class OrbMode { IDLE, LISTENING, THINKING, SPEAKING, ERROR }
 
@@ -33,7 +32,9 @@ enum class OrbMode { IDLE, LISTENING, THINKING, SPEAKING, ERROR }
  */
 @Composable
 fun AssistantOrb(mode: OrbMode, level: Float, modifier: Modifier = Modifier, size: Dp = 180.dp) {
-    val primary = MaterialTheme.colorScheme.primary
+    val primary = ai.loli.app.ui.theme.LocalOrbColor.current ?: MaterialTheme.colorScheme.primary
+    // Второй цвет сферы — из выбранного цвета Лоли.
+    val second = MaterialTheme.colorScheme.tertiary
     val transition = rememberInfiniteTransition(label = "orb")
     val breath by transition.animateFloat(
         0f, 1f, infiniteRepeatable(tween(if (mode == OrbMode.SPEAKING) 700 else 2800), RepeatMode.Reverse), label = "breath",
@@ -44,13 +45,13 @@ fun AssistantOrb(mode: OrbMode, level: Float, modifier: Modifier = Modifier, siz
     val core by animateColorAsState(
         when (mode) {
             OrbMode.IDLE -> primary
-            OrbMode.LISTENING -> Mint
+            OrbMode.LISTENING -> second
             OrbMode.THINKING -> primary
             OrbMode.SPEAKING -> primary
             OrbMode.ERROR -> Coral
         }, tween(400), label = "core",
     )
-    val glow by animateColorAsState(if (mode == OrbMode.LISTENING) primary else Mint, tween(400), label = "glow")
+    val glow by animateColorAsState(if (mode == OrbMode.LISTENING) primary else second, tween(400), label = "glow")
 
     Canvas(modifier.size(size)) {
         val c = Offset(this.size.width / 2, this.size.height / 2)

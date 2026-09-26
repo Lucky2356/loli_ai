@@ -173,10 +173,17 @@ class AppContainer(private val context: Context) {
     val systemStt = AndroidSpeechRecognizerProvider(context)
     val offlineStt = VoskSpeechProvider(voskEngine, voskModels)
     /** Синтезатор речи подключается только когда понадобится (не при запуске из будильника/синхронизации). */
-    private val ttsLazy = lazy { AndroidTtsProvider(context) { settings.settings.value.speechRate } }
+    private val ttsLazy = lazy { AndroidTtsProvider(
+            context,
+            rate = { settings.settings.value.speechRate },
+            pitch = { settings.settings.value.speechPitch },
+            voiceName = { settings.settings.value.voiceName },
+        ) }
     val tts: AndroidTtsProvider get() = ttsLazy.value
     val voice: VoiceController by lazy {
         VoiceController(engine, settings.settings, systemStt, offlineStt, lazyTts, appScope).also { v ->
+            val stopWords = ai.loli.app.voice.StopWordWatcher(context, voskEngine, voskModels)
+            v.stopWatcher = { stopWords.awaitStop() }
             v.onVoiceReply = { reply ->
                 // Экран заблокирован или приложение свёрнуто — результат придёт уведомлением.
                 if (reply.text.isNotBlank() && (isLocked() || !launcher.isForeground())) {
