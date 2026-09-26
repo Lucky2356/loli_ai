@@ -536,7 +536,7 @@ private fun AboutPage(c: AppContainer, onBack: () -> Unit) {
                 RowItem(
                     title = "Непонятые фразы: ${phrases.size}",
                     subtitle = if (phrases.isEmpty()) "Здесь появятся фразы, которые ${s.assistantName} не поняла. Хранятся только на телефоне"
-                    else "Отправьте их разработчику — ${s.assistantName} научится их понимать. Последняя: «${phrases.last().take(60)}»",
+                    else "Отправьте их разработчику — ${s.assistantName} научится их понимать. Откроется публичная заявка на GitHub: проверьте, что в ней нет личного. Последняя: «${phrases.last().take(60)}»",
                     icon = Icons.Rounded.Lightbulb,
                     trailing = {
                         if (phrases.isNotEmpty()) TextButton(onClick = {

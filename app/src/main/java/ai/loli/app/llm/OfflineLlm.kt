@@ -66,17 +66,30 @@ class OfflineLlm(context: Context, private val scope: CoroutineScope) : LocalCha
     private val file = File(dir, FILE)
     private val part = File(dir, "$FILE.part")
     private val prefs = context.getSharedPreferences("loli_llm", Context.MODE_PRIVATE)
-    private val _state = MutableStateFlow(initialState())
+    private val _state = MutableStateFlow(fileState())
     val state: StateFlow<State> = _state.asStateFlow()
 
     private val lock = Mutex()
     private val downloadLock = Mutex()
     @Volatile private var handle = 0L
+    /** stop() и free() не должны пересекаться: иначе stop попадёт в уже освобождённую память. */
+    private val nativeLock = Any()
+    /** «Стоп» сказали во время загрузки модели или до начала ответа — не теряем его. */
+    @Volatile private var cancelled = false
     private var unloadJob: Job? = null
+
+    init {
+        // Проверка процессора и загрузка библиотеки (~десятки мс) — не на главном потоке при запуске.
+        scope.launch(Dispatchers.Default) {
+            LlamaNative.unsupportedReason?.let { _state.value = State.Unsupported(it) }
+        }
+    }
+
+    private fun fileState(): State = if (file.isFile && prefs.getBoolean(KEY_VERIFIED, false)) State.Ready else State.Missing
 
     private fun initialState(): State {
         LlamaNative.unsupportedReason?.let { return State.Unsupported(it) }
-        return if (file.isFile && prefs.getBoolean(KEY_VERIFIED, false)) State.Ready else State.Missing
+        return fileState()
     }
 
     /** Пользователь включил офлайн-модель (скачал) и не выключил. */
@@ -179,20 +192,25 @@ class OfflineLlm(context: Context, private val scope: CoroutineScope) : LocalCha
     }
 
     override suspend fun reply(system: String, history: List<ChatMessage>, maxTokens: Int): String? {
-        if (!available) return null
+        if (!available || LlamaNative.unsupportedReason != null) return null
+        cancelled = false
         return lock.withLock {
             withContext(Dispatchers.Default) {
                 val h = ensureLoaded() ?: return@withContext null
-                // Недавний разговор, но не длиннее контекста: старые реплики отбрасываем.
+                if (cancelled) return@withContext null
+                // Недавний разговор, но не длиннее контекста (2048 токенов): старые реплики отбрасываем,
+                // а последний вопрос пользователя берём всегда (при необходимости — укороченным).
                 val msgs = ArrayList<String>()
-                msgs += "system"; msgs += system
-                var budget = 3000
-                val tail = history.takeLast(8).reversed().takeWhile { m -> budget -= m.content.length; budget > 0 }.reversed()
-                for (m in tail) {
+                msgs += "system"; msgs += clean(system).take(1500)
+                val last = history.lastOrNull()
+                var budget = HISTORY_CHARS - (last?.content?.length ?: 0).coerceAtMost(LAST_CHARS)
+                val earlier = history.dropLast(1).takeLast(8).reversed().takeWhile { m -> budget -= m.content.length; budget > 0 }.reversed()
+                for (m in earlier + listOfNotNull(last)) {
                     msgs += if (m.role == ChatMessage.Role.ASSISTANT) "assistant" else "user"
-                    msgs += clean(m.content)
+                    msgs += clean(m.content).let { if (m === last) it.take(LAST_CHARS) else it }
                 }
-                val out = runCatching { LlamaNative.generate(h, msgs.toTypedArray(), maxTokens, 0.6f, null) }
+                val listener = LlamaNative.TokenListener { !cancelled }
+                val out = runCatching { LlamaNative.generate(h, msgs.toTypedArray(), maxTokens, 0.6f, listener) }
                     .onFailure { Logger.w(TAG, "Генерация не удалась", it) }.getOrNull()
                 scheduleUnload()
                 out?.trim()?.takeIf { it.isNotEmpty() }
@@ -201,7 +219,10 @@ class OfflineLlm(context: Context, private val scope: CoroutineScope) : LocalCha
     }
 
     /** Остановить ответ («стоп»). */
-    fun stop() { handle.takeIf { it != 0L }?.let { LlamaNative.stop(it) } }
+    fun stop() {
+        cancelled = true
+        synchronized(nativeLock) { handle.takeIf { it != 0L }?.let { LlamaNative.stop(it) } }
+    }
 
     private fun ensureLoaded(): Long? {
         if (handle != 0L) return handle
@@ -218,13 +239,14 @@ class OfflineLlm(context: Context, private val scope: CoroutineScope) : LocalCha
     }
 
     private suspend fun unload() = lock.withLock {
-        val h = handle
-        handle = 0L
+        val h = synchronized(nativeLock) { handle.also { handle = 0L } }
         if (h != 0L) withContext(Dispatchers.Default) { runCatching { LlamaNative.free(h) } }
     }
 
     /** Эмодзи и прочие символы вне BMP модели не нужны, а в JNI передаются неудобно. */
-    private fun clean(s: String) = buildString { s.forEach { ch -> if (!Character.isSurrogate(ch)) append(ch) } }.take(2000)
+    // «<|im_start|>» в тексте (сообщение, страница) не должно стать служебной меткой модели.
+    private fun clean(s: String) = buildString { s.forEach { ch -> if (!Character.isSurrogate(ch)) append(ch) } }
+        .replace("<|", "< |").replace("|>", "| >").take(2000)
 
     companion object {
         private const val TAG = "OfflineLlm"
@@ -233,6 +255,9 @@ class OfflineLlm(context: Context, private val scope: CoroutineScope) : LocalCha
         private const val SHA256 = "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370"
         const val SIZE = 986_048_768L
         private const val CONTEXT = 2048
+        /** Русский текст — примерно 2–3 символа на токен: так промпт и ответ помещаются в контекст. */
+        private const val HISTORY_CHARS = 2400
+        private const val LAST_CHARS = 1200
         private const val KEY_VERIFIED = "verified"
         private const val KEY_ENABLED = "enabled"
     }

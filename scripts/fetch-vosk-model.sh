@@ -22,6 +22,7 @@ if [ ! -s "$ZIP" ]; then
   mv "$ZIP.part" "$ZIP"
 fi
 
+echo "sha256 $MODEL.zip: $(sha256sum "$ZIP" | cut -d' ' -f1)"
 TMP="$(mktemp -d)"
 unzip -q "$ZIP" -d "$TMP"
 rm -rf "$TARGET"

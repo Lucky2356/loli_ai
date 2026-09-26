@@ -119,7 +119,10 @@ class VoskModelManager(private val context: Context) {
             if (code in 300..399) {
                 val next = connection.getHeaderField("Location") ?: error("редирект без адреса")
                 connection.disconnect()
-                connection = open(URL(URL(url), next).toString())
+                val target = URL(URL(url), next)
+                // Модель — это код распознавания: только по https, без понижения до http.
+                if (target.protocol != "https") error("небезопасный адрес загрузки")
+                connection = open(target.toString())
             } else return@repeat
         }
         if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
@@ -160,7 +163,7 @@ class VoskModelManager(private val context: Context) {
     private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
         connectTimeout = 20_000
         readTimeout = 60_000
-        instanceFollowRedirects = true
+        instanceFollowRedirects = false
         setRequestProperty("User-Agent", "LoliAssistant")
         connect()
     }

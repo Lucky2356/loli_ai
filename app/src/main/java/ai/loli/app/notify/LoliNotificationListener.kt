@@ -21,6 +21,8 @@ import java.time.Instant
 class LoliNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         connected = true
+        // После переподключения старые записи могли устареть (уведомления смахнули, пока нас не было).
+        synchronized(entries) { entries.clear() }
         runCatching { activeNotifications?.forEach { add(it) } }
     }
 
@@ -39,9 +41,11 @@ class LoliNotificationListener : NotificationListenerService() {
         val n = sbn.notification ?: return
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val extras = n.extras ?: return
-        val isMessaging = n.category == Notification.CATEGORY_MESSAGE || extras.containsKey(Notification.EXTRA_MESSAGES) ||
-            sbn.packageName in MESSENGERS
-        if (!isMessaging) return
+        // Только известные мессенджеры и приложение SMS по умолчанию: иначе любое приложение могло бы выдать себя
+        // за «Машу» и получить ответ, продиктованный Лоли.
+        val trusted = sbn.packageName in MESSENGERS ||
+            sbn.packageName == runCatching { android.provider.Telephony.Sms.getDefaultSmsPackage(this) }.getOrNull()
+        if (!trusted) return
         val (sender, text) = parse(extras) ?: return
         val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
         val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
@@ -81,7 +85,8 @@ class LoliNotificationListener : NotificationListenerService() {
         private val MESSENGERS = setOf(
             "org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram", "com.whatsapp", "com.whatsapp.w4b",
             "com.vkontakte.android", "com.viber.voip", "com.google.android.apps.messaging", "com.android.mms", "com.samsung.android.messaging",
-            "ru.oneme.app", "com.discord", "com.facebook.orca", "com.instagram.android", "com.skype.raider", "ru.mail.mailapp",
+            "ru.oneme.app", "com.discord", "com.android.messaging", "com.miui.mms", "com.vivo.message", "com.oneplus.mms",
+            "com.huawei.message", "com.coloros.mms", "org.thoughtcrime.securesms", "im.vector.app", "com.icq.mobile.client", "com.facebook.orca", "com.instagram.android", "com.skype.raider", "ru.mail.mailapp",
         )
 
         fun enabled(context: Context): Boolean =

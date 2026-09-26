@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Незашифрованный http нужен только двум вещам: части радиостанций и своему AI-серверу в домашней сети
+  (Ollama, LM Studio по адресу 192.168.x.x — такие адреса здесь нельзя перечислить маской).
+  Адреса AI и радио дополнительно проверяет код приложения. Все сервисы, с которыми Лоли работает сама,
+  доступны только по https — даже если где-то в коде окажется http, соединение не установится.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">supabase.co</domain>
+        <domain includeSubdomains="true">open-meteo.com</domain>
+        <domain includeSubdomains="true">wikipedia.org</domain>
+        <domain includeSubdomains="true">cbr-xml-daily.ru</domain>
+        <domain includeSubdomains="true">coingecko.com</domain>
+        <domain includeSubdomains="true">radio-browser.info</domain>
+        <domain includeSubdomains="true">lenta.ru</domain>
+        <domain includeSubdomains="true">tass.ru</domain>
+        <domain includeSubdomains="true">ria.ru</domain>
+        <domain includeSubdomains="true">habr.com</domain>
+        <domain includeSubdomains="true">rbc.ru</domain>
+        <domain includeSubdomains="true">alphacephei.com</domain>
+        <domain includeSubdomains="true">huggingface.co</domain>
+        <domain includeSubdomains="true">openai.com</domain>
+        <domain includeSubdomains="true">anthropic.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>
+        <domain includeSubdomains="true">openrouter.ai</domain>
+        <domain includeSubdomains="true">groq.com</domain>
+        <domain includeSubdomains="true">deepseek.com</domain>
+        <domain includeSubdomains="true">mistral.ai</domain>
+        <domain includeSubdomains="true">x.ai</domain>
+        <domain includeSubdomains="true">yandex.net</domain>
+        <domain includeSubdomains="true">gigachat.devices.sberbank.ru</domain>
+    </domain-config>
+</network-security-config>

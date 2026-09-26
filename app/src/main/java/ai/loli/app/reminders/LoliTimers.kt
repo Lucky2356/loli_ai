@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import ai.loli.app.R
@@ -22,51 +23,80 @@ import java.time.Instant
 class LoliTimers(private val context: Context) {
     private val prefs = context.getSharedPreferences("loli_timers", Context.MODE_PRIVATE)
 
-    @Synchronized
-    fun all(): List<ActiveTimer> {
+    /** Все сохранённые таймеры, включая только что закончившиеся (их название нужно сигналу). */
+    private fun stored(): List<ActiveTimer> {
         val arr = runCatching { JSONArray(prefs.getString(KEY, "[]")) }.getOrDefault(JSONArray())
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            ActiveTimer(o.optString("id"), o.optString("label"), Instant.ofEpochMilli(o.optLong("end")))
-        }.filter { it.endsAt.isAfter(Instant.now().minusSeconds(5)) }
+            ActiveTimer(o.optString("id"), o.optString("label"), Instant.ofEpochMilli(o.optLong("end")), o.optInt("seconds", 0))
+        }
     }
 
-    @Synchronized
+    fun all(): List<ActiveTimer> = synchronized(LOCK) { stored().filter { it.endsAt.isAfter(Instant.now()) } }
+
     private fun save(list: List<ActiveTimer>) {
         val arr = JSONArray()
-        list.forEach { arr.put(JSONObject().put("id", it.id).put("label", it.label).put("end", it.endsAt.toEpochMilli())) }
-        prefs.edit().putString(KEY, arr.toString()).apply()
+        list.forEach { arr.put(JSONObject().put("id", it.id).put("label", it.label).put("end", it.endsAt.toEpochMilli()).put("seconds", it.seconds)) }
+        // commit: приёмник сигнала может сразу завершить процесс.
+        prefs.edit().putString(KEY, arr.toString()).commit()
     }
 
-    fun start(seconds: Int, label: String): ActiveTimer {
-        val t = ActiveTimer(Ids.newId(), label.trim(), Instant.now().plusSeconds(seconds.toLong()))
-        save(all() + t)
+    fun start(seconds: Int, label: String): ActiveTimer = synchronized(LOCK) {
+        val t = ActiveTimer(Ids.newId(), label.trim(), Instant.now().plusSeconds(seconds.toLong()), seconds)
+        save(stored() + t)
         schedule(t)
-        return t
+        t
     }
 
-    fun cancel(label: String?): Int {
+    fun cancel(label: String?): Int = synchronized(LOCK) {
         val list = all()
         val norm = label?.lowercase()?.replace('ё', 'е')?.trim()?.take(4)
         val gone = if (norm.isNullOrEmpty()) list else list.filter { it.label.lowercase().replace('ё', 'е').startsWith(norm) }.ifEmpty { list.takeIf { it.size == 1 } ?: emptyList() }
         gone.forEach { unschedule(it) }
-        save(list - gone.toSet())
-        return gone.size
+        save(stored() - gone.toSet())
+        gone.size
     }
 
-    fun finished(id: String): ActiveTimer? {
-        val list = all()
+    fun cancelOne(id: String): Boolean = synchronized(LOCK) {
+        val t = stored().firstOrNull { it.id == id } ?: return false
+        unschedule(t)
+        save(stored().filter { it.id != id })
+        true
+    }
+
+    fun finished(id: String): ActiveTimer? = synchronized(LOCK) {
+        val list = stored()
         val t = list.firstOrNull { it.id == id }
         save(list.filter { it.id != id })
         Notifications.cancel(context, notificationId(id))
-        return t
+        t
     }
 
-    /** После перезагрузки телефона будильники системы сбрасываются — ставим заново. */
-    fun rescheduleAll() = all().forEach { schedule(it) }
+    /**
+     * После перезагрузки телефона будильники системы сбрасываются — ставим заново.
+     * Таймеры, закончившиеся, пока телефон был выключен, не пропадают молча: показываем уведомление.
+     */
+    fun rescheduleAll() = synchronized(LOCK) {
+        val now = Instant.now()
+        val (done, active) = stored().partition { !it.endsAt.isAfter(now) }
+        done.forEach { t ->
+            val n = NotificationCompat.Builder(context, Notifications.CHANNEL_ALARMS)
+                .setSmallIcon(R.drawable.ic_stat_loli)
+                .setContentTitle(if (t.label.isBlank()) "Таймер закончился" else "Таймер «${t.label}» закончился")
+                .setContentText("Пока телефон был выключен.")
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setAutoCancel(true)
+                .build()
+            Notifications.notifySafely(context, notificationId(t.id), n)
+        }
+        if (done.isNotEmpty()) save(active)
+        active.forEach { schedule(it) }
+    }
 
+    /** У каждого таймера свой адрес: иначе похожие id дали бы один и тот же PendingIntent. */
     private fun pending(t: ActiveTimer, flags: Int = PendingIntent.FLAG_UPDATE_CURRENT): PendingIntent? = PendingIntent.getBroadcast(
-        context, notificationId(t.id), Intent(context, TimerReceiver::class.java).putExtra(EXTRA_ID, t.id),
+        context, 0,
+        Intent(context, TimerReceiver::class.java).setData(Uri.parse("loli-timer://${t.id}")).putExtra(EXTRA_ID, t.id),
         flags or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -96,6 +126,7 @@ class LoliTimers(private val context: Context) {
             .setShowWhen(true)
             .setOngoing(true)
             .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setTimeoutAfter((t.endsAt.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1000))
             .build()
         Notifications.notifySafely(context, notificationId(t.id), n)
@@ -104,7 +135,9 @@ class LoliTimers(private val context: Context) {
     companion object {
         private const val KEY = "timers"
         const val EXTRA_ID = "timer_id"
-        fun notificationId(id: String) = Notifications.TIMER_BASE_ID + (id.hashCode() and 0x3f)
+        /** Экземпляров несколько (приложение и приёмник сигнала) — чтение и запись списка общие. */
+        private val LOCK = Any()
+        fun notificationId(id: String) = Notifications.TIMER_BASE_ID + (id.hashCode() and 0xfff)
     }
 }
 

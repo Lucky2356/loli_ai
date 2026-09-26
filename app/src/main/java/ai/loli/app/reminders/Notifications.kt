@@ -22,7 +22,7 @@ object Notifications {
     const val CHANNEL_MEDIA = "media"
     const val RING_ID = 1010
     const val RADIO_ID = 1011
-    const val TIMER_BASE_ID = 1100
+    const val TIMER_BASE_ID = 200_000
     const val GEO_BASE_ID = 1200
     const val RESULT_ID = 1005
     const val LISTENING_ID = 1001

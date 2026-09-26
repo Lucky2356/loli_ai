@@ -127,8 +127,12 @@ Java_ai_loli_app_llm_LlamaNative_generate(JNIEnv *env, jclass, jlong handle, job
     std::vector<std::string> roles, texts;
     const jsize n = env->GetArrayLength(jmessages);
     for (jsize i = 0; i + 1 < n; i += 2) {
-        roles.push_back(jstr(env, (jstring) env->GetObjectArrayElement(jmessages, i)));
-        texts.push_back(jstr(env, (jstring) env->GetObjectArrayElement(jmessages, i + 1)));
+        auto role = (jstring) env->GetObjectArrayElement(jmessages, i);
+        auto text = (jstring) env->GetObjectArrayElement(jmessages, i + 1);
+        roles.push_back(jstr(env, role));
+        texts.push_back(jstr(env, text));
+        env->DeleteLocalRef(role);
+        env->DeleteLocalRef(text);
     }
     std::vector<llama_chat_message> msgs;
     for (size_t i = 0; i < roles.size(); i++) msgs.push_back({roles[i].c_str(), texts[i].c_str()});
@@ -152,7 +156,9 @@ Java_ai_loli_app_llm_LlamaNative_generate(JNIEnv *env, jclass, jlong handle, job
         return env->NewStringUTF("");
     }
     const int32_t n_ctx = (int32_t) llama_n_ctx(s->ctx);
-    if (n_prompt + max_tokens + 8 > n_ctx) {
+    // Длинный вопрос: ответ укорачиваем, но не молчим; совсем не помещается — пусто (Kotlin ответит без модели).
+    if (n_prompt + max_tokens + 8 > n_ctx) max_tokens = n_ctx - n_prompt - 8;
+    if (max_tokens < 32) {
         LOGW("prompt too long: %d", n_prompt);
         return env->NewStringUTF("");
     }
@@ -174,13 +180,18 @@ Java_ai_loli_app_llm_LlamaNative_generate(JNIEnv *env, jclass, jlong handle, job
     jmethodID onToken = cls ? env->GetMethodID(cls, "onToken", "(Ljava/lang/String;)Z") : nullptr;
 
     std::string out, pending;
-    char piece[256];
+    std::vector<char> piece(256);
     for (int32_t i = 0; i < max_tokens && !s->stop; i++) {
         llama_token tok = llama_sampler_sample(smpl, s->ctx, -1);
         if (llama_vocab_is_eog(s->vocab, tok)) break;
-        const int32_t len = llama_token_to_piece(s->vocab, tok, piece, sizeof(piece), 0, false);
+        int32_t len = llama_token_to_piece(s->vocab, tok, piece.data(), (int32_t) piece.size(), 0, false);
+        if (len < 0) {
+            // Кусок длиннее буфера: llama.cpp сообщает нужный размер со знаком минус.
+            piece.resize(-len);
+            len = llama_token_to_piece(s->vocab, tok, piece.data(), (int32_t) piece.size(), 0, false);
+        }
         if (len > 0) {
-            pending.append(piece, len);
+            pending.append(piece.data(), len);
             const size_t ready = complete_utf8_prefix(pending);
             if (ready > 0) {
                 std::string part = pending.substr(0, ready);
@@ -199,6 +210,7 @@ Java_ai_loli_app_llm_LlamaNative_generate(JNIEnv *env, jclass, jlong handle, job
         if (llama_decode(s->ctx, next) != 0) break;
     }
     llama_sampler_free(smpl);
+    if (cls) env->DeleteLocalRef(cls);
     if (!pending.empty() && complete_utf8_prefix(pending) == pending.size()) out += pending;
     return to_jstring(env, out);
 }

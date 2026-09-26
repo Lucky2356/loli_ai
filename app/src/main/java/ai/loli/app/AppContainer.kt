@@ -187,7 +187,8 @@ class AppContainer(private val context: Context) {
         )
     }
 
-    val engine: AssistantEngine by lazy { AssistantEngine(
+    val engine: AssistantEngine get() = engineLazy.value
+    private val engineLazy = lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
         conversations = store.conversations, search = search, executor = executor, time = time,
         settings = { assistantSettings() },
@@ -202,6 +203,7 @@ class AppContainer(private val context: Context) {
         AssistantSettings(
             it.assistantName, it.useAI || cloudActive(), it.dialogModeEnabled, locked = isLocked() || appLocked(),
             userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
+            lockPolicy = lockPolicy(),
         )
     }
 
@@ -288,6 +290,19 @@ class AppContainer(private val context: Context) {
             }
         }
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) { rescheduleReminders() }
+        // Экран выключили — разговор забывается: прочитанные сообщения и прочее личное не остаются в контексте.
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                context,
+                object : android.content.BroadcastReceiver() {
+                    override fun onReceive(c: Context, intent: android.content.Intent) {
+                        if (engineLazy.isInitialized()) appScope.launch { engine.forgetConversation() }
+                    }
+                },
+                android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }
         // Первый запуск: если по-русски говорить нечем, голос Лоли скачивается сам — только по Wi‑Fi.
         appScope.launch {
             awaitReady()

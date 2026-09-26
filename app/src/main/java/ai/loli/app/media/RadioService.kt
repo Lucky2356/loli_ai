@@ -33,6 +33,27 @@ class RadioService : Service() {
     private var session: MediaSession? = null
     private var station: RadioStation? = null
     private var focus: AudioFocusRequest? = null
+    /** Пауза из-за звонка или навигатора: когда звук вернут — продолжаем. */
+    private var resumeOnGain = false
+    private val attrs: AudioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
+
+    /** Один запрос фокуса на всё время работы: новый на каждую станцию отнимал фокус у самого себя. */
+    private fun focusRequest(): AudioFocusRequest = focus ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attrs)
+        .setOnAudioFocusChangeListener { change ->
+            when (change) {
+                AudioManager.AUDIOFOCUS_LOSS -> { resumeOnGain = false; pause() }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (player?.isPlaying == true) { resumeOnGain = true; pause() }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.let { runCatching { it.setVolume(0.3f, 0.3f) } }
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    player?.let { runCatching { it.setVolume(1f, 1f) } }
+                    if (resumeOnGain) {
+                        resumeOnGain = false
+                        player?.let { p -> runCatching { p.start() }.onSuccess { state(PlaybackState.STATE_PLAYING); station?.let { foreground(it, playing = true) } } }
+                    }
+                }
+            }
+        }
+        .build().also { focus = it }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -67,15 +88,8 @@ class RadioService : Service() {
         current = s
         foreground(s, playing = true)
         player?.release()
-        val audio = getSystemService(AudioManager::class.java)
-        val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
-        if (audio != null) {
-            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attrs)
-                .setOnAudioFocusChangeListener { change -> if (change == AudioManager.AUDIOFOCUS_LOSS) pause() }
-                .build()
-            focus = req
-            audio.requestAudioFocus(req)
-        }
+        resumeOnGain = false
+        getSystemService(AudioManager::class.java)?.requestAudioFocus(focusRequest())
         player = MediaPlayer().apply {
             setAudioAttributes(attrs)
             setOnPreparedListener { mp ->
@@ -143,12 +157,14 @@ class RadioService : Service() {
         player = null
         current = null
         focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
+        resumeOnGain = false
         state(PlaybackState.STATE_STOPPED)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
+        focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
         player?.release()
         player = null
         current = null

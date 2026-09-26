@@ -5,7 +5,9 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.location.Location
 import android.location.LocationManager
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import ai.loli.app.R
 import ai.loli.app.ui.MainActivity
@@ -74,7 +76,7 @@ class GeoReminders(private val context: Context) {
     fun registerAll() = reminders().forEach { register(it) }
 
     private fun pending(r: PlaceReminder, flags: Int): PendingIntent? = PendingIntent.getBroadcast(
-        context, r.id.hashCode(), Intent(context, GeoReceiver::class.java).setAction(ACTION).putExtra(EXTRA_ID, r.id),
+        context, 0, Intent(context, GeoReceiver::class.java).setAction(ACTION).setData(Uri.parse("loli-geo://${r.id}")).putExtra(EXTRA_ID, r.id),
         // Система дописывает в интент «вошли/вышли» — поэтому изменяемый.
         flags or PendingIntent.FLAG_MUTABLE,
     )
@@ -84,12 +86,29 @@ class GeoReminders(private val context: Context) {
         val p = places().firstOrNull { it.name == r.place } ?: return
         val lm = context.getSystemService(LocationManager::class.java) ?: return
         val pi = pending(r, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
+        // Повторная регистрация (перезагрузка, место перезаписано) — сначала снимаем старую зону.
+        runCatching { lm.removeProximityAlert(pi) }
+        // Система сразу сообщает «вошли», если мы уже в зоне: такое первое «вошли» пропускаем.
+        val inside = runCatching {
+            lm.getProviders(true).mapNotNull { lm.getLastKnownLocation(it) }.maxByOrNull { it.time }
+                ?.takeIf { System.currentTimeMillis() - it.time < 10 * 60_000L }
+                ?.let { loc -> FloatArray(1).also { d -> Location.distanceBetween(loc.latitude, loc.longitude, p.lat, p.lon, d) }[0] < RADIUS }
+        }.getOrNull() == true
+        prefs.edit().putBoolean(KEY_SKIP + r.id, inside && !r.onLeave).apply()
         runCatching { lm.addProximityAlert(p.lat, p.lon, RADIUS, -1, pi) }
-            .onFailure { Logger.w(TAG, "Не удалось следить за местом ${r.place}", it) }
+            .onFailure { Logger.w(TAG, "Не удалось следить за местом", it) }
+    }
+
+    /** Первое «вошли» сразу после регистрации — мы и так были здесь. */
+    fun consumeSkip(id: String, entering: Boolean): Boolean {
+        val skip = prefs.getBoolean(KEY_SKIP + id, false)
+        if (skip) prefs.edit().remove(KEY_SKIP + id).apply()
+        return skip && entering
     }
 
     @SuppressLint("MissingPermission")
     private fun unregister(r: PlaceReminder) {
+        prefs.edit().remove(KEY_SKIP + r.id).apply()
         val pi = pending(r, PendingIntent.FLAG_NO_CREATE) ?: return
         runCatching { context.getSystemService(LocationManager::class.java)?.removeProximityAlert(pi) }
         pi.cancel()
@@ -110,6 +129,7 @@ class GeoReminders(private val context: Context) {
         private const val TAG = "Geo"
         private const val KEY_PLACES = "places"
         private const val KEY_REMINDERS = "reminders"
+        private const val KEY_SKIP = "skip_"
         private const val RADIUS = 150f
         const val ACTION = "ai.loli.GEO"
         const val EXTRA_ID = "geo_id"
@@ -122,6 +142,7 @@ class GeoReceiver : BroadcastReceiver() {
         val entering = intent.getBooleanExtra(LocationManager.KEY_PROXIMITY_ENTERING, true)
         val geo = GeoReminders(context)
         val r = geo.reminders().firstOrNull { it.id == id } ?: return
+        if (geo.consumeSkip(id, entering)) return
         if (r.onLeave == entering) return
         val open = PendingIntent.getActivity(
             context, Notifications.GEO_BASE_ID, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

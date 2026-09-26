@@ -56,9 +56,19 @@ object Diagnostics {
     /** Непонятая фраза — для улучшения разбора. Хранятся последние 50, только на телефоне. */
     fun rememberUnknown(context: Context, phrase: String) {
         val p = context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE)
-        val list = (p.getString("list", "").orEmpty().split('\n').filter { it.isNotBlank() } + phrase.replace('\n', ' ').take(200)).takeLast(50)
+        val list = (p.getString("list", "").orEmpty().split('\n').filter { it.isNotBlank() } + scrub(phrase)).takeLast(50)
         p.edit().putString("list", list.joinToString("\n")).apply()
     }
+
+    /**
+     * Фразы могут уйти в публичную заявку — убираем то, что похоже на личное:
+     * длинные числа (телефоны, карты, коды), почту, ссылки и ключи. Короткие числа («через 5 минут») оставляем.
+     */
+    fun scrub(phrase: String): String = Redactor.redact(phrase.replace('\n', ' '))
+        .replace(Regex("""[\w.+-]+@[\w-]+\.[\w.]+"""), "[почта]")
+        .replace(Regex("""https?://\S+"""), "[ссылка]")
+        .replace(Regex("""\+?\d[\d\s()-]{4,}\d"""), "[число]")
+        .take(200)
 
     fun unknownPhrases(context: Context): List<String> =
         context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE).getString("list", "").orEmpty().split('\n').filter { it.isNotBlank() }

@@ -56,9 +56,10 @@ class RingService : Service() {
             Logger.w(TAG, "Не удалось показать сигнал", e)
             Notifications.notifySafely(this, Notifications.RING_ID, n)
         }
+        // Сначала снимаем старые задачи, потом запускаем мигание — иначе оно гаснет сразу.
+        handler.removeCallbacksAndMessages(null)
         play(loud)
         if (loud) flash()
-        handler.removeCallbacksAndMessages(null)
         handler.postDelayed({ stopAll() }, if (loud) 60_000L else 90_000L)
         return START_NOT_STICKY
     }
@@ -67,7 +68,8 @@ class RingService : Service() {
         player?.release()
         val audio = getSystemService(AudioManager::class.java)
         if (loud && audio != null) {
-            restoreVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+            // Повторный вызов не должен запомнить уже выкрученную на максимум громкость.
+            if (restoreVolume == null) restoreVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
             runCatching { audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0) }
         }
         val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
@@ -118,8 +120,13 @@ class RingService : Service() {
 
     override fun onDestroy() {
         flashing = false
+        handler.removeCallbacksAndMessages(null)
         player?.release()
         player = null
+        // Систему могли остановить без «Стоп» — громкость будильника всё равно возвращаем.
+        restoreVolume?.let { v -> runCatching { getSystemService(AudioManager::class.java)?.setStreamVolume(AudioManager.STREAM_ALARM, v, 0) } }
+        restoreVolume = null
+        runCatching { getSystemService(CameraManager::class.java)?.let { cm -> cm.cameraIdList.forEach { id -> runCatching { cm.setTorchMode(id, false) } } } }
         super.onDestroy()
     }
 

@@ -437,6 +437,7 @@ class SkillsTest {
         e.settings = AssistantSettings(useAI = false, locked = true, lockPolicy = ai.loli.core.assistant.LockPolicy.NONE)
         assertTrue(e.engine.handle("какая погода").text.startsWith("Разблокируйте"))
         assertTrue(e.engine.handle("называй меня Боб").text.startsWith("Разблокируйте"))
+        assertTrue(e.engine.handle("почему небо голубое").text.startsWith("Разблокируйте"))
         assertNull(host.savedName)
         // По умолчанию: погода можно, имя — это запись (можно), напомнить своё имя — нельзя.
         e.settings = AssistantSettings(useAI = false, locked = true, lockPolicy = ai.loli.core.assistant.LockPolicy.SAFE, userName = "Боб")

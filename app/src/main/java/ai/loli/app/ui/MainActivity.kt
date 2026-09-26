@@ -147,7 +147,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND, ACTION_LISTEN, "android.intent.action.SEARCH_LONG_PRESS" ->
                 listenRequest.value = listenRequest.value + 1
             // Уведомление «Доступна новая версия»: сразу скачиваем и ставим.
-            ACTION_UPDATE -> lifecycleScope.launch {
+            // Только из нашего уведомления: другое приложение не знает секрет и не может запустить установку.
+            ACTION_UPDATE -> if (intent.getStringExtra(EXTRA_TOKEN) == intentToken(this)) lifecycleScope.launch {
                 val info = container.updates.check() ?: return@launch
                 if (!container.updates.canInstall()) startActivity(container.updates.installPermissionIntent())
                 else container.updates.downloadAndInstall(info)
@@ -160,6 +161,13 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_LISTEN = "ai.loli.action.LISTEN"
         const val ACTION_UPDATE = "ai.loli.action.UPDATE"
+        const val EXTRA_TOKEN = "ai.loli.token"
+
+        /** Случайный секрет этой установки для своих уведомлений. */
+        fun intentToken(context: android.content.Context): String {
+            val prefs = context.getSharedPreferences("loli_intents", android.content.Context.MODE_PRIVATE)
+            return prefs.getString("token", null) ?: java.util.UUID.randomUUID().toString().also { prefs.edit().putString("token", it).apply() }
+        }
     }
 }
 

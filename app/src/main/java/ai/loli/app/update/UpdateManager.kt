@@ -301,15 +301,19 @@ class UpdateManager(private val context: Context) {
                 val d = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
                 if (d != 0) return d
             }
-            fun pre(v: String): Int? = v.substringAfter('-', "").takeIf { it.isNotEmpty() && it != "debug" }
-                ?.let { s -> Regex("""(\d+)$""").find(s)?.groupValues?.get(1)?.toIntOrNull() ?: 0 }
+            // Предварительные версии: alpha < beta < rc, внутри — по номеру («2.1.0-rc.1» новее «2.1.0-beta.3»).
+            fun pre(v: String): Pair<Int, Int>? = v.substringAfter('-', "").lowercase().takeIf { it.isNotEmpty() && it != "debug" }?.let { s ->
+                val rank = when { s.startsWith("alpha") -> 0; s.startsWith("beta") -> 1; s.startsWith("rc") -> 2; else -> 1 }
+                rank to (Regex("""(\d+)$""").find(s)?.groupValues?.get(1)?.toIntOrNull() ?: 0)
+            }
             val pa = pre(a)
             val pb = pre(b)
             return when {
                 pa == null && pb == null -> 0
                 pa == null -> 1
                 pb == null -> -1
-                else -> pa - pb
+                pa.first != pb.first -> pa.first - pb.first
+                else -> pa.second - pb.second
             }
         }
     }
@@ -359,6 +363,7 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             val open = PendingIntent.getActivity(
                 applicationContext, 8,
                 Intent(applicationContext, ai.loli.app.ui.MainActivity::class.java).setAction(ai.loli.app.ui.MainActivity.ACTION_UPDATE)
+                    .putExtra(ai.loli.app.ui.MainActivity.EXTRA_TOKEN, ai.loli.app.ui.MainActivity.intentToken(applicationContext))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )

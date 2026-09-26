@@ -160,6 +160,12 @@ class AssistantEngine(
         skills?.reset()
     }
 
+    /** Экран выключили — забываем разговор: следующий человек с телефоном не продолжит его, а AI не увидит прошлого. */
+    suspend fun forgetConversation() = mutex.withLock {
+        context.reset()
+        skills?.reset()
+    }
+
     /** Понимает ли Лоли фразу без AI — чтобы из нескольких вариантов распознавания выбрать осмысленный. */
     fun understandsLocally(text: String): Boolean = runCatching {
         val t = stripWakeWord(text, settings().assistantName)
@@ -217,6 +223,11 @@ class AssistantEngine(
     suspend fun respondToConfirmation(confirm: Boolean): AssistantReply = handle(if (confirm) "да" else "нет")
 
     private suspend fun process(text: String, cfg: AssistantSettings): AssistantReply {
+        // «Работать без разблокировки» выключено — на заблокированном экране Лоли ничего не выполняет
+        // (в том числе по слову-активатору) и ничего не отправляет AI.
+        if (cfg.locked && cfg.lockPolicy?.any == false) {
+            return AssistantReply("Разблокируйте телефон — без разблокировки я не отвечаю. Это можно разрешить в настройках Лоли.")
+        }
         // 0. Идёт игра или навык ждёт ответа («В каком городе?») — фраза для него, если это не новая команда.
         var skillsTried = false
         if (skills?.busy == true) {

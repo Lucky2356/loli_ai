@@ -59,6 +59,7 @@ class Locator(private val context: Context) {
                 }
             }
         }
-        return fresh ?: last
+        // Для точного места (сохранить «дом») старая или грубая точка не годится — лучше честно сказать «не знаю».
+        return fresh ?: last?.takeIf { !precise || (System.currentTimeMillis() - it.time < 2 * 60_000L && it.accuracy < 500) }
     }
 }

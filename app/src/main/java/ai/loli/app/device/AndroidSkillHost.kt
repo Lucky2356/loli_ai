@@ -106,11 +106,13 @@ class AndroidSkillHost(
                     val title = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Без названия"
                     val allDay = c.getInt(3) == 1
                     // Событие «на весь день» хранится в UTC-полночь — переносим на местную дату.
-                    val begin = if (allDay) {
-                        val utc = Instant.ofEpochMilli(c.getLong(1)).atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                        utc.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant()
-                    } else Instant.ofEpochMilli(c.getLong(1))
-                    out += CalendarItem(title, begin, c.getLong(2).takeIf { it > 0 }?.let(Instant::ofEpochMilli), allDay, c.getString(4))
+                    fun localDay(ms: Long) = Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                        .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant()
+                    val begin = if (allDay) localDay(c.getLong(1)) else Instant.ofEpochMilli(c.getLong(1))
+                    val end = c.getLong(2).takeIf { it > 0 }?.let { if (allDay) localDay(it) else Instant.ofEpochMilli(it) }
+                    // Вчерашнее событие «на весь день» попадает в окно запроса из-за часового пояса — отбрасываем.
+                    if (allDay && (!begin.isBefore(to) || (end != null && !end.isAfter(from)))) continue
+                    out += CalendarItem(title, begin, end, allDay, c.getString(4))
                 }
             }
             out
@@ -124,6 +126,7 @@ class AndroidSkillHost(
 
     override fun timers(): List<ActiveTimer> = timers.all()
     override fun cancelTimers(label: String?): Int = timers.cancel(label)
+    override fun cancelTimer(id: String): Boolean = timers.cancelOne(id)
 
     override suspend fun savePlace(name: String): SavedPlace? {
         if (!locator.hasFine() && !permissions.ensure(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) {

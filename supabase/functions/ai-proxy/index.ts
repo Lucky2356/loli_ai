@@ -37,31 +37,44 @@ Deno.serve(async (req) => {
   const url = Deno.env.get("SUPABASE_URL")!;
   const userClient = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: auth } } });
   const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return error(401, "Войдите в аккаунт Лоли, чтобы пользоваться облаком");
+  // Анонимные сессии не считаются: иначе лимит легко обойти, создавая новых «пользователей».
+  if (!user || (user as { is_anonymous?: boolean }).is_anonymous) return error(401, "Войдите в аккаунт Лоли, чтобы пользоваться облаком");
 
-  // Дневной лимит — атомарно в базе.
-  const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const { data: allowed, error: limitError } = await admin.rpc("ai_usage_take", { p_user: user.id, p_limit: DAILY_LIMIT });
-  if (limitError) return error(500, "Не удалось проверить лимит");
-  if (!allowed) return error(429, `Лимит облака на сегодня исчерпан (${DAILY_LIMIT} запросов). Завтра снова можно.`);
-
-  // Запрос клиента — только нужные поля и в разумных пределах.
+  // Сначала проверяем запрос, потом списываем лимит: кривой запрос не должен съедать попытки.
   let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
     return error(400, "Некорректный запрос");
   }
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  const size = JSON.stringify(messages).length;
-  if (messages.length === 0 || size > MAX_CHARS) return error(413, "Слишком длинный запрос");
+  const raw = Array.isArray(body.messages) ? body.messages : [];
+  // Только обычные реплики с текстом: никаких tool/function-ролей и вложенных объектов.
+  const messages: { role: string; content: string }[] = [];
+  for (const m of raw) {
+    const role = (m as { role?: unknown })?.role;
+    const content = (m as { content?: unknown })?.content;
+    if ((role !== "system" && role !== "user" && role !== "assistant") || typeof content !== "string") {
+      return error(400, "Некорректное сообщение в запросе");
+    }
+    messages.push({ role, content });
+  }
+  const size = messages.reduce((n, m) => n + m.content.length, 0);
+  if (messages.length === 0 || messages.length > 40 || size > MAX_CHARS) return error(413, "Слишком длинный запрос");
+  const temperature = typeof body.temperature === "number" && isFinite(body.temperature) ? Math.min(Math.max(body.temperature, 0), 1.5) : 0.3;
   const upstreamBody: Record<string, unknown> = {
     model: MODEL,
     messages,
-    max_tokens: Math.min(Number(body.max_tokens ?? body.max_completion_tokens ?? 800) || 800, MAX_TOKENS),
-    temperature: typeof body.temperature === "number" ? body.temperature : 0.3,
+    max_tokens: Math.max(1, Math.min(Number(body.max_tokens ?? body.max_completion_tokens ?? 800) || 800, MAX_TOKENS)),
+    temperature,
   };
-  if (body.response_format) upstreamBody.response_format = body.response_format;
+  const format = body.response_format as { type?: unknown } | undefined;
+  if (format?.type === "json_object") upstreamBody.response_format = { type: "json_object" };
+
+  // Дневной лимит — атомарно в базе.
+  const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: allowed, error: limitError } = await admin.rpc("ai_usage_take", { p_user: user.id, p_limit: DAILY_LIMIT });
+  if (limitError) return error(500, "Не удалось проверить лимит");
+  if (!allowed) return error(429, `Лимит облака на сегодня исчерпан (${DAILY_LIMIT} запросов). Завтра снова можно.`);
 
   const upstream = await fetch(`${BASE}/chat/completions`, {
     method: "POST",

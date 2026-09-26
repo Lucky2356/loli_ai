@@ -65,8 +65,9 @@ class LoliVoice(
     /** Проговаривает текст; false — голос не скачан или не загрузился. */
     suspend fun speak(text: String, voice: String = voiceId(), rateOverride: Float? = null, pitchOverride: Float? = null): Boolean {
         if (text.isBlank()) return true
-        stopped = false
         return lock.withLock {
+            // Сбрасываем «стоп» только когда предыдущая фраза уже закончилась, иначе она не остановится.
+            stopped = false
             val tts = withContext(Dispatchers.Default) { load(voice) } ?: return@withLock false
             val speed = (rateOverride ?: rate()).coerceIn(0.5f, 2f)
             val p = (pitchOverride ?: pitch()).coerceIn(0.5f, 2f)
@@ -74,7 +75,7 @@ class LoliVoice(
             // Синтез следующей фразы идёт параллельно с воспроизведением текущей.
             val audio = Channel<FloatArray>(capacity = 2)
             coroutineScope {
-                launch(Dispatchers.Default) {
+                val producer = launch(Dispatchers.Default) {
                     try {
                         for (s in sentences) {
                             if (stopped) break
@@ -103,6 +104,9 @@ class LoliVoice(
                         // Дождаться, пока буфер доиграет.
                         if (!stopped) waitDrained(t)
                     } finally {
+                        // Синтез мог ждать места в канале — без отмены он висел бы вечно.
+                        producer.cancel()
+                        audio.cancel()
                         runCatching { t.stop() }
                         runCatching { t.release() }
                         track = null
