@@ -41,7 +41,7 @@ object MorningBrief {
         wm.enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
-    /** Текст сводки или null, если на сегодня ничего нет. */
+    /** Текст сводки (погода, задачи, напоминания) или null, если сказать нечего. */
     suspend fun text(context: Context): String? {
         val c = (context.applicationContext as LoliApp).container
         c.awaitReady()
@@ -52,8 +52,10 @@ object MorningBrief {
         val overdue = tasks.filter { it.dueDate?.isBefore(today) == true }
         val reminders = c.store.reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == today }
             .sortedBy { it.triggerAt }
-        if (dueToday.isEmpty() && overdue.isEmpty() && reminders.isEmpty()) return null
+        val weather = runCatching { c.skills.weatherLine(c.assistantSettings()) }.getOrNull()
+        if (dueToday.isEmpty() && overdue.isEmpty() && reminders.isEmpty()) return weather
         return buildList {
+            weather?.let { add(it) }
             if (dueToday.isNotEmpty()) add("Задачи: " + dueToday.take(4).joinToString(", ") { it.title } + if (dueToday.size > 4) " и ещё ${dueToday.size - 4}" else "")
             if (reminders.isNotEmpty()) add("Напоминания: " + reminders.take(3).joinToString(", ") {
                 val t = it.triggerAt.atZone(zone).toLocalTime()

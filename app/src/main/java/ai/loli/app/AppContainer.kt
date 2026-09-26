@@ -132,10 +132,20 @@ class AppContainer(private val context: Context) {
     val appLock = ai.loli.app.security.AppLock(context)
     val appAccess = ai.loli.app.device.AppAccess(context) { settings.settings.value }
     val permissions = ai.loli.app.device.PermissionBroker(context)
-    val device = AndroidDeviceController(context, launcher, appAccess, permissions) { text, at ->
+    /** Свои таймеры и напоминания по месту. */
+    val timers = ai.loli.app.reminders.LoliTimers(context)
+    val geo = ai.loli.app.reminders.GeoReminders(context)
+    val device = AndroidDeviceController(context, launcher, appAccess, permissions, fallbackReminder = { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
-    }
+    }, timers = timers)
+    /** Погода, курсы, новости, сообщения, экран, радио, игры, сказки… */
+    val skillHost = ai.loli.app.device.AndroidSkillHost(
+        context, permissions, launcher, timers, geo,
+        onUserName = { n -> appScope.launch { settings.setUserName(n.orEmpty()) } },
+        onCity = { c -> appScope.launch { settings.setCity(c.orEmpty()) } },
+    )
+    val skills = ai.loli.core.skills.Skills(skillHost, http, time)
     private val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
 
     /** Телефон заблокирован (экран блокировки показан). */
@@ -161,16 +171,25 @@ class AppContainer(private val context: Context) {
         ActionExecutor(
             store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
             lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
+            agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
         )
     }
 
     val engine: AssistantEngine by lazy { AssistantEngine(
         notes = store.notes, tasks = store.tasks, reminders = store.reminders, memories = store.memories,
         conversations = store.conversations, search = search, executor = executor, time = time,
-        settings = { settings.settings.value.let { AssistantSettings(it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked()) } },
+        settings = { assistantSettings() },
         aiProvider = { aiProvider() },
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
+        skills = skills,
     ) }
+
+    fun assistantSettings(): AssistantSettings = settings.settings.value.let {
+        AssistantSettings(
+            it.assistantName, it.useAI, it.dialogModeEnabled, locked = isLocked() || appLocked(),
+            userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
+        )
+    }
 
     // --- Голос ---
     val voskModels = VoskModelManager(context)
@@ -256,6 +275,8 @@ class AppContainer(private val context: Context) {
     }
 
     suspend fun rescheduleReminders() {
+        runCatching { timers.rescheduleAll() }
+        runCatching { geo.registerAll() }
         reminderScheduler.rescheduleAll(store.reminders.active())
     }
 

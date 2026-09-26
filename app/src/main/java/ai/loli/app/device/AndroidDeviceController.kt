@@ -55,6 +55,8 @@ class AndroidDeviceController(
     private val permissions: PermissionBroker,
     /** Запасной таймер/будильник: напоминание Лоли на указанное время. */
     private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
+    /** Свои таймеры Лоли: не зависят от приложения «Часы», их можно спросить «сколько осталось» и отменить голосом. */
+    private val timers: ai.loli.app.reminders.LoliTimers? = null,
 ) : DeviceController {
 
     override suspend fun perform(command: DeviceCommand): DeviceResult = withContext(Dispatchers.Main) {
@@ -73,6 +75,10 @@ class AndroidDeviceController(
         return when (c) {
             is DeviceCommand.Timer -> {
                 val what = DevicePhrases.describeDuration(c.seconds)
+                timers?.let { t ->
+                    t.start(c.seconds, c.label)
+                    return DeviceResult("Засекла $what${if (c.label.isNotBlank()) " — «${c.label}»" else ""}. Спросите «сколько осталось» или скажите «отмени таймер».")
+                }
                 val intent = Intent(AlarmClock.ACTION_SET_TIMER)
                     .putExtra(AlarmClock.EXTRA_LENGTH, c.seconds)
                     .putExtra(AlarmClock.EXTRA_SKIP_UI, true)

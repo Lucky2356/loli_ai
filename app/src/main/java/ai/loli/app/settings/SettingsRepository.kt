@@ -119,6 +119,10 @@ data class AppSettings(
     val voiceMode: String = "auto",
     /** Встроенный голос: irina, denis, dmitri, ruslan. */
     val loliVoice: String = "irina",
+    /** Как зовут пользователя («называй меня …»). */
+    val userName: String = "",
+    /** Город для погоды, если геолокация недоступна. */
+    val city: String = "",
     val wakeWordEnabled: Boolean = false,
     val dialogModeEnabled: Boolean = true,
     val sttMode: SttMode = SttMode.AUTO,
@@ -191,6 +195,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val ttsAutoEngine = stringPreferencesKey("tts_auto_engine")
         val voiceMode = stringPreferencesKey("voice_mode")
         val loliVoice = stringPreferencesKey("loli_voice")
+        val userName = stringPreferencesKey("user_name")
+        val city = stringPreferencesKey("city")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val lockEnabled = booleanPreferencesKey("lock_enabled")
         val lockCreate = booleanPreferencesKey("lock_create")
@@ -260,6 +266,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             ttsAutoEngine = p[K.ttsAutoEngine].orEmpty(),
             voiceMode = p[K.voiceMode] ?: "auto",
             loliVoice = p[K.loliVoice] ?: "irina",
+            userName = p[K.userName].orEmpty(),
+            city = p[K.city].orEmpty(),
             wakeWordEnabled = p[K.wake] ?: false,
             dialogModeEnabled = p[K.dialog] ?: true,
             sttMode = SttMode.fromId(p[K.sttMode]) ?: if (p[K.legacyOfflineStt] == true) SttMode.OFFLINE else SttMode.AUTO,
@@ -363,6 +371,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setTtsAutoEngine(v: String) = store.edit { it[K.ttsAutoEngine] = v }
     suspend fun setVoiceMode(v: String) = store.edit { it[K.voiceMode] = v }
     suspend fun setLoliVoice(v: String) = store.edit { it[K.loliVoice] = v }
+    suspend fun setUserName(v: String) = store.edit { it[K.userName] = v.trim().take(40) }
+    suspend fun setCity(v: String) = store.edit { it[K.city] = v.trim().take(60) }
     suspend fun setVoiceStyle(pitch: Float, rate: Float) = store.edit { it[K.pitch] = pitch.coerceIn(0.5f, 2f); it[K.rate] = rate.coerceIn(0.5f, 2f) }
     suspend fun setAutoUpdate(v: Boolean) = store.edit { it[K.autoUpdate] = v }
     suspend fun setLockScreenEnabled(v: Boolean) = store.edit { it[K.lockEnabled] = v }

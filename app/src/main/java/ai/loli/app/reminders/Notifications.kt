@@ -16,6 +16,14 @@ object Notifications {
     const val CHANNEL_LISTENING = "listening"
     const val CHANNEL_SYSTEM = "system"
     const val CHANNEL_RESULTS = "results"
+    /** Таймеры Лоли и «найди телефон»: звук играет сам сервис, у канала — без звука. */
+    const val CHANNEL_ALARMS = "alarms"
+    /** Радио и отсчёт таймеров. */
+    const val CHANNEL_MEDIA = "media"
+    const val RING_ID = 1010
+    const val RADIO_ID = 1011
+    const val TIMER_BASE_ID = 1100
+    const val GEO_BASE_ID = 1200
     const val RESULT_ID = 1005
     const val LISTENING_ID = 1001
     const val REACTIVATE_ID = 1002
@@ -32,6 +40,18 @@ object Notifications {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_LISTENING, context.getString(R.string.channel_listening), NotificationManager.IMPORTANCE_LOW).apply {
                 description = context.getString(R.string.channel_listening_desc)
+                setShowBadge(false)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ALARMS, "Таймеры и поиск телефона", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Сигнал таймера Лоли и «Лоли, где ты?»"
+                setSound(null, null)
+                enableVibration(true)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_MEDIA, "Радио и отсчёт таймера", NotificationManager.IMPORTANCE_LOW).apply {
                 setShowBadge(false)
             },
         )

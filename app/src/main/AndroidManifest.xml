@@ -30,6 +30,12 @@
     <!-- Необязательно: «добавь в календарь встречу…» сразу в календарь, без лишних экранов. -->
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Погода «здесь» и напоминания «когда буду дома»: спрашиваются, только когда понадобятся. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Радио, сигнал таймера и «Лоли, где ты?». -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Автообновление: установка скачанной новой версии приложения. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -222,6 +228,35 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service" />
         </service>
+
+        <!-- «Прочитай сообщения», «ответь Маше…»: доступ к уведомлениям включает пользователь. -->
+        <service
+            android:name=".notify.LoliNotificationListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".media.RadioService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name=".media.RingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".reminders.TimerReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".reminders.GeoReceiver"
+            android:exported="false" />
 
         <service
             android:name=".tile.LoliTileService"

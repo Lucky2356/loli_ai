@@ -15,8 +15,9 @@ import ai.loli.app.settings.KeyTrigger
 import ai.loli.core.assistant.GlobalAction
 
 /**
- * Спецвозможности Лоли: только системные кнопки по голосу — «назад», «домой», «недавние», «скриншот»,
- * «заблокируй экран», «открой уведомления». Содержимое экрана служба НЕ читает (canRetrieveWindowContent=false).
+ * Спецвозможности Лоли: системные кнопки по голосу — «назад», «домой», «недавние», «скриншот»,
+ * «заблокируй экран», «открой уведомления». Текст экрана читается только по команде («что на экране»,
+ * «перескажи экран») и никуда не сохраняется; окна самой Лоли, поля паролей и чужие клавиатуры пропускаются.
  * Включается пользователем вручную: Настройки → Спецвозможности → Лоли.
  */
 class LoliAccessibilityService : AccessibilityService() {
@@ -35,6 +36,31 @@ class LoliAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+
+    /** Видимый текст активного окна (без полей паролей), по порядку на экране. */
+    fun screenText(): String? {
+        val root = rootInActiveWindow ?: return null
+        if (root.packageName?.toString() == packageName) {
+            // Сверху окно Лоли (ассистент) — читаем окно под ним.
+            val other = windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() != packageName } ?: return null
+            return collect(other)
+        }
+        return collect(root)
+    }
+
+    private fun collect(root: android.view.accessibility.AccessibilityNodeInfo): String {
+        val out = LinkedHashSet<String>()
+        fun walk(n: android.view.accessibility.AccessibilityNodeInfo?, depth: Int) {
+            if (n == null || depth > 40 || out.size > 400) return
+            if (!n.isPassword && n.isVisibleToUser) {
+                val t = (n.text ?: n.contentDescription)?.toString()?.trim()
+                if (!t.isNullOrEmpty() && t.length > 1) out += t
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
+        }
+        walk(root, 0)
+        return out.joinToString("\n")
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private var upDownAt = 0L
@@ -148,6 +174,8 @@ class LoliAccessibilityService : AccessibilityService() {
         @Volatile private var instance: LoliAccessibilityService? = null
 
         val isEnabled: Boolean get() = instance != null
+        /** Работающая служба (для чтения экрана по команде). */
+        val current: LoliAccessibilityService? get() = instance
 
         /** null — служба не включена; false — действие недоступно на этой версии Android. */
         fun perform(action: GlobalAction): Boolean? {

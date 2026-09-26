@@ -146,7 +146,7 @@ class Skills(
         is SkillCommand.News -> {
             val items = (newsService ?: return offline("новости")).headlines(cmd.topic)
             lastNews = items
-            SkillOutcome.Say(NewsService.answer(cmd.topic, items) + if (items.any { it.link != null }) "\nСкажите «подробнее» — открою первую новость." else "")
+            SkillOutcome.Say(NewsService.answer(cmd.topic, items))
         }
         is SkillCommand.NewsDetails -> {
             val item = lastNews.getOrNull(cmd.index)

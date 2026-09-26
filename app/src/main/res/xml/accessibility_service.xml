@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Только системные действия (назад, домой, скриншот, блокировка). Содержимое экрана не читается. -->
+<!-- Системные действия (назад, домой, скриншот, блокировка) и текст экрана — только по команде «что на экране» / «перескажи экран». -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeAnnouncement"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRequestFilterKeyEvents|flagRequestAccessibilityButton"
+    android:accessibilityFlags="flagRequestFilterKeyEvents|flagRequestAccessibilityButton|flagRetrieveInteractiveWindows"
     android:canRequestFilterKeyEvents="true"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_description"
     android:notificationTimeout="0"
     android:settingsActivity="ai.loli.app.ui.MainActivity" />
