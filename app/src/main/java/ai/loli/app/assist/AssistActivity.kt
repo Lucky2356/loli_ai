@@ -149,6 +149,7 @@ private fun AssistPanel(c: AppContainer, startRequest: Int, onClose: () -> Unit,
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     val listen = rememberListenAction(c)
     rememberSystemSpeechDialog(c)
+    ai.loli.app.ui.PermissionRequests(c)
     var answered by remember { mutableStateOf(false) }
     var shown by remember { mutableStateOf(false) }
     val initialReply = remember { reply }

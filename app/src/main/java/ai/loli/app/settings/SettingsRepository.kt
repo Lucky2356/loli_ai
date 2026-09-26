@@ -133,6 +133,8 @@ data class AppSettings(
     val appLock: Boolean = false,
     /** Скрывать содержимое в «недавних» и запрещать скриншоты и запись экрана. */
     val secureScreen: Boolean = false,
+    /** Каждое утро — уведомление с планом на день. */
+    val morningBrief: Boolean = true,
     val supabaseUrlOverride: String = "",
     val localOnly: Boolean = false,
     val onboardingDone: Boolean = false,
@@ -174,6 +176,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val accent = stringPreferencesKey("accent")
         val speechPause = stringPreferencesKey("speech_pause")
         val secureScreen = booleanPreferencesKey("secure_screen")
+        val morningBrief = booleanPreferencesKey("morning_brief")
         val pitch = floatPreferencesKey("speech_pitch")
         val voice = stringPreferencesKey("voice_name")
         val autoUpdate = booleanPreferencesKey("auto_update")
@@ -249,6 +252,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             accent = AccentColor.fromId(p[K.accent]),
             speechPause = SpeechPause.fromId(p[K.speechPause]),
             secureScreen = p[K.secureScreen] ?: false,
+            morningBrief = p[K.morningBrief] ?: true,
             autoUpdate = p[K.autoUpdate] ?: true,
             lockScreenEnabled = p[K.lockEnabled] ?: true,
             lockPolicy = ai.loli.core.assistant.LockPolicy(
@@ -333,6 +337,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setDynamicColor(v: Boolean) = store.edit { it[K.dynamicColor] = v }
     /** Свой цвет Лоли выключает «цвета обоев» — иначе выбор не был бы виден. */
     suspend fun setAccent(v: AccentColor) = store.edit { it[K.accent] = v.id; it[K.dynamicColor] = false }
+    suspend fun setMorningBrief(v: Boolean) = store.edit { it[K.morningBrief] = v }
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }
     suspend fun setSpeechPitch(v: Float) = store.edit { it[K.pitch] = v.coerceIn(0.5f, 2f) }

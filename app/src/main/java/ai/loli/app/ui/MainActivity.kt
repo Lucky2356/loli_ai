@@ -187,6 +187,26 @@ fun rememberSystemSpeechDialog(c: AppContainer): () -> Unit {
     return show
 }
 
+/** Показывает системные вопросы о разрешениях, которые команды просят «по ходу дела» (контакты, календарь). */
+@Composable
+fun PermissionRequests(c: AppContainer) {
+    var current by remember { mutableStateOf<ai.loli.app.device.PermissionBroker.Request?>(null) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        current?.result?.complete(result.isNotEmpty() && result.values.all { it })
+        current = null
+    }
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(owner) {
+        owner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            c.permissions.requests.collect { r ->
+                current?.result?.complete(false)
+                current = r
+                runCatching { launcher.launch(r.permissions.toTypedArray()) }.onFailure { r.result.complete(false); current = null }
+            }
+        }
+    }
+}
+
 /** Запрос микрофона и запуск прослушивания. */
 @Composable
 fun rememberListenAction(c: AppContainer): () -> Unit {
@@ -216,6 +236,7 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
 
     val listen = rememberListenAction(c)
     rememberSystemSpeechDialog(c)
+    PermissionRequests(c)
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 &&

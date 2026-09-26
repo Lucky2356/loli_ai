@@ -202,7 +202,19 @@ fun ProviderScreen(c: AppContainer, type: AIProviderType, onBack: () -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         PrimaryButton("Сохранить", {
                             c.secrets.put(KeystoreSecretStore.aiKey(type.id), ai.loli.core.ai.AIConfig.cleanApiKey(key)); key = ""; keyVersion++; result = null
-                            scope.launch { c.settings.setProviderEnabled(type, true); c.settings.setUseAI(true) }
+                            testing = true
+                            scope.launch {
+                                c.settings.setProviderEnabled(type, true); c.settings.setUseAI(true)
+                                // Сразу после сохранения: если выбранной модели у этого ключа нет — подбираем подходящую, затем проверяем связь.
+                                val ids = runCatching { ai.loli.core.ai.AIProviderFactory.listModels(c.http, c.aiConfig(type)) }.getOrNull()?.map { it.id }.orEmpty()
+                                if (ids.isNotEmpty() && p.effectiveModel !in ids) {
+                                    val pick = type.suggestedModels.firstOrNull { it in ids } ?: ids.first()
+                                    c.settings.setProviderConfig(type, pick, p.endpoint)
+                                    kotlinx.coroutines.delay(150)
+                                }
+                                result = testAiConnection(c, type).fold({ it }, { "Ошибка: ${it.message}" })
+                                testing = false
+                            }
                         }, enabled = key.isNotBlank())
                         if (hasKey) SecondaryButton("Удалить", {
                             c.secrets.put(KeystoreSecretStore.aiKey(type.id), null); keyVersion++

@@ -131,7 +131,8 @@ class AppContainer(private val context: Context) {
     val updates = ai.loli.app.update.UpdateManager(context)
     val appLock = ai.loli.app.security.AppLock(context)
     val appAccess = ai.loli.app.device.AppAccess(context) { settings.settings.value }
-    val device = AndroidDeviceController(context, launcher, appAccess) { text, at ->
+    val permissions = ai.loli.app.device.PermissionBroker(context)
+    val device = AndroidDeviceController(context, launcher, appAccess, permissions) { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
     }
@@ -221,6 +222,7 @@ class AppContainer(private val context: Context) {
             ready.complete(Unit)
             _started.value = true
             updates.schedulePeriodic()
+            ai.loli.app.reminders.MorningBrief.schedule(context, settings.current().morningBrief)
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

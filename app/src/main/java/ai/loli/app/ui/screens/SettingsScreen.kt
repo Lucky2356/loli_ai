@@ -210,6 +210,11 @@ private fun AssistantPage(c: AppContainer, onBack: () -> Unit) {
                     s.dialogModeEnabled) { v -> scope.launch { c.settings.setDialogMode(v) } }
                 GroupDivider()
                 SwitchItem("Отвечать голосом", "Системный синтезатор речи", s.ttsEnabled) { v -> scope.launch { c.settings.setTts(v) } }
+                GroupDivider()
+                val appContext = LocalContext.current.applicationContext
+                SwitchItem("Утренняя сводка", "В 8:30 — уведомление с задачами и напоминаниями на день (только если они есть)", s.morningBrief) { v ->
+                    scope.launch { c.settings.setMorningBrief(v); ai.loli.app.reminders.MorningBrief.schedule(appContext, v) }
+                }
             }
         }
         if (s.ttsEnabled) item(key = "voice") {
@@ -569,7 +574,7 @@ private fun PermissionsPage(c: AppContainer, onBack: () -> Unit) {
                 RowItem(
                     title = "Работа в фоне", subtitle = "Отключите экономию батареи для ${context.getString(ai.loli.app.R.string.app_name)}, чтобы фоновое прослушивание не останавливалось",
                     icon = Icons.Rounded.BatteryChargingFull, chevron = true,
-                    onClick = { runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) } },
+                    onClick = { requestBatteryExemption(context) },
                 )
             }
             SecondaryButton("Все настройки приложения", {
@@ -828,4 +833,15 @@ fun AssistantGuideDialog(name: String, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
     )
+}
+
+/** Лоли не усыпляется экономией батареи: одно системное окно «Разрешить», без поиска в списке приложений. */
+fun isBatteryExempt(context: Context): Boolean =
+    context.getSystemService(android.os.PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
+
+@android.annotation.SuppressLint("BatteryLife")
+fun requestBatteryExemption(context: Context) {
+    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (runCatching { context.startActivity(direct) }.isSuccess) return
+    runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }

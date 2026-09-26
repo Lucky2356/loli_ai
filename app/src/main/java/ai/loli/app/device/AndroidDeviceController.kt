@@ -51,6 +51,8 @@ class AndroidDeviceController(
     private val context: Context,
     private val launcher: BackgroundLauncher,
     private val access: AppAccess,
+    /** Спросить нужное разрешение прямо во время команды. */
+    private val permissions: PermissionBroker,
     /** Запасной таймер/будильник: напоминание Лоли на указанное время. */
     private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
 ) : DeviceController {
@@ -109,10 +111,12 @@ class AndroidDeviceController(
                 open(launch, "Открываю ${app.second}.", app.second)
             }
             is DeviceCommand.Call -> {
+                askContactsIfNeeded(c.who)
                 val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
                 open(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))), "Набираю ${name ?: number} — нажмите вызов.", "Звонок")
             }
             is DeviceCommand.Message -> {
+                askContactsIfNeeded(c.who)
                 val (number, name) = resolveNumber(c.who) ?: return contactsProblem(c.who)
                 val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", c.text)
                 open(intent, "Сообщение для ${name ?: number} готово — осталось отправить.", "Сообщение")
@@ -224,7 +228,11 @@ class AndroidDeviceController(
                     open(if (resolves(music)) music else web, "Включаю ${c.query}.", "Музыка")
                 }
             }
-            is DeviceCommand.CalendarEvent -> addEvent(c)
+            is DeviceCommand.CalendarEvent -> {
+                // Доступ к календарю спрашиваем сразу — тогда событие добавится без лишних экранов.
+                permissions.ensure(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+                addEvent(c)
+            }
             is DeviceCommand.AddContact -> {
                 val intent = Intent(ContactsContract.Intents.Insert.ACTION).setType(ContactsContract.RawContacts.CONTENT_TYPE)
                     .putExtra(ContactsContract.Intents.Insert.NAME, c.name)
@@ -395,6 +403,12 @@ class AndroidDeviceController(
             if (c.moveToFirst()) return c.getString(0) to c.getString(1)
         }
         return null
+    }
+
+    /** «Позвони маме» без доступа к контактам — спрашиваем разрешение прямо сейчас (для номера цифрами не нужно). */
+    private suspend fun askContactsIfNeeded(who: String) {
+        if (who.count { it.isDigit() } >= 3) return
+        permissions.ensure(Manifest.permission.READ_CONTACTS)
     }
 
     private fun contactsProblem(who: String): DeviceResult =
