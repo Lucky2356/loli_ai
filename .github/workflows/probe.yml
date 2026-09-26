@@ -14,19 +14,22 @@ jobs:
     steps:
       - name: llama.cpp
         run: |
-          set -x
+          set -x +e
           TAG=$(gh release view --repo ggml-org/llama.cpp --json tagName -q .tagName)
           echo "TAG=$TAG"
           curl -sSL -o llama.tgz "https://github.com/ggml-org/llama.cpp/archive/refs/tags/$TAG.tar.gz"
           sha256sum llama.tgz; ls -la llama.tgz
           mkdir src && tar -xzf llama.tgz -C src --strip-components=1
           ls src; ls src/examples | head -50; ls src/examples/llama.android 2>/dev/null; find src -path '*llama.android*' -name '*.cpp' | head
-          grep -nE "^LLAMA_API" src/include/llama.h | grep -E "model_load_from_file|init_from_model|model_default_params|context_default_params|tokenize|token_to_piece|decode|batch_get_one|batch_init|sampler_chain|sampler_init_(greedy|temp|top_p|top_k|dist|min_p|penalties)|sampler_sample|sampler_accept|vocab_is_eog|model_get_vocab|chat_apply_template|model_chat_template|backend_init|model_free|free\(|kv_self_clear|memory_clear|get_memory|n_ctx|vocab_n_tokens|model_n_ctx_train|log_set" 
-          grep -n "struct llama_context_params" -A40 src/include/llama.h | head -60
-          grep -n "llama_chat_message" -A5 src/include/llama.h | head -20
-          find src -path '*android*' -name 'CMakeLists.txt' | head
-          f=$(find src -path '*llama.android*' -name '*.cpp' | head -1); [ -n "$f" ] && sed -n 1,400p "$f"
-          f2=$(find src -path '*llama.android*' -name 'CMakeLists.txt' | head -1); [ -n "$f2" ] && cat "$f2"
+          for fn in llama_model_load_from_file llama_init_from_model llama_model_default_params llama_context_default_params llama_tokenize llama_token_to_piece llama_decode llama_batch_get_one llama_sampler_chain_init llama_sampler_chain_add llama_sampler_init_greedy llama_sampler_init_temp llama_sampler_init_top_p llama_sampler_init_min_p llama_sampler_init_dist llama_sampler_init_penalties llama_sampler_sample llama_vocab_is_eog llama_model_get_vocab llama_chat_apply_template llama_model_chat_template llama_backend_init llama_model_free llama_free llama_memory_clear llama_get_memory llama_n_ctx llama_log_set llama_sampler_free llama_batch_init; do
+            grep -n -A4 "$fn(" src/include/llama.h | head -8 || true
+          done
+          grep -n "struct llama_context_params {" -A45 src/include/llama.h || true
+          grep -n "struct llama_model_params {" -A30 src/include/llama.h || true
+          grep -n "typedef struct llama_chat_message" -A5 src/include/llama.h || true
+          find src/examples/llama.android -type f | head -60
+          for f in $(find src/examples/llama.android -name '*.cpp' -o -name 'CMakeLists.txt' -o -name 'build.gradle.kts' | grep -v '/app/'); do echo "===== $f"; cat "$f"; done
+          cat src/ggml/CMakeLists.txt | grep -n "option(GGML_" | head -80 || true
       - name: Models
         run: |
           for u in \
