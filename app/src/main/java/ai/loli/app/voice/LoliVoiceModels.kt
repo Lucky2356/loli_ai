@@ -175,6 +175,10 @@ class LoliVoiceModels(context: Context) {
             Voice("dmitri", "Дмитрий", "Мужской", "bc5dedfdd158fed88391db3645fe13a4e93eebfb6bb2ab238b13ce9bd52bc52d", 67_424_225),
             Voice("irina", "Ирина", "Женский", "7f8b6410559edad2dcfab7fa4813f0c4a09b12748edbe584397b6b5fc62a9782", 67_404_557),
             Voice("ruslan", "Руслан", "Мужской", "ac37cb0ce13b7ad0d4f11075262d51c312d9b0956f0f9014adad078deff84120", 67_425_668),
+            // Женские голоса сообщества Piper (rraaww/ru_piper, Apache-2.0).
+            Voice("vera", "Вера", "Женский, мягкий", "65db3f0695b89785aea6ba27665688a1fee61d5c930f7e3ff84d3ab79bcf4b99", 67_434_356),
+            Voice("sonya", "Соня", "Женский, звонкий", "29b5443d23b4f5ed14202fd06660d6411115f7f4d6f3c130cb0cb7cd2e1f7737", 67_432_916),
+            Voice("asya", "Ася", "Женский, высокий", "ba6709df20422c797b76a4eaada6f8d2862a08824846a15c1c6d1b84a91aeae2", 67_429_932),
         )
     }
 }
