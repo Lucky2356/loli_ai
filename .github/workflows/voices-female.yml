@@ -65,8 +65,10 @@ jobs:
               cfg = json.load(open(f"{d}/ru_RU-{vid}-medium.onnx.json"))
               # tokens.txt — как в скрипте sherpa-onnx для Piper: «символ id» по словарю фонем модели.
               with open(f"{d}/tokens.txt", "w", encoding="utf-8") as f:
+                  # sherpa-onnx разбивает фонемы espeak на отдельные символы: многосимвольные записи («aɪ») ему не нужны.
                   for s, ids in cfg["phoneme_id_map"].items():
-                      f.write(f"{s} {ids[0]}\n")
+                      if len(s) == 1:
+                          f.write(f"{s} {ids[0]}\n")
               m = onnx.load(model)
               meta = {"model_type": "vits", "comment": "piper", "language": "Russian", "voice": cfg.get("espeak", {}).get("voice", "ru"),
                       "has_espeak": "1", "n_speakers": str(cfg.get("num_speakers", 1)), "sample_rate": str(cfg["audio"]["sample_rate"])}
