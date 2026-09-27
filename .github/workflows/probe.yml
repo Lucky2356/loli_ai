@@ -13,6 +13,33 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Candidate voices
+        run: |
+          set +e
+          for r in rraaww/ru_piper splastunov/piper-ru Derur/RH-Voice-models; do
+            echo "=== $r"
+            curl -sS "https://huggingface.co/api/models/$r" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('cardData'));[print(x['rfilename']) for x in d.get('siblings',[])]"
+            curl -sS "https://huggingface.co/$r/raw/main/README.md" | head -80
+          done
+          for f in $(curl -sS "https://huggingface.co/api/models/rraaww/ru_piper" | python3 -c "import sys,json;[print(x['rfilename']) for x in json.load(sys.stdin).get('siblings',[]) if x['rfilename'].endswith('.json')]"); do
+            echo "--- rraaww $f"; curl -sSL "https://huggingface.co/rraaww/ru_piper/resolve/main/$f" | python3 -c "import sys,json;d=json.load(sys.stdin);print({k:d.get(k) for k in ['dataset','num_speakers','speaker_id_map','audio','language','espeak']})"
+          done
+          for f in $(curl -sS "https://huggingface.co/api/models/splastunov/piper-ru" | python3 -c "import sys,json;[print(x['rfilename']) for x in json.load(sys.stdin).get('siblings',[]) if x['rfilename'].endswith('.json')]"); do
+            echo "--- splastunov $f"; curl -sSL "https://huggingface.co/splastunov/piper-ru/resolve/main/$f" | python3 -c "import sys,json;d=json.load(sys.stdin);print({k:d.get(k) for k in ['dataset','num_speakers','speaker_id_map','audio','language','espeak']})"
+          done
+          echo "=== MMS rus"
+          gh release download tts-models --repo k2-fsa/sherpa-onnx --pattern "vits-mms-rus.tar.bz2" --dir mms && tar -xjf mms/vits-mms-rus.tar.bz2 -C mms && ls -la mms/* && cat mms/*/README* 2>/dev/null | head -30
+          echo "=== RHVoice ru voices"
+          for v in anna arina elena irina natalia tatiana victoria dasha-rus lyudmila-rus; do
+            echo "--- $v"
+            gh api "repos/RHVoice/RHVoice/contents/data/voices/$v" --jq '.[].name' 2>/dev/null | head -5
+            U=$(gh api repos/RHVoice/RHVoice/contents/.gitmodules --jq .content | base64 -d | grep -A2 "voices/$v\"" | grep url | awk '{print $3}')
+            echo "submodule: $U"
+            if [ -n "$U" ]; then R=${U#https://github.com/}; R=${R%.git}; gh api "repos/$R/contents" --jq '.[].name' | head; gh api "repos/$R/license" --jq .license.spdx_id; gh api "repos/$R/contents/voice.info" --jq .content 2>/dev/null | base64 -d | head; fi
+          done
+          gh api repos/RHVoice/RHVoice/contents/src --jq '.[].name'
+          gh api repos/RHVoice/RHVoice/contents/src/android --jq '.[].name' 2>/dev/null
+
       - name: Skill endpoints
         run: |
           set +e
