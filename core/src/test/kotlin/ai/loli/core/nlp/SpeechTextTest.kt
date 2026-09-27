@@ -24,4 +24,12 @@ class SpeechTextTest {
         assertEquals("Иду в сад. Потом домой.", say("Иду в сад. Потом домой."))
         assertEquals("Дом номер 5, улица Ленина.", say("Дом № 5, ул. Ленина."))
     }
+
+    @Test fun recognitionFixes() {
+        fun fix(t: String) = ai.loli.core.voice.SpeechFixes.apply(t)
+        assertEquals("какая погода завтра", fix("какая по года завтра"))
+        assertEquals("разбуди меня в 7", fix("раз буди меня в 7"))
+        assertEquals("отмени таймер", fix("от мени тай мер"))
+        assertEquals("Лоли, позвони маме", fix("Лали, по звони маме"))
+    }
 }
