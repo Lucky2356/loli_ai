@@ -86,6 +86,7 @@ object Tales {
         val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
         val m = Regex("""^(?:(?:расскажи|почитай|прочитай|давай|хочу|рассказывай|включи)\s+)?(?:(?:мне|нам|ребенку|детям|сыну|дочке)\s+)?(придумай\s+|сочини\s+)?сказк[ауи](?:\s+на ночь)?(?:\s+(?:про|о|об)\s+(.+))?$""").find(t)
             ?: Regex("""^(придумай|сочини)\s+(?:мне\s+)?сказку\s+(?:про|о|об)\s+(.+)$""").find(t)?.let { r -> return Request(r.groupValues[2], true) }
+            ?: Regex("""^сказк[ау](?:\s+на ночь)?\s+(?:расскажи|почитай|давай)(?:\s+(?:мне|нам))?$""").find(t)?.let { return Request(null, false) }
             ?: return null
         val invent = m.groupValues[1].isNotBlank()
         val about = m.groupValues[2].takeIf { it.isNotBlank() }

@@ -25,12 +25,15 @@ class NewsService(private val http: HttpClient) {
     suspend fun headlines(topic: NewsTopic, limit: Int = 5): List<Item> {
         cache.get(topic)?.let { return it.take(limit) }
         var lastError: Exception? = null
-        for (url in topic.feeds) {
+        // Лента не ответила или прислала не RSS — пробуем следующую, в конце — главные новости.
+        for (url in (topic.feeds + NewsTopic.MAIN.feeds).distinct()) {
             try {
                 val items = parseRss(http.fetchText(url))
                 if (items.isNotEmpty()) { cache.put(topic, items); return items.take(limit) }
-            } catch (e: InfoUnavailable) {
-                lastError = e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e as? InfoUnavailable ?: InfoUnavailable("лента новостей не читается")
             }
         }
         throw lastError ?: InfoUnavailable("новостей нет")

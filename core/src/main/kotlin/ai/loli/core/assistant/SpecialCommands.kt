@@ -37,6 +37,9 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         // «в список покупок добавь сметану», «в покупки запиши хлеб»
         Regex("""^в\s+(?:мой\s+)?(?:список\s+покупок|список\s+продуктов|покупки)\s+(?:добавь|допиши|запиши|внеси|закинь)[:,]?\s+(.+)$""")
             .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
+        // «надо купить молоко, добавь в покупки»
+        Regex("""^(?:(?:мне\s+|нам\s+)?(?:надо|нужно)\s+)?(?:купить\s+)(.+?)[,]?\s+(?:добавь|запиши|закинь|внеси)\s+(?:это\s+|их\s+|его\s+)?(?:в\s+)?(?:покупки|список\s+покупок)$""")
+            .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
         // «купить: молоко, хлеб» / «в магазин: …»
         Regex("""^(?:список\s+покупок|в\s+магазин|купить)\s*:\s*(.+)$""")
             .find(n)?.let { return AssistantAction.AddToList(list, items(sub(text, it.groups[1]!!))) }
@@ -46,7 +49,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
                 val name = sub(text, m.groups[1]!!).trim('«', '»', '"').replaceFirstChar { it.uppercase() }
                 return AssistantAction.AddToList(name, items(sub(text, m.groups[2]!!)))
             }
-        if (Regex("""^(?:что|чего)\s+(?:мне\s+|нам\s+)?(?:нужно\s+|надо\s+|ещё\s+|еще\s+)*купить$|^(?:покажи|прочитай|озвучь|открой|какой|скажи|назови)\s+(?:мне\s+)?(?:мой\s+|весь\s+)?(?:список\s+покупок|список\s+продуктов|покупки)$|^(?:список\s+покупок|мои\s+покупки)$|^что\s+(?:у\s+меня\s+)?в\s+(?:списке\s+покупок|покупках)$""").containsMatchIn(n)) {
+        if (Regex("""^(?:что|чего)\s+(?:мне\s+|нам\s+)?(?:нужно\s+|надо\s+|ещё\s+|еще\s+)*купить(?:\s+в\s+магазине)?$|^(?:покажи|прочитай|озвучь|открой|какой|скажи|назови)\s+(?:мне\s+)?(?:мой\s+|весь\s+)?(?:список\s+покупок|список\s+продуктов|покупки)$|^(?:список\s+покупок|мои\s+покупки)$|^что\s+(?:у\s+меня\s+)?в\s+(?:списке\s+покупок|покупках)$""").containsMatchIn(n)) {
             return AssistantAction.QueryList(list)
         }
         Regex("""^(?:покажи|прочитай|открой)\s+список\s+(.+)$""").find(n)?.let { m ->

@@ -21,7 +21,7 @@
 # Ktor / OkHttp
 -dontwarn org.slf4j.**
 -dontwarn io.ktor.**
--dontwarn okhttp3.internal.platform.**
+-dontwarn okhttp3.**
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**

@@ -188,7 +188,7 @@ dependencies {
     implementation(files(sherpaAar))
 
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.android)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

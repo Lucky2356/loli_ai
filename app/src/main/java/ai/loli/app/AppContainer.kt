@@ -34,7 +34,7 @@ import ai.loli.core.search.SearchService
 import ai.loli.core.sync.SyncEngine
 import ai.loli.core.util.SystemTimeSource
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +53,7 @@ class AppContainer(private val context: Context) {
     val secrets = KeystoreSecretStore(context)
     val settings = SettingsRepository(context, appScope)
 
-    val http = HttpClient(OkHttp) {
+    val http = HttpClient(Android) {
         expectSuccess = false
         install(HttpTimeout) {
             connectTimeoutMillis = 15_000

@@ -146,6 +146,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         // «можешь добавить задачу…» → «добавь задачу…»
         val first = t.substringBefore(' ')
         INFINITIVES[RuTokenizer.normalize(first)]?.let { imp -> t = imp + t.substring(first.length) }
+        // «добавь дело позвонить в банк», «запиши в дела…» — это задача.
+        t = t.replace(Regex("""^(?:добавь|запиши|создай|внеси)\s+(?:в\s+)?(?:дело|дела|список дел)[:,]?\s+""", RegexOption.IGNORE_CASE), "добавь задачу ")
         return t
     }
 
@@ -272,7 +274,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (Regex("""^(привет|приветик|здравствуй|здравствуйте|хай|добрый день|добрый вечер|доброй ночи)$""").containsMatchIn(n)) {
             return AssistantPlan(greeting(z.hour), emptyList())
         }
-        if (Regex("""^(спасибо|благодарю|спасиб|пасиб|ты молодец|умница|отлично|супер|класс)""").containsMatchIn(n)) {
+        if (Regex("""^(спасибо|благодарю|спасиб|пасиб|ты молодец|молодец|умница|ты умница|умничка|ты лучшая|отлично|супер|класс|круто|здорово)""").containsMatchIn(n)) {
             return AssistantPlan(listOf("Всегда пожалуйста!", "Рада помочь!", "Обращайтесь!")[pick(now, 3)], emptyList())
         }
         if (Regex("""^(хватит|стоп|достаточно|отбой|не надо|ничего)$""").containsMatchIn(n)) {
@@ -293,7 +295,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         // Бытовые вопросы без интернета: время в другом городе, сколько дней до даты, монетка, перевод единиц.
         DevicePhrases.answer(n, z.toLocalDate())?.let { return AssistantPlan(it, emptyList()) }
         empathy(n)?.let { return AssistantPlan(it, emptyList()) }
-        if (Regex("""(который час|сколько времени|сколько сейчас времени|какое сейчас время|время сейчас)""").containsMatchIn(n)) {
+        if (Regex("""(который час|сколько времени|сколько время|сколько сейчас времени|сколько сейчас время|какое сейчас время|время сейчас|^время$|^сколько на часах)""").containsMatchIn(n)) {
             return AssistantPlan("Сейчас ${RuFormat.time(z.toLocalTime())}.", emptyList())
         }
         if (Regex("""(какое сегодня число|какой сегодня день|какая сегодня дата|какое число|какой день недели|что сегодня за день)""").containsMatchIn(n)) {
@@ -453,7 +455,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             Regex("""(на что|куда)\s+(я\s+)?(больше всего\s+)?(трач|потрат|уход|ушл|спуска)""").containsMatchIn(n) -> ReportMode.BY_CATEGORY
             Regex("""по категориям""").containsMatchIn(n) && Regex("""(расход|трат)""").containsMatchIn(n) -> ReportMode.BY_CATEGORY
             Regex("""^(покажи|выведи|список|перечисли|какие)\s+(мои\s+|все\s+|были\s+)?(расход|трат|покупк)""").containsMatchIn(n) -> ReportMode.LIST
-            Regex("""сколько.*(потрат|трат|расход|ушл|израсход|спустил|заплатил|отдал|вышл)""").containsMatchIn(n) -> ReportMode.TOTAL
+            Regex("""сколько.*(потрат|трат|расход|ушл|израсход|спустил|заплатил|отдал|вышл)|^(?:что|как)\s+(?:там\s+)?(?:по|с)\s+(?:деньгам|тратам|расходам|бюджету)""").containsMatchIn(n) -> ReportMode.TOTAL
             Regex("""^(мои\s+)?(расходы|траты)\s+(за|в|на)\s""").containsMatchIn(n) -> ReportMode.LIST
             Regex("""(итог|сумма|бюджет)\s+(расходов|трат)""").containsMatchIn(n) -> ReportMode.TOTAL
             else -> return null

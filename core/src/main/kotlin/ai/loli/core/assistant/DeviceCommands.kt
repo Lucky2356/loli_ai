@@ -150,13 +150,13 @@ object DevicePhrases {
 
         // Камера.
         when {
-            re("""^(?:сделай|сними)\s+селфи""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(selfie = true))
-            re("""^(?:сделай|сними)\s+(?:фото|фотографию|снимок)|^(?:открой|включи|запусти)\s+камеру$|^сфотографируй""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera())
+            re("""^(?:сделай|сними)\s+селфи|^(?:открой|включи)\s+(?:фронтальную|переднюю|селфи)\s*камеру""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(selfie = true))
+            re("""^(?:сделай|сними)\s+(?:фото|фотографию|снимок)|^(?:открой|включи|запусти)\s+камеру$|^сфотографируй|^сфоткай""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera())
             re("""^(?:сними|запиши)\s+видео|^(?:включи|начни)\s+(?:запись видео|видеозапись)""").containsMatchIn(t) -> return cmd(DeviceCommand.Camera(video = true))
         }
 
         // Не беспокоить, яркость.
-        re("""^(?:включи|активируй)\s+(?:режим\s+)?не беспокоить""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(true)) }
+        re("""^(?:включи|активируй)\s+(?:режим\s+)?не беспокоить|^(?:режим\s+)?не беспокоить$""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(true)) }
         re("""^(?:выключи|отключи)\s+(?:режим\s+)?не беспокоить""").find(t)?.let { return cmd(DeviceCommand.DoNotDisturb(false)) }
         re("""^(?:сделай\s+)?яркость\s+(?:на\s+)?(\d+)""").find(digitize(t))?.let { return cmd(DeviceCommand.Brightness(it.groupValues[1].toInt().coerceIn(0, 100))) }
         when {
@@ -204,20 +204,20 @@ object DevicePhrases {
         }
 
         // Фонарик.
-        if (re("""^(?:включи|зажги|вруби)\s+(?:фонарик|фонарь|вспышку|свет на телефоне)""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(true))
+        if (re("""^(?:включи|зажги|вруби)\s+(?:фонарик|фонарь|вспышку|свет на телефоне)|^(?:фонарик|фонарь|посвети(?:\s+мне)?)$""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(true))
         if (re("""^(?:выключи|погаси|выруби)\s+(?:фонарик|фонарь|вспышку)""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(false))
 
         // Заряд.
-        if (re("""(сколько|какой|какой у меня|проверь)\s+(?:процентов\s+)?(заряд|зарядк|батаре|аккумулятор)|^заряд батареи|^сколько процентов""").containsMatchIn(t)) {
+        if (re("""(сколько|какой|какой у меня|проверь)\s+(?:процентов\s+)?(заряд|зарядк|батаре|аккумулятор)|^заряд\s+(?:батареи|телефона|аккумулятора)|^сколько процентов""").containsMatchIn(t)) {
             return cmd(DeviceCommand.Battery)
         }
 
         // Музыка.
         when {
-            re("""^(?:следующ\w*\s+(?:трек|песн\w*|композици\w*)|переключи\s+(?:трек|песню))""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.NEXT))
-            re("""^(?:предыдущ\w*\s+(?:трек|песн\w*|композици\w*)|верни\s+(?:трек|песню))""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PREVIOUS))
+            re("""^(?:следующ\w*\s+(?:трек|песн\w*|композици\w*)|переключи\s+(?:трек|песню)|следующ(?:ую|ий|ая)$|дальше$|переключи$|другую песню)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.NEXT))
+            re("""^(?:предыдущ\w*\s+(?:трек|песн\w*|композици\w*)|верни\s+(?:трек|песню|предыдущ\w*)|предыдущ(?:ую|ий|ая)$)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PREVIOUS))
             re("""^(?:пауза|поставь на паузу|останови музыку|выключи музыку|стоп музыка)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PAUSE))
-            re("""^(?:включи музыку|продолжи музыку|играй|воспроизведи|сними с паузы|продолжи воспроизведение)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PLAY))
+            re("""^(?:включи музыку|продолжи музыку|играй|воспроизведи|сними с паузы|продолжи воспроизведение|(?:вруби|поставь|запусти|врубай)\s+(?:музыку|музон|музычку|песенку)|продолжи$|продолжай$)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PLAY))
         }
 
         // Громкость.
@@ -230,6 +230,7 @@ object DevicePhrases {
             re("""^(?:выключи звук|без звука|беззвучн\w*\s*режим|включи беззвучн\w*|отключи звук)""").containsMatchIn(t) -> return cmd(DeviceCommand.Volume(VolumeChange.MUTE))
             re("""^(?:включи звук|верни звук)$""").containsMatchIn(t) -> return cmd(DeviceCommand.Volume(VolumeChange.UNMUTE))
             re("""^(?:громкость на максимум|максимальн\w* громкость|на полную)""").containsMatchIn(t) -> return cmd(DeviceCommand.Volume(VolumeChange.MAX))
+            re("""^(?:громкость на минимум|минимальн\w* громкость|(?:звук|громкость) на минимум)""").containsMatchIn(t) -> return cmd(DeviceCommand.Volume(VolumeChange.SET, 10))
         }
 
         // Настройки телефона.
@@ -259,8 +260,8 @@ object DevicePhrases {
         }
 
         // Звонок и сообщение: «позвони маме», «набери 8 900 …», «напиши Саше что я задержусь».
-        re("""^(?:позвони|набери|вызови|звонок)\s+(?:на\s+номер\s+|номер\s+)?(.+)$""").find(t)?.let { return cmd(DeviceCommand.Call(it.groupValues[1].trim())) }
-        re("""^(?:напиши|отправь\s+(?:смс|сообщение))\s+(\S+(?:\s+\S+)?)\s*(?:,|что|:)\s*(.+)$""").find(t)?.let {
+        re("""^(?:позвони|набери|вызови|звонок|звякни|брякни|сделай звонок|соедини с)\s+(?:на\s+номер\s+|номер\s+)?(.+)$""").find(t)?.let { return cmd(DeviceCommand.Call(it.groupValues[1].trim())) }
+        re("""^(?:напиши|черкни|(?:отправь|скинь|пошли)\s+(?:смс|сообщение|эсэмэску|смску))\s+(\S+(?:\s+\S+)?)\s*(?:,|что|:)\s*(.+)$""").find(t)?.let {
             val who = it.groupValues[1].trim()
             // «напиши заметку: …» — это запись, а не сообщение человеку.
             if (!re("""^(?:заметк|иде|задач|список|в\s|себе|мне)""").containsMatchIn(who)) {
@@ -268,7 +269,12 @@ object DevicePhrases {
             }
         }
         // «напиши Саше привет» — без запятой, как пишет распознавание речи. Кому — слово в дательном падеже.
-        re("""^(?:напиши|отправь\s+(?:смс|сообщение))\s+(\S+[еуюиам])\s+(.+)$""").find(t)?.let {
+        // «отправь маме сообщение перезвоню позже»
+        re("""^(?:отправь|напиши|скинь|пошли)\s+(\S+[еуюиам])\s+(?:смс|сообщение|смску|эсэмэску)[,:]?\s*(?:что\s+)?(.+)$""").find(t)?.let {
+            val who = it.groupValues[1]
+            if (who !in NOT_RECIPIENTS) return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
+        }
+        re("""^(?:напиши|черкни|(?:отправь|скинь|пошли)\s+(?:смс|сообщение|смску|эсэмэску))\s+(\S+[еуюиам])\s+(.+)$""").find(t)?.let {
             val who = it.groupValues[1]
             if (who !in NOT_RECIPIENTS && !re("""^(?:заметк|иде|задач|список|списк|себе|мне|письм|текст|сообщени|смс|отзыв|пост|стих|сочинени|код)""").containsMatchIn(who)) {
                 return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
@@ -366,8 +372,8 @@ object DevicePhrases {
             if (to > from) return "Пусть будет ${random.nextInt(from, to + 1)}."
         }
         // Сколько дней до даты/праздника.
-        re("""сколько\s+(?:осталось\s+)?(?:дней|день)\s+(?:осталось\s+)?до\s+(.+)$""").find(digitize(t))?.let { m ->
-            val target = targetDate(m.groupValues[1], today) ?: return null
+        re("""сколько\s+(?:еще\s+)?(?:осталось\s+)?(?:дней|день)\s+(?:осталось\s+)?до\s+(.+)$|сколько\s+(?:еще\s+)?осталось\s+до\s+(лета|зимы|весны|осени|нового года|нг)$""").find(digitize(t))?.let { m ->
+            val target = targetDate(m.groupValues[1].ifEmpty { m.groupValues[2] }, today) ?: return null
             val days = ChronoUnit.DAYS.between(today, target)
             return when (days) {
                 0L -> "Это сегодня!"
@@ -424,6 +430,8 @@ object DevicePhrases {
                 else next(MonthDay.of(m.groupValues[2].toInt(), m.groupValues[1].toInt()), today)
             }.getOrNull()
         }
+        mapOf("лет" to MonthDay.of(6, 1), "зим" to MonthDay.of(12, 1), "весн" to MonthDay.of(3, 1), "осен" to MonthDay.of(9, 1), "нг" to MonthDay.of(1, 1))
+            .entries.firstOrNull { x.startsWith(it.key) }?.let { return next(it.value, today) }
         if (x.startsWith("конца год")) return LocalDate.of(today.year, 12, 31)
         if (x.startsWith("конца месяц")) return today.withDayOfMonth(today.lengthOfMonth())
         if (x.startsWith("выходн")) return generateSequence(today) { it.plusDays(1) }.first { it.dayOfWeek == DayOfWeek.SATURDAY }

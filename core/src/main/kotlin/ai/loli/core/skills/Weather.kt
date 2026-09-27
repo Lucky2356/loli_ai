@@ -6,7 +6,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.JsonArray
@@ -29,15 +29,39 @@ class InfoUnavailable(message: String) : Exception(message)
 
 /** Общие для «живых» ответов HTTP-запросы: таймаут, User-Agent, понятная ошибка. */
 internal suspend fun HttpClient.fetchText(url: String): String {
-    val r: HttpResponse = try {
-        get(url) { header("User-Agent", "LoliAssistant/1.9 (Android; +https://github.com/Lucky2356/loli_ai)") }
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        throw InfoUnavailable("нет связи")
+    var last: Exception? = null
+    // Мобильная сеть рвётся: один повтор после короткой паузы.
+    repeat(2) { attempt ->
+        val r: HttpResponse = try {
+            get(url) {
+                header("User-Agent", "LoliAssistant/2.1 (Android; +https://github.com/Lucky2356/loli_ai)")
+                header("Accept", "application/json, application/rss+xml, application/xml, text/xml, */*")
+                header("Accept-Language", "ru")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            last = e
+            if (attempt == 0) kotlinx.coroutines.delay(700)
+            return@repeat
+        }
+        if (r.status.value in 500..599 && attempt == 0) { kotlinx.coroutines.delay(700); return@repeat }
+        if (!r.status.isSuccess()) throw InfoUnavailable("источник ответил ${r.status.value}")
+        return decodeBody(r.bodyAsBytes(), r.headers["Content-Type"])
     }
-    if (!r.status.isSuccess()) throw InfoUnavailable("источник ответил ${r.status.value}")
-    return r.bodyAsText()
+    // Причина в сообщении — по ней видно, что не так (нет сети, сертификат, таймаут).
+    val cause = last?.let { e -> generateSequence<Throwable>(e) { it.cause }.last()::class.simpleName } ?: "нет ответа"
+    throw InfoUnavailable("нет связи ($cause)")
+}
+
+/** Кодировка: из заголовка, из пролога XML («windows-1251»), иначе UTF-8. */
+internal fun decodeBody(bytes: ByteArray, contentType: String?): String {
+    val fromHeader = contentType?.let { Regex("""(?i)charset=["']?([\w-]+)""").find(it)?.groupValues?.get(1) }
+    val head = String(bytes, 0, minOf(bytes.size, 200), Charsets.ISO_8859_1)
+    val fromXml = Regex("""<\?xml[^>]*encoding=["']([\w-]+)["']""").find(head)?.groupValues?.get(1)
+    val name = fromHeader ?: fromXml ?: "UTF-8"
+    val cs = runCatching { java.nio.charset.Charset.forName(name) }.getOrDefault(Charsets.UTF_8)
+    return String(bytes, cs).removePrefix("\uFEFF")
 }
 
 /** Простой кеш на время: одинаковый вопрос подряд не ходит в сеть. */

@@ -52,14 +52,69 @@ interface TextToSpeechProvider {
 /** Очищает ответ перед озвучиванием: убирает маркеры списков и эмодзи, сокращает длинные списки. */
 object SpeechText {
     fun forSpeech(text: String, maxLines: Int = 6): String {
-        val lines = text.lines().map { it.trim().removePrefix("•").removePrefix("✓").removePrefix("!").trim() }.filter { it.isNotEmpty() }
+        val lines = clean(text).lines().map { it.trim().removePrefix("•").removePrefix("✓").removePrefix("!").trim() }.filter { it.isNotEmpty() }
         val limited = if (lines.size > maxLines) lines.take(maxLines) + "и ещё ${lines.size - maxLines}." else lines
         val sb = StringBuilder()
         limited.forEachIndexed { i, line ->
-            if (i > 0) sb.append(if (limited[i - 1].endsWith(":") || limited[i - 1].endsWith(".")) " " else ". ")
+            if (i > 0) sb.append(if (limited[i - 1].last() in ".:!?…;") " " else ". ")
             sb.append(line)
         }
-        return declineUnits(sb.toString().replace(Regex("[«»]"), ""))
+        return declineUnits(pronounce(sb.toString().replace(Regex("[«»]"), ""))).replace(Regex("""\s{2,}"""), " ").trim()
+    }
+
+    /** Разметка из ответов AI и символы, которые синтезатор читает вслух или спотыкается: **, #, `, ссылки, эмодзи. */
+    fun clean(text: String): String = text
+        .replace(Regex("""\[([^\]]+)]\((?:https?://)?[^)]+\)"""), "$1")
+        .replace(Regex("""https?://\S+"""), "ссылка")
+        .replace(Regex("""(?m)^\s{0,3}#{1,6}\s*"""), "")
+        .replace(Regex("""(?m)^\s*(?:[-*+]|\d+[.)])\s+"""), "• ")
+        .replace(Regex("""[*_`~]{1,3}"""), "")
+        // Эмодзи и прочие пиктограммы.
+        .replace(Regex("""[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE0F}\x{200D}]"""), "")
+
+    private val WORDS = listOf(
+        "т. е.", "т.е.", "т. к.", "т.к.", "и т. д.", "и т.д.", "и т. п.", "и т.п.", "т. н.", "т.н.",
+    ).zip(listOf("то есть", "то есть", "так как", "так как", "и так далее", "и так далее", "и тому подобное", "и тому подобное", "так называемый", "так называемый"))
+
+    private val NAMES = mapOf(
+        "Telegram" to "Телеграм", "WhatsApp" to "Вотсап", "YouTube" to "Ютуб", "Wi-Fi" to "вай-фай", "WiFi" to "вай-фай", "Bluetooth" to "блютус",
+        "Google" to "Гугл", "Android" to "Андроид", "iPhone" to "айфон", "Viber" to "Вайбер", "VK" to "ВК", "SMS" to "эсэмэс", "СМС" to "эсэмэс",
+        "GPS" to "джи-пи-эс", "OK" to "окей", "Ok" to "окей", "AI" to "ИИ", "FM" to "эф-эм", "USB" to "ю-эс-би", "PDF" to "пэ-дэ-эф",
+        "Zoom" to "Зум", "Skype" to "Скайп", "Instagram" to "Инстаграм", "TikTok" to "Тикток", "Spotify" to "Спотифай", "email" to "имейл", "e-mail" to "имейл",
+        "Loli" to "Лоли", "OpenAI" to "Опен-эй-ай", "ChatGPT" to "чат джи-пи-ти", "Wikipedia" to "Википедия",
+    )
+
+    /** Время, сокращения, телефоны, английские названия — так, как это говорят вслух. */
+    fun pronounce(text: String): String {
+        var t = text
+        for ((a, b) in WORDS) t = t.replace(a, b)
+        for ((a, b) in NAMES) t = t.replace(Regex("""(?<![\p{L}])${Regex.escape(a)}(?![\p{L}])"""), b)
+        // Телефон «+7 916 123-45-67» — группами, без «минус».
+        t = Regex("""(\+?\d[\d ()]{5,}\d)-(\d{2})-(\d{2})""").replace(t) { "${it.groupValues[1]} ${it.groupValues[2]} ${it.groupValues[3]}" }
+        // Время: «в 10:00» → «в 10 ч.» (потом «10 часов»), «10:30» → «10 30», «10:05» → «10 05».
+        t = Regex("""(?<![\d:])([01]?\d|2[0-3]):00(?![\d:])""").replace(t) { "${it.groupValues[1].trimStart('0').ifEmpty { "0" }} ч." }
+        t = Regex("""(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])""").replace(t) { m ->
+            val mm = m.groupValues[2]
+            "${m.groupValues[1].trimStart('0').ifEmpty { "0" }} ${if (mm.startsWith("0")) "ноль ${mm.substring(1)}" else mm}"
+        }
+        // Сокращения после чисел: «5 км», «60 км/ч», «2 кг», «2026 г.».
+        t = Regex("""(\d+)\s?км/ч""").replace(t) { "${it.groupValues[1]} ${ai.loli.core.assistant.RuFormat.plural(it.groupValues[1].takeLast(3).toLong(), "километр", "километра", "километров")} в час" }
+        val units = listOf(
+            "км" to Triple("километр", "километра", "километров"), "кг" to Triple("килограмм", "килограмма", "килограммов"),
+            "г\\." to Triple("год", "года", "лет"), "мм" to Triple("миллиметр", "миллиметра", "миллиметров"), "сек\\." to Triple("секунда", "секунды", "секунд"),
+            "гПа" to Triple("гектопаскаль", "гектопаскаля", "гектопаскалей"), "мм рт\\. ст\\." to Triple("миллиметр ртутного столба", "миллиметра ртутного столба", "миллиметров ртутного столба"),
+        )
+        for ((u, forms) in units.sortedByDescending { it.first.length }) {
+            t = Regex("""(\d+)\s?$u(?![\p{L}])""").replace(t) { m ->
+                val n = m.groupValues[1].takeLast(9).toLongOrNull() ?: return@replace m.value
+                // «2026 г.» — год: «2026 года»; прочее — по числу.
+                val w = if (u == "г\\.") "года" else ai.loli.core.assistant.RuFormat.plural(n, forms.first, forms.second, forms.third)
+                "${m.groupValues[1]} $w"
+            }
+        }
+        t = t.replace(Regex("""№\s?"""), "номер ").replace(Regex("""(?<![\p{L}])ул\.\s"""), "улица ").replace(Regex("""(?<![\p{L}])пр-т(?![\p{L}])"""), "проспект")
+            .replace(" & ", " и ").replace("+/-", "плюс-минус").replace("±", "плюс-минус")
+        return t
     }
 
     /** «1 ₽» → «1 рубль», «22 ₽» → «22 рубля», «3 дн.» → «3 дня»: движок речи не склоняет символы и сокращения. */
