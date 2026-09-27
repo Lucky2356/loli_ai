@@ -19,7 +19,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "2.0.1"
+val APP_VERSION = "2.1.0"
 
 // Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
 // и проверяются по sha256 — в репозиторий они не попадают.
@@ -73,7 +73,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         // Телефоны — ARM; без x86-библиотек APK заметно меньше.
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Для проверки на эмуляторе CI (x86_64) — отдельный флаг; релиз собирается только под ARM.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") + (if (project.findProperty("loli.emulator") == "true") listOf("x86_64") else emptyList()) }
         // Офлайн-модель (llama.cpp) — только для 64-битных телефонов: на 32-битных она слишком медленная.
         externalNativeBuild {
             cmake {
@@ -217,6 +218,8 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
 
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
 }
