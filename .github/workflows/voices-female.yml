@@ -1,0 +1,108 @@
+name: Voices (female)
+
+# Три дополнительных женских голоса Лоли: русские модели Piper сообщества (rraaww/ru_piper, Apache-2.0).
+# Для sherpa-onnx каждой модели добавляются метаданные и собственный tokens.txt из её словаря фонем,
+# espeak-ng-data берётся из голоса «Ирина». Перед публикацией голос проверяется: синтез фразы, высота тона
+# (женский — выше 165 Гц) и разборчивость (распознаём синтезированное Vosk, ошибок не больше 10%).
+# Архивы добавляются в служебный пререлиз voices-v1; существующие голоса не пересобираются.
+on:
+  push:
+    paths: [".github/workflows/voices-female.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  female:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tools
+        run: pip install -q sherpa-onnx onnx numpy soundfile vosk librosa
+      - name: Reference voice and ASR
+        run: |
+          set -euo pipefail
+          gh release download tts-models --repo k2-fsa/sherpa-onnx --pattern "vits-piper-ru_RU-irina-medium.tar.bz2" --dir ref
+          tar -xjf ref/vits-piper-ru_RU-irina-medium.tar.bz2 -C ref
+          head -5 ref/vits-piper-ru_RU-irina-medium/tokens.txt | cat -A
+          curl -sSL -o vosk.zip https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+          unzip -q vosk.zip
+      - name: Build, check and pack
+        run: |
+          cat > build.py <<'PY'
+          import json, os, re, shutil, sys, urllib.request, zipfile, hashlib
+          import numpy as np, onnx, librosa, sherpa_onnx
+          from vosk import Model, KaldiRecognizer
+          REF = "ref/vits-piper-ru_RU-irina-medium"
+          TEXT = "Привет! Сегодня в Москве плюс двенадцать градусов, днём небольшой дождь. Напомню позвонить маме в семь вечера."
+          VOICES = {"vera": "terra5871-medium", "sonya": "sova200-medium", "asya": "april420-medium"}
+          asr = Model("vosk-model-small-ru-0.22")
+          def words(t): return re.findall(r"[а-яё]+", t.lower().replace("ё", "е"))
+          def wer(ref, hyp):
+              r, h = words(ref), words(hyp)
+              d = list(range(len(h) + 1))
+              for i in range(1, len(r) + 1):
+                  prev, d[0] = d[0], i
+                  for j in range(1, len(h) + 1):
+                      cur = min(d[j] + 1, d[j - 1] + 1, prev + (r[i - 1] != h[j - 1])); prev, d[j] = d[j], cur
+              return d[len(h)] / len(r)
+          os.makedirs("out", exist_ok=True)
+          sums = []
+          for vid, src in VOICES.items():
+              folder = f"vits-piper-ru_RU-{vid}-medium"
+              d = f"build/{folder}"
+              os.makedirs(d, exist_ok=True)
+              base = f"https://huggingface.co/rraaww/ru_piper/resolve/main/ru_RU-{src}"
+              model = f"{d}/ru_RU-{vid}-medium.onnx"
+              urllib.request.urlretrieve(base + ".onnx", model)
+              urllib.request.urlretrieve(base + ".onnx.json", f"{d}/ru_RU-{vid}-medium.onnx.json")
+              cfg = json.load(open(f"{d}/ru_RU-{vid}-medium.onnx.json"))
+              # tokens.txt — как в скрипте sherpa-onnx для Piper: «символ id» по словарю фонем модели.
+              with open(f"{d}/tokens.txt", "w", encoding="utf-8") as f:
+                  for s, ids in cfg["phoneme_id_map"].items():
+                      f.write(f"{s} {ids[0]}\n")
+              m = onnx.load(model)
+              meta = {"model_type": "vits", "comment": "piper", "language": "Russian", "voice": cfg.get("espeak", {}).get("voice", "ru"),
+                      "has_espeak": "1", "n_speakers": str(cfg.get("num_speakers", 1)), "sample_rate": str(cfg["audio"]["sample_rate"])}
+              del m.metadata_props[:]
+              for k, v in meta.items():
+                  p = m.metadata_props.add(); p.key = k; p.value = v
+              onnx.save(m, model)
+              shutil.copytree(f"{REF}/espeak-ng-data", f"{d}/espeak-ng-data")
+              open(f"{d}/MODEL_CARD", "w").write(
+                  f"Голос Лоли «{vid}»: модель Piper ru_RU-{src} из https://huggingface.co/rraaww/ru_piper (лицензия Apache-2.0).\n"
+                  f"Параметры: {json.dumps(cfg.get('inference', {}))}\n")
+              tts = sherpa_onnx.OfflineTts(sherpa_onnx.OfflineTtsConfig(model=sherpa_onnx.OfflineTtsModelConfig(
+                  vits=sherpa_onnx.OfflineTtsVitsModelConfig(model=model, tokens=f"{d}/tokens.txt", data_dir=f"{d}/espeak-ng-data"), num_threads=2)))
+              a = tts.generate(TEXT, sid=0, speed=1.0)
+              y = np.array(a.samples, dtype=np.float32)
+              f0, _, _ = librosa.pyin(y, fmin=60, fmax=400, sr=a.sample_rate)
+              pitch = float(np.nanmedian(f0))
+              rec = KaldiRecognizer(asr, 16000)
+              rec.AcceptWaveform((np.clip(librosa.resample(y, orig_sr=a.sample_rate, target_sr=16000), -1, 1) * 32767).astype(np.int16).tobytes())
+              hyp = json.loads(rec.FinalResult())["text"]
+              e = wer(TEXT, hyp)
+              print(f"{vid} ({src}): pitch={pitch:.0f}Hz wer={e:.3f} :: {hyp}")
+              if pitch < 165 or e > 0.1:
+                  sys.exit(f"Голос {vid} не прошёл проверку")
+              z = f"out/loli-voice-ru-{vid}.zip"
+              with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+                  for root, _, files in os.walk(d):
+                      for fn in files:
+                          full = os.path.join(root, fn)
+                          zf.write(full, os.path.relpath(full, "build"))
+              h = hashlib.sha256(open(z, "rb").read()).hexdigest()
+              sums.append(f'Voice("{vid}", sha256={h}, bytes={os.path.getsize(z)})')
+          print("\n".join(sums))
+          PY
+          python build.py
+          ls -la out
+      - name: Publish to voices-v1
+        run: |
+          gh release upload voices-v1 out/*.zip --clobber --repo "$GITHUB_REPOSITORY"
