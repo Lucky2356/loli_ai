@@ -1,0 +1,10 @@
+-- 2.2: журнал привычек и здоровья (только на телефоне).
+CREATE TABLE habit_log (
+    id TEXT NOT NULL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 1,
+    at INTEGER NOT NULL
+);
+
+CREATE INDEX habit_log_kind_idx ON habit_log(kind, at);

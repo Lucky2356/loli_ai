@@ -11,6 +11,7 @@ import ai.loli.core.assistant.AssistantSettings
 import ai.loli.core.assistant.ReminderScheduler
 import ai.loli.core.assistant.TargetResolver
 import ai.loli.core.data.LocalStore
+import ai.loli.core.health.Habits
 import ai.loli.core.db.LoliDatabase
 import ai.loli.core.model.Reminder
 import ai.loli.core.search.SearchService
@@ -47,6 +48,7 @@ class TestEnv(
         routines = { store.routines.all() }, shoppingItems = { store.shopping.all() },
         skills = skillsFactory?.invoke(time),
         localChat = localChat,
+        habits = Habits(store.habits, time),
     )
 }
 

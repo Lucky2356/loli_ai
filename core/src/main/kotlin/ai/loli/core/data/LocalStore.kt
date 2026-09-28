@@ -32,6 +32,8 @@ class LocalStore(
     val shopping = SqlShoppingRepository(db, stamp, changes, dispatcher)
     val routines = SqlRoutineRepository(db, stamp, changes, dispatcher)
     val secrets = SecretNoteStore(db, dispatcher) { time.now() }
+    /** Вода, лекарства, привычки — только на телефоне. */
+    val habits = ai.loli.core.health.HabitStore(db, dispatcher)
 
     /** Порядок важен только для удобства отладки; таблицы независимы. */
     val syncTables: List<SyncableTable> = listOf(notes, expenses, tasks, reminders, memories, conversations, shopping, routines)
@@ -46,6 +48,7 @@ class LocalStore(
             db.reminderQueries.deleteAll(); db.memoryQueries.deleteAll(); db.conversationQueries.deleteAll()
             db.embeddingQueries.deleteAll(); db.syncStateQueries.deleteAll()
             db.shoppingItemQueries.deleteAll(); db.routineQueries.deleteAll(); db.secretNoteQueries.deleteAll()
+            db.habitLogQueries.deleteAll()
         }
     }
 

@@ -103,6 +103,8 @@ class AssistantEngine(
     private val onNotUnderstood: (String) -> Unit = {},
     /** Офлайн-модель на телефоне: свободные вопросы без интернета и ключей. */
     private val localChat: ai.loli.core.ai.LocalChat? = null,
+    /** Вода, лекарства, привычки, дыхание. */
+    private val habits: ai.loli.core.health.Habits? = null,
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
@@ -220,6 +222,27 @@ class AssistantEngine(
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
     }
 
+    private suspend fun habitReply(text: String, cfg: AssistantSettings): AssistantReply? {
+        val cmd = ai.loli.core.health.HabitPhrases.parse(text) ?: return null
+        val h = habits ?: return null
+        // Здоровье — личное: на экране блокировки только дыхание/медитация и отметки (если разрешено создавать записи).
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        val access = when (cmd) {
+            is ai.loli.core.health.HabitCommand.Relax -> SkillAccess.PUBLIC
+            is ai.loli.core.health.HabitCommand.Water, is ai.loli.core.health.HabitCommand.Pill, is ai.loli.core.health.HabitCommand.Mark -> SkillAccess.CREATE
+            else -> SkillAccess.PRIVATE
+        }
+        if (policy != null && !policy.allowsSkill(access)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
+        val r = h.run(cmd)
+        if (r.device != null) {
+            // Во время упражнения микрофон не слушает: иначе он услышит подсказки «вдох», «выдох» как команды.
+            val relaxing = r.device is DeviceCommand.Relax && r.device.kind != RelaxKind.STOP
+            return execute(AssistantPlan("", listOf(AssistantAction.Device(r.device)), preface = r.text), usedAI = false, offline = false, name = cfg.assistantName)
+                .copy(sensitive = false, endsDialog = relaxing)
+        }
+        return AssistantReply(r.text, changedData = r.changed, sensitive = r.private)
+    }
+
     private suspend fun dialogTurn(text: String, cfg: AssistantSettings): AssistantReply? {
         if (context.pendingConfirmation != null || context.pendingChoice != null || context.pendingSlot != null) return null
         val n = RuTokenizer.normalize(text).trim().trimEnd('?', '!', '.', ',')
@@ -234,6 +257,8 @@ class AssistantEngine(
             skillReply(sk.followUp(text, cfg, skillAi), cfg)?.let { return it }
         }
         if (fresh && MORE.containsMatchIn(n)) lastMoreable?.let { return process(it, cfg) }
+        // «Отмени последнее» сразу после «выпила стакан воды» — отменяем отметку.
+        if (UNDO.containsMatchIn(n)) habits?.undoRecent()?.let { return AssistantReply(it.text, changedData = true, sensitive = true) }
         // «Продолжай» после ответа модели — продолжение рассказа, а не музыка.
         if (fresh && lastWasChat && CONTINUE.containsMatchIn(n)) {
             if (!cfg.useAI) localAnswer("Продолжай.", cfg)?.let { return it }
@@ -339,6 +364,7 @@ class AssistantEngine(
         }
         special.translation(text)?.let { return translate(it, cfg) }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
+        habitReply(text, cfg)?.let { return it }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
         if (!skillsTried) runSkills(text, cfg)?.let { return it }
         special.boughtItems(text)?.let { bought ->
@@ -678,6 +704,7 @@ class AssistantEngine(
         private val REPEAT = Regex("""^(?:повтори|повтори пожалуйста|повтори еще раз|повтори ещё раз|повтори последнее|повтори ответ|что ты сказала|что ты сказал|что ты говоришь|что ты там сказала|еще раз|ещё раз|скажи еще раз|скажи ещё раз|не расслышал|не расслышала|я не расслышал|я не расслышала|не поняла повтори|не понял повтори|что-что|что что|чего|а)$""")
         private val MORE = Regex("""^(?:а\s+)?(?:давай\s+)?(?:ещ[её]|еще)(?:\s+(?:одну|один|одно|разок|пожалуйста|давай|анекдот|шутку|факт|комплимент|цитату|тост|скороговорку|загадку))?$""")
         private val MOREABLE = Regex("""анекдот|шутк|пошути|смешное|факт|комплимент|цитат|тост|скороговорк|стих|монетк|кубик|случайное число|совет дня|мотивац""")
+        private val UNDO = Regex("""^(?:отмени|удали|убери)\s+(?:последнее|это|то что (?:я )?(?:только что )?(?:сказала|сказал|добавила|добавил))$|^(?:отмени|отмена последнего)$""")
         private val CONTINUE = Regex("""^(?:продолжай|продолжи|дальше|и что дальше|а дальше|что было дальше|рассказывай дальше|продолжай рассказ|и\?)$""")
         private const val MAX_CANDIDATES = 20
 

@@ -57,6 +57,10 @@ class AndroidDeviceController(
     private val fallbackReminder: suspend (text: String, at: Instant) -> Unit,
     /** Свои таймеры Лоли: не зависят от приложения «Часы», их можно спросить «сколько осталось» и отменить голосом. */
     private val timers: ai.loli.app.reminders.LoliTimers? = null,
+    /** Дыхание и медитация с голосовыми подсказками. */
+    private val relaxation: ai.loli.app.health.Relaxation? = null,
+    /** «Я за рулём»: чтение новых сообщений вслух. */
+    private val driving: ai.loli.app.health.DrivingMode? = null,
 ) : DeviceController {
 
     override suspend fun perform(command: DeviceCommand): DeviceResult = withContext(Dispatchers.Main) {
@@ -278,6 +282,21 @@ class AndroidDeviceController(
                     Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target * 255 / 100)
                     DeviceResult("Яркость $target%.")
                 }
+            }
+            is DeviceCommand.Relax -> {
+                val r = relaxation ?: return DeviceResult("Здесь так не умею.", ok = false)
+                if (c.kind == ai.loli.core.assistant.RelaxKind.STOP) DeviceResult(if (r.stop()) "Остановила." else "Упражнение и так не идёт.")
+                else { r.start(c.kind, c.minutes); DeviceResult("") }
+            }
+            is DeviceCommand.Driving -> {
+                val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
+                if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }
+                if (!ai.loli.app.notify.LoliNotificationListener.enabled(context)) {
+                    context.startActivity(ai.loli.app.notify.LoliNotificationListener.settingsIntent(context))
+                    return DeviceResult("Чтобы читать сообщения вслух, разрешите Лоли доступ к уведомлениям — и повторите «я за рулём».", ok = false)
+                }
+                d.set(true)
+                DeviceResult("Режим «за рулём»: новые сообщения прочитаю вслух. Ответить — «ответь: …». Выключить — «я приехала». Сам выключится через 2 часа.")
             }
             is DeviceCommand.Global -> {
                 when (LoliAccessibilityService.perform(c.action)) {

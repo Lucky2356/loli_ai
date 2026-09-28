@@ -145,10 +145,13 @@ class AppContainer(private val context: Context) {
     /** Свои таймеры и напоминания по месту. */
     val timers = ai.loli.app.reminders.LoliTimers(context)
     val geo = ai.loli.app.reminders.GeoReminders(context)
+    /** Дыхание и медитация голосом; «я за рулём» — сообщения вслух. */
+    val relaxation = ai.loli.app.health.Relaxation(appScope) { speech.speak(it) }
+    val driving = ai.loli.app.health.DrivingMode(context, appScope) { speech.speak(it) }
     val device = AndroidDeviceController(context, launcher, appAccess, permissions, fallbackReminder = { text, at ->
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
-    }, timers = timers)
+    }, timers = timers, relaxation = relaxation, driving = driving)
     /** Погода, курсы, новости, сообщения, экран, радио, игры, сказки… */
     val skillHost = ai.loli.app.device.AndroidSkillHost(
         context, permissions, launcher, timers, geo,
@@ -197,6 +200,7 @@ class AppContainer(private val context: Context) {
         skills = skills,
         onNotUnderstood = { ai.loli.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
         localChat = offlineLlm,
+        habits = ai.loli.core.health.Habits(store.habits, time),
     ) }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
@@ -268,6 +272,7 @@ class AppContainer(private val context: Context) {
     val started: kotlinx.coroutines.flow.StateFlow<Boolean> = _started
 
     init {
+        ai.loli.app.notify.LoliNotificationListener.onNewMessage = { driving.onMessage(it) }
         appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             // Прогрев БД вне главного потока; дальше — подписка на изменения для синхронизации.
             store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }

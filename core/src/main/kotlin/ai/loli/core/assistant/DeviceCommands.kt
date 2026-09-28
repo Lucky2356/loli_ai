@@ -40,7 +40,13 @@ sealed interface DeviceCommand {
     data class Brightness(val percent: Int?, val delta: Int = 0) : DeviceCommand
     /** Системные действия через спецвозможности: назад, домой, скриншот, блокировка… */
     data class Global(val action: GlobalAction) : DeviceCommand
+    /** Дыхательное упражнение или медитация с голосовыми подсказками; STOP — прервать. */
+    data class Relax(val kind: RelaxKind, val minutes: Int) : DeviceCommand
+    /** «Я за рулём»: новые сообщения читаются вслух сами. */
+    data class Driving(val on: Boolean) : DeviceCommand
 }
+
+enum class RelaxKind { BREATHING, MEDITATION, STOP }
 
 enum class GlobalAction { BACK, HOME, RECENTS, NOTIFICATIONS, QUICK_SETTINGS, LOCK, SCREENSHOT, POWER_MENU, SPLIT_SCREEN }
 
@@ -203,6 +209,14 @@ object DevicePhrases {
         // Поделиться текстом в приложении: «отправь в телеграм привет всем».
         re("""^(?:отправь|перешли|поделись)\s+в\s+(телеграм\w*|ватсап\w*|вотсап\w*|whatsapp|telegram|вк|вконтакте|viber|вайбер|почту|gmail)\s+(.+)$""").find(t)?.let {
             return cmd(DeviceCommand.Share(it.groupValues[1], it.groupValues[2].trim()))
+        }
+
+        // «Я за рулём» — сообщения вслух.
+        if (re("""^(?:я\s+)?(?:сейчас\s+)?(?:за рул[её]м|веду машину|еду на машине|в машине|сажусь за руль|поехала|поехал)$|^(?:включи\s+)?режим\s+(?:вождения|за рул[её]м|водителя|автомобиля)$|^(?:включи\s+)?автомобильный режим$""").containsMatchIn(t)) {
+            return cmd(DeviceCommand.Driving(true))
+        }
+        if (re("""^(?:я\s+)?(?:приехал[аи]?|припарковал(?:ся|ась)|уже не за рул[её]м|вышел из машины|вышла из машины)$|^(?:выключи|отключи)\s+(?:режим\s+)?(?:вождения|за рул[её]м|водителя|автомобильный режим)$""").containsMatchIn(t)) {
+            return cmd(DeviceCommand.Driving(false))
         }
 
         // Фонарик.

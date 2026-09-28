@@ -1,0 +1,26 @@
+-- 2.2: привычки и здоровье — вода, лекарства, отметки привычек. Хранится только на телефоне (не синхронизируется).
+-- kind: water | pill | habit; name: «вода», «витамин D», «зарядка»; amount: стаканы / штуки.
+CREATE TABLE habit_log (
+    id TEXT NOT NULL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 1,
+    at INTEGER NOT NULL
+);
+
+CREATE INDEX habit_log_kind_idx ON habit_log(kind, at);
+
+insert:
+INSERT INTO habit_log VALUES ?;
+
+selectSince:
+SELECT * FROM habit_log WHERE at >= ? ORDER BY at ASC;
+
+selectKindSince:
+SELECT * FROM habit_log WHERE kind = ? AND at >= ? ORDER BY at ASC;
+
+deleteById:
+DELETE FROM habit_log WHERE id = ?;
+
+deleteAll:
+DELETE FROM habit_log;

@@ -65,10 +65,10 @@ data class LockPolicy(
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {
             is DeviceCommand.Timer, is DeviceCommand.Alarm, is DeviceCommand.Flashlight, DeviceCommand.Battery,
-            is DeviceCommand.Media, is DeviceCommand.Volume, is DeviceCommand.DoNotDisturb, is DeviceCommand.Brightness -> basicDevice
+            is DeviceCommand.Media, is DeviceCommand.Volume, is DeviceCommand.DoNotDisturb, is DeviceCommand.Brightness, is DeviceCommand.Relax -> basicDevice
             // Заблокировать экран можно всегда; остальные системные кнопки — как открытие приложений.
             is DeviceCommand.Global -> c.action == GlobalAction.LOCK || apps
-            is DeviceCommand.Call, is DeviceCommand.Message -> calls
+            is DeviceCommand.Call, is DeviceCommand.Message, is DeviceCommand.Driving -> calls
             else -> apps
         }
         else -> edit

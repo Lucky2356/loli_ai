@@ -30,13 +30,13 @@ class LoliNotificationListener : NotificationListenerService() {
         connected = false
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) = add(sbn)
+    override fun onNotificationPosted(sbn: StatusBarNotification) = add(sbn, fresh = true)
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         synchronized(entries) { entries.removeAll { it.message.key == sbn.key } }
     }
 
-    private fun add(sbn: StatusBarNotification) {
+    private fun add(sbn: StatusBarNotification, fresh: Boolean = false) {
         if (sbn.packageName == packageName || sbn.isOngoing) return
         val n = sbn.notification ?: return
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
@@ -50,11 +50,15 @@ class LoliNotificationListener : NotificationListenerService() {
         val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
         val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val msg = IncomingMessage(sbn.key, app, sender, text, Instant.ofEpochMilli(sbn.postTime), canReply = reply != null)
-        synchronized(entries) {
+        val isNew = synchronized(entries) {
+            val before = entries.firstOrNull { it.message.key == sbn.key }?.message?.text
             entries.removeAll { it.message.key == sbn.key }
             entries.addFirst(Entry(msg, reply))
             while (entries.size > 40) entries.removeLast()
+            before != text
         }
+        // Режим «за рулём»: новое сообщение (а не повтор того же уведомления) — читаем вслух.
+        if (fresh && isNew) runCatching { onNewMessage?.invoke(msg) }
     }
 
     /** Отправитель и текст: из MessagingStyle (последние сообщения чата) или из заголовка/текста. */
@@ -81,6 +85,8 @@ class LoliNotificationListener : NotificationListenerService() {
         private const val TAG = "Messages"
         private val entries = ArrayDeque<Entry>()
         @Volatile private var connected = false
+        /** Новое сообщение пришло (для режима «за рулём»). */
+        @Volatile var onNewMessage: ((IncomingMessage) -> Unit)? = null
 
         private val MESSENGERS = setOf(
             "org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram", "com.whatsapp", "com.whatsapp.w4b",
