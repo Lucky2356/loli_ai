@@ -1,5 +1,6 @@
 package ai.loli.core.assistant
 
+import ai.loli.core.nlp.RuTokenizer
 import ai.loli.core.ai.AIException
 import ai.loli.core.ai.AIProvider
 import ai.loli.core.ai.AIRequest
@@ -110,6 +111,13 @@ class AssistantEngine(
     @Volatile var lastAiFailure: AiFailure? = null
         private set
 
+    /** Живой диалог: последний ответ (для «повтори»), фраза, которую можно повторить «ещё», был ли это разговор с моделью. */
+    private var lastReply: AssistantReply? = null
+    private var lastReplyAt: java.time.Instant = java.time.Instant.EPOCH
+    private var lastMoreable: String? = null
+    private var lastWasChat = false
+    private var repeating = false
+
     /** Откуда пришла текущая фраза: диктовка возможна только голосом. */
     @Volatile private var currentSource: InputSource = InputSource.TEXT
 
@@ -120,6 +128,7 @@ class AssistantEngine(
         if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
         context.touch()
 
+        repeating = false
         val reply = try {
             process(text, cfg)
         } catch (e: CancellationException) {
@@ -128,7 +137,13 @@ class AssistantEngine(
             Logger.e(TAG, "Ошибка обработки команды", e)
             AssistantReply("Что-то пошло не так: ${e.message ?: "неизвестная ошибка"}. Попробуйте ещё раз.")
         }
-        record(text, reply.text, reply.sensitive)
+        if (!repeating) {
+            record(text, reply.text, reply.sensitive)
+            lastReply = reply; lastReplyAt = time.now()
+            lastWasChat = reply.provider != null && reply.outcomes.isEmpty() && !reply.changedData
+            if (MOREABLE.containsMatchIn(RuTokenizer.normalize(text))) lastMoreable = text
+            else if (!MORE.containsMatchIn(RuTokenizer.normalize(text).trimEnd('?', '!', '.'))) lastMoreable = null
+        }
         continueDialog(reply, source, cfg)
     }
 
@@ -205,13 +220,36 @@ class AssistantEngine(
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
     }
 
+    private suspend fun dialogTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (context.pendingConfirmation != null || context.pendingChoice != null || context.pendingSlot != null) return null
+        val n = RuTokenizer.normalize(text).trim().trimEnd('?', '!', '.', ',')
+        val fresh = java.time.Duration.between(lastReplyAt, time.now()) <= DIALOG_TTL
+        if (fresh && REPEAT.containsMatchIn(n)) lastReply?.let { r ->
+            if (cfg.locked && r.sensitive) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не повторяю.")
+            repeating = true
+            return AssistantReply(r.text, sensitive = r.sensitive, speakLanguage = r.speakLanguage, provider = r.provider)
+        }
+        skills?.let { sk ->
+            skillReply(sk.more(text, cfg, skillAi), cfg)?.let { return it }
+            skillReply(sk.followUp(text, cfg, skillAi), cfg)?.let { return it }
+        }
+        if (fresh && MORE.containsMatchIn(n)) lastMoreable?.let { return process(it, cfg) }
+        // «Продолжай» после ответа модели — продолжение рассказа, а не музыка.
+        if (fresh && lastWasChat && CONTINUE.containsMatchIn(n)) {
+            if (!cfg.useAI) localAnswer("Продолжай.", cfg)?.let { return it }
+        }
+        return null
+    }
+
     /** Фраза — команда (расход, задача, телефон, список)? Тогда она прерывает игру или ожидание навыка. */
     private fun isCommand(text: String): Boolean = runCatching {
         localParser.parse(text, time.now(), time.zone())?.actions?.isNotEmpty() == true || special.parse(text, time.today()) != null
     }.getOrDefault(false)
 
-    private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? =
-        when (val out = skills?.handle(text, cfg, skillAi)) {
+    private suspend fun runSkills(text: String, cfg: AssistantSettings): AssistantReply? = skillReply(skills?.handle(text, cfg, skillAi), cfg)
+
+    private suspend fun skillReply(out: ai.loli.core.skills.SkillOutcome?, cfg: AssistantSettings): AssistantReply? =
+        when (out) {
             is ai.loli.core.skills.SkillOutcome.Say -> AssistantReply(
                 out.text, expectFollowUp = out.followUp, awaitingAnswer = out.followUp, permission = out.permission, speakLanguage = out.speakLanguage,
                 sensitive = out.sensitive,
@@ -235,6 +273,8 @@ class AssistantEngine(
             if (skills.interruptedBy(text, cfg, ::isCommand)) skills.reset()
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
+        // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
+        dialogTurn(text, cfg)?.let { return it }
         // 1. Ожидаем подтверждение опасного действия.
         context.pendingConfirmation?.let { pending ->
             when {
@@ -634,6 +674,11 @@ class AssistantEngine(
 
     companion object {
         private const val TAG = "Assistant"
+        private val DIALOG_TTL: java.time.Duration = java.time.Duration.ofMinutes(3)
+        private val REPEAT = Regex("""^(?:повтори|повтори пожалуйста|повтори еще раз|повтори ещё раз|повтори последнее|повтори ответ|что ты сказала|что ты сказал|что ты говоришь|что ты там сказала|еще раз|ещё раз|скажи еще раз|скажи ещё раз|не расслышал|не расслышала|я не расслышал|я не расслышала|не поняла повтори|не понял повтори|что-что|что что|чего|а)$""")
+        private val MORE = Regex("""^(?:а\s+)?(?:давай\s+)?(?:ещ[её]|еще)(?:\s+(?:одну|один|одно|разок|пожалуйста|давай|анекдот|шутку|факт|комплимент|цитату|тост|скороговорку|загадку))?$""")
+        private val MOREABLE = Regex("""анекдот|шутк|пошути|смешное|факт|комплимент|цитат|тост|скороговорк|стих|монетк|кубик|случайное число|совет дня|мотивац""")
+        private val CONTINUE = Regex("""^(?:продолжай|продолжи|дальше|и что дальше|а дальше|что было дальше|рассказывай дальше|продолжай рассказ|и\?)$""")
         private const val MAX_CANDIDATES = 20
 
         /** Убирает обращение «Лоли, …» из начала текстовой команды. */

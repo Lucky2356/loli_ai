@@ -68,7 +68,7 @@ class ActionExecutor(
             if (action is AssistantAction.CreateNote || action is AssistantAction.CreateExpense || action is AssistantAction.CreateTask ||
                 action is AssistantAction.CreateReminder || action is AssistantAction.Remember
             ) {
-                step.created?.let { context.lastCreated = it } ?: step.record?.let { context.lastCreated = it }
+                step.created?.let { context.lastCreated = it; context.lastListAdded = emptyList() } ?: step.record?.let { context.lastCreated = it }
             }
             step.confirm?.let { confirmOps += it.operations; confirmQuestions += it.question }
             if (step.choice != null) {
@@ -308,6 +308,13 @@ class ActionExecutor(
             is AssistantAction.Agenda -> query(agenda(action.date))
 
             is AssistantAction.DeleteLast -> {
+                // Последним добавляли в список — убираем это (без подтверждения: пункт списка легко вернуть).
+                if (action.type == null && ctx.lastListAdded.isNotEmpty() && shopping != null) {
+                    val items = shopping.all().filter { it.id in ctx.lastListAdded }
+                    items.forEach { shopping.delete(it.id) }
+                    ctx.lastListAdded = emptyList()
+                    if (items.isNotEmpty()) return changed("Убрала из списка: ${items.joinToString(", ") { it.text.lowercase() }}.")
+                }
                 val target = lastRecord(action.type, ctx) ?: return query("Не нашла, что удалить.")
                 Step(emptyList(), confirm = PendingConfirmation(
                     "Удалить ${target.type.titleRu.lowercase()} ${RuFormat.quote(target.title)}?",
@@ -324,6 +331,7 @@ class ActionExecutor(
                 val repo = shopping ?: return error("Списки пока недоступны.")
                 val added = repo.add(action.listName, action.items)
                 if (added.isEmpty()) return error("Не поняла, что добавить в список.")
+                ctx.lastListAdded = added.map { it.id }; ctx.lastCreated = null
                 val where = if (action.listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "в покупки" else "в список ${RuFormat.quote(action.listName)}"
                 changed("Добавила $where: ${added.joinToString(", ") { it.text.lowercase() }}.")
             }

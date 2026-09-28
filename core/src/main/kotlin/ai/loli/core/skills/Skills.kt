@@ -69,6 +69,9 @@ class Skills(
     private var stations: List<RadioStation> = emptyList()
     private var stationIndex = 0
     private var lastTale: String? = null
+    /** Последний «живой» ответ (погода, курс, новости, сказка) — для «а завтра?», «а евро?», «ещё». */
+    private var lastSkill: SkillCommand? = null
+    private var lastSkillAt = time.now()
     private var lastTurn = time.now()
 
     /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
@@ -106,13 +109,15 @@ class Skills(
     /** Понимает ли навык фразу (для выбора варианта распознавания). */
     fun recognizes(text: String, name: String): Boolean = SkillPhrases.parse(text, time.today(), name) != null
 
-    suspend fun handle(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
+    suspend fun handle(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? = handle(text, cfg, ai, parsed = null)
+
+    private suspend fun handle(text: String, cfg: AssistantSettings, ai: SkillAi?, parsed: SkillCommand?): SkillOutcome? {
         try {
             lastTurn = time.now()
-            continuation(text, cfg, ai)?.let { return it }
+            if (parsed == null) continuation(text, cfg, ai)?.let { return it }
             // Играет радио: «дальше», «переключи» — следующая станция из того же списка, что и «следующая станция».
             if (host.radioPlaying() && RADIO_NEXT.containsMatchIn(SkillPhrases.norm(text))) return radioNext()
-            val cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
+            val cmd = parsed ?: SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
             val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (cfg.locked && private(cmd)) {
                 return SkillOutcome.Say("Разблокируйте телефон — ${privateWhat(cmd)} без разблокировки не показываю.")
@@ -121,6 +126,9 @@ class Skills(
                 return SkillOutcome.Say("Разблокируйте телефон — это без разблокировки не разрешено (меняется в настройках Лоли).")
             }
             val out = execute(cmd, cfg, ai)
+            if (cmd is SkillCommand.Weather || cmd is SkillCommand.Rates || cmd is SkillCommand.News || cmd is SkillCommand.Tale) {
+                lastSkill = cmd; lastSkillAt = time.now()
+            }
             return if (out is SkillOutcome.Say && private(cmd)) out.copy(sensitive = true) else out
         } catch (e: CancellationException) {
             throw e
@@ -131,6 +139,72 @@ class Skills(
         } catch (e: Exception) {
             Logger.w(TAG, "Навык не сработал", e)
             return SkillOutcome.Say("Не получилось: ${e.message ?: "ошибка"}. Попробуйте ещё раз.")
+        }
+    }
+
+    // ------------------------------------------------------------------ Живой диалог: уточнения и «ещё»
+
+    private fun recentSkill(): SkillCommand? = lastSkill?.takeIf { Duration.between(lastSkillAt, time.now()) <= PENDING_TTL }
+
+    /**
+     * Уточнение к последнему ответу: «а завтра?», «а в Казани?», «а на выходных?» после погоды,
+     * «а евро?» после курса, «а спорт?» после новостей. null — это не уточнение.
+     */
+    suspend fun followUp(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
+        val last = recentSkill() ?: return null
+        val t = SkillPhrases.norm(text)
+        if (!FOLLOW_UP.containsMatchIn(t) || t.split(' ').size > 6) return null
+        val body = t.replace(FOLLOW_UP, "").trim()
+        if (body.isEmpty()) return null
+        val cmd: SkillCommand = when (last) {
+            is SkillCommand.Weather -> {
+                val q = last.query
+                val date = SkillPhrases.dayOf(body, time.today())
+                val place = SkillPhrases.weatherPlace(body, text).takeIf { Regex("""(?:^|\s)(?:в|во)\s""").containsMatchIn(body) }
+                val week = Regex("""на\s+(?:неделю|неделе|выходн|7 дней|семь дней)""").containsMatchIn(body)
+                val now = Regex("""^(?:сегодня|сейчас)$""").containsMatchIn(body)
+                if (date == null && place == null && !week && !now) return null
+                SkillCommand.Weather(q.copy(
+                    place = place ?: q.place,
+                    date = if (now || week) null else date ?: q.date,
+                    aspect = if (week) WeatherQuery.Aspect.WEEK else if (q.aspect == WeatherQuery.Aspect.WEEK) WeatherQuery.Aspect.GENERAL else q.aspect,
+                ))
+            }
+            is SkillCommand.Rates -> {
+                val codes = RatesService.codesIn(body).ifEmpty { return null }
+                SkillCommand.Rates(last.query.copy(currencies = codes))
+            }
+            is SkillCommand.News -> {
+                val topic = when {
+                    Regex("""спорт|футбол|хоккей""").containsMatchIn(body) -> NewsTopic.SPORT
+                    Regex("""технолог|айти|гаджет""").containsMatchIn(body) -> NewsTopic.TECH
+                    Regex("""наук|космос""").containsMatchIn(body) -> NewsTopic.SCIENCE
+                    Regex("""эконом|финанс|бизнес""").containsMatchIn(body) -> NewsTopic.ECONOMY
+                    Regex("""главн|в мире|в стране""").containsMatchIn(body) -> NewsTopic.MAIN
+                    else -> return null
+                }
+                SkillCommand.News(topic)
+            }
+            else -> return null
+        }
+        return handle(text, cfg, ai, parsed = cmd)
+    }
+
+    /** «Ещё», «давай ещё», «дальше» — продолжение последнего ответа: следующие новости, другая сказка. */
+    suspend fun more(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
+        val t = SkillPhrases.norm(text)
+        if (host.radioPlaying() && RADIO_NEXT.containsMatchIn(t)) return radioNext()
+        if (!MORE.containsMatchIn(t)) return null
+        return when (val last = recentSkill()) {
+            is SkillCommand.News -> {
+                val next = lastNews.drop(newsShown).take(5)
+                val from = newsShown
+                newsShown += next.size
+                lastSkillAt = time.now()
+                SkillOutcome.Say(NewsService.answer(last.topic, next, from = from))
+            }
+            is SkillCommand.Tale -> { lastSkillAt = time.now(); tale(Tales.Request(null, false), ai) }
+            else -> null
         }
     }
 
@@ -465,6 +539,8 @@ class Skills(
         return playStation()
     }
 
+    private val FOLLOW_UP = Regex("""^(?:а|и|ну а|а если|а как)\s+(?:насчет\s+|на счет\s+|что\s+)?""")
+    private val MORE = Regex("""^(?:а\s+)?(?:давай\s+)?(?:ещ[её]|еще|дальше|следующие|другую|другие)(?:\s+(?:одну|один|новости|сказку|разок|пожалуйста|давай))?$""")
     private val RADIO_NEXT = Regex("""^(?:дальше|следующ\S*|переключи|другую|другая|давай другую|не то)(?:\s+(?:станци\S*|волн\S*|радио))?$""")
 
     private suspend fun radioNext(): SkillOutcome {

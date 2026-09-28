@@ -51,6 +51,8 @@ class ConversationContext(
     var pendingSlot: SlotRequest? = null
     /** Последняя созданная в разговоре запись — для «отмени последнее». */
     var lastCreated: RecordRef? = null
+    /** Последнее, что добавили в список покупок (id), — «удали то, что добавила» после «добавь молоко». */
+    var lastListAdded: List<String> = emptyList()
     /** Последний вопрос о расходах — для уточнений «а на транспорт?», «а в августе?». */
     var lastExpenseQuery: AssistantAction.QueryExpenses? = null
     private var lastActivity: Instant = time.now()
@@ -96,6 +98,7 @@ class ConversationContext(
         focus = null; topic = null
         pendingConfirmation = null; pendingChoice = null; pendingSlot = null
         lastCreated = null
+        lastListAdded = emptyList()
         lastExpenseQuery = null
         dialogMode = false
         appendMode = false
