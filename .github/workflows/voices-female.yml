@@ -5,9 +5,8 @@ name: Voices (female)
 # espeak-ng-data берётся из голоса «Ирина». Перед публикацией голос проверяется: синтез фразы, высота тона
 # (женский — выше 165 Гц) и разборчивость (распознаём синтезированное Vosk, ошибок не больше 10%).
 # Архивы добавляются в служебный пререлиз voices-v1; существующие голоса не пересобираются.
+# Запуск только вручную: пересборка меняет sha256 архивов, а приложение сверяет его при скачивании.
 on:
-  push:
-    paths: [".github/workflows/voices-female.yml"]
   workflow_dispatch:
 
 permissions:
@@ -107,4 +106,8 @@ jobs:
           ls -la out
       - name: Publish to voices-v1
         run: |
-          gh release upload voices-v1 out/*.zip --clobber --repo "$GITHUB_REPOSITORY"
+          # Уже опубликованные голоса не перезаливаем: у установленных приложений зашит их sha256.
+          have=$(gh release view voices-v1 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for z in out/*.zip; do
+            if echo "$have" | grep -qx "$(basename "$z")"; then echo "Пропускаю $(basename "$z") — уже есть"; else gh release upload voices-v1 "$z" --repo "$GITHUB_REPOSITORY"; fi
+          done

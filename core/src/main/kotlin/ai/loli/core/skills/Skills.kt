@@ -62,7 +62,10 @@ class Skills(
     private var awaitGameChoice = false
     private var awaitCity: WeatherQuery? = null
     private var lastNews: List<NewsService.Item> = emptyList()
+    private var newsShown = 0
     private var replyTarget: IncomingMessage? = null
+    /** Спросили «Что ответить Маше?» — следующая фраза и есть ответ. */
+    private var awaitReply = false
     private var stations: List<RadioStation> = emptyList()
     private var stationIndex = 0
     private var lastTale: String? = null
@@ -70,13 +73,16 @@ class Skills(
 
     /** Навык ждёт ответа — движок передаёт следующую фразу сюда. Ожидание не вечное: через 3 минуты молчания забываем. */
     val busy: Boolean get() {
-        val waiting = game != null || awaitGameChoice || awaitCity != null
+        val waiting = game != null || awaitGameChoice || awaitCity != null || awaitReply
         if (waiting && Duration.between(lastTurn, time.now()) > PENDING_TTL) reset()
-        return game != null || awaitGameChoice || awaitCity != null
+        return game != null || awaitGameChoice || awaitCity != null || awaitReply
     }
 
+    /** Экран погас: забываем, кому отвечали, — игра и прочее остаются. */
+    fun forgetPrivate() { replyTarget = null; awaitReply = false }
+
     fun reset() {
-        game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null
+        game = null; awaitGameChoice = false; awaitCity = null; replyTarget = null; awaitReply = false
     }
 
     /**
@@ -88,6 +94,8 @@ class Skills(
         val t = SkillPhrases.norm(text)
         if (game == null && (LocalCommandParser.isDialogEnd(t) || LocalCommandParser.isNo(t) || t in setOf("спасибо", "не надо", "отмена", "отмени"))) return true
         if (t.split(' ').size < 2) return false
+        // Текст ответа («буду через 10 минут») похож на команду, но это ответ: прерывает только явный навык.
+        if (awaitReply) return SkillPhrases.parse(text, time.today(), cfg.assistantName).let { it != null && it !is SkillCommand.StartGame }
         return when (val cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName)) {
             null -> isCommand(text)
             is SkillCommand.StartGame -> false
@@ -102,6 +110,8 @@ class Skills(
         try {
             lastTurn = time.now()
             continuation(text, cfg, ai)?.let { return it }
+            // Играет радио: «дальше», «переключи» — следующая станция из того же списка, что и «следующая станция».
+            if (host.radioPlaying() && RADIO_NEXT.containsMatchIn(SkillPhrases.norm(text))) return radioNext()
             val cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
             val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (cfg.locked && private(cmd)) {
@@ -127,6 +137,17 @@ class Skills(
     // ------------------------------------------------------------------ Продолжение разговора
 
     private suspend fun continuation(text: String, cfg: AssistantSettings, ai: SkillAi?): SkillOutcome? {
+        if (awaitReply) {
+            awaitReply = false
+            val t = SkillPhrases.norm(text)
+            if (LocalCommandParser.isNo(t) || t in setOf("отмена", "отмени", "не надо", "ничего", "не отвечай")) {
+                replyTarget = null
+                return SkillOutcome.Say("Хорошо, не отвечаю.")
+            }
+            if (cfg.locked) return SkillOutcome.Say("Разблокируйте телефон — сообщения без разблокировки не отправляю.")
+            val body = text.trim().trimEnd('.').removePrefix("что ").trim()
+            return replyMessage(SkillCommand.ReplyMessage(null, body, body))
+        }
         game?.let { g ->
             val t = SkillPhrases.norm(text)
             // Явный выход и новая игра — не ход в игре.
@@ -190,9 +211,10 @@ class Skills(
         is SkillCommand.Weather -> weather(cmd.query, cfg)
         is SkillCommand.Rates -> SkillOutcome.Say((ratesService ?: return offline("курс")).answer(cmd.query))
         is SkillCommand.News -> {
-            val items = (newsService ?: return offline("новости")).headlines(cmd.topic)
-            lastNews = items
-            SkillOutcome.Say(NewsService.answer(cmd.topic, items))
+            val feed = (newsService ?: return offline("новости")).feed(cmd.topic)
+            lastNews = feed.items
+            newsShown = minOf(5, feed.items.size)
+            SkillOutcome.Say(NewsService.answer(feed.topic, feed.items.take(5), asked = cmd.topic))
         }
         is SkillCommand.NewsDetails -> {
             val item = lastNews.getOrNull(cmd.index)
@@ -372,6 +394,7 @@ class Skills(
         if (target == null) return SkillOutcome.Say("Не нашла сообщение, на которое можно ответить. Скажите «прочитай сообщения».")
         if (text.isBlank()) {
             replyTarget = target
+            awaitReply = true
             return SkillOutcome.Say("Что ответить ${target.sender}?", followUp = true)
         }
         val ok = host.reply(target, text.replaceFirstChar { it.uppercase() })
@@ -441,6 +464,8 @@ class Skills(
         stationIndex = if (query == null) found.indices.random() else 0
         return playStation()
     }
+
+    private val RADIO_NEXT = Regex("""^(?:дальше|следующ\S*|переключи|другую|другая|давай другую|не то)(?:\s+(?:станци\S*|волн\S*|радио))?$""")
 
     private suspend fun radioNext(): SkillOutcome {
         if (stations.isEmpty()) stations = radioCatalog.find(null)

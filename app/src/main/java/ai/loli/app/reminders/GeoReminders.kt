@@ -73,7 +73,14 @@ class GeoReminders(private val context: Context) {
     }
 
     /** После перезагрузки зоны приближения сбрасываются — регистрируем заново. */
-    fun registerAll() = reminders().forEach { register(it) }
+    /**
+     * После перезагрузки ([force]) зоны приближения сброшены — регистрируем все заново. При обычном запуске
+     * только новые и те, у которых место сдвинулось: повторная регистрация дала бы ложное «вы пришли».
+     */
+    fun registerAll(force: Boolean = false) = reminders().forEach { r ->
+        val p = places().firstOrNull { it.name == r.place } ?: return@forEach
+        if (force || prefs.getString(KEY_REG + r.id, null) != "${p.lat},${p.lon}") register(r)
+    }
 
     private fun pending(r: PlaceReminder, flags: Int): PendingIntent? = PendingIntent.getBroadcast(
         context, 0, Intent(context, GeoReceiver::class.java).setAction(ACTION).setData(Uri.parse("loli-geo://${r.id}")).putExtra(EXTRA_ID, r.id),
@@ -96,6 +103,7 @@ class GeoReminders(private val context: Context) {
         }.getOrNull() == true
         prefs.edit().putBoolean(KEY_SKIP + r.id, inside && !r.onLeave).apply()
         runCatching { lm.addProximityAlert(p.lat, p.lon, RADIUS, -1, pi) }
+            .onSuccess { prefs.edit().putString(KEY_REG + r.id, "${p.lat},${p.lon}").apply() }
             .onFailure { Logger.w(TAG, "Не удалось следить за местом", it) }
     }
 
@@ -108,7 +116,7 @@ class GeoReminders(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun unregister(r: PlaceReminder) {
-        prefs.edit().remove(KEY_SKIP + r.id).apply()
+        prefs.edit().remove(KEY_SKIP + r.id).remove(KEY_REG + r.id).apply()
         val pi = pending(r, PendingIntent.FLAG_NO_CREATE) ?: return
         runCatching { context.getSystemService(LocationManager::class.java)?.removeProximityAlert(pi) }
         pi.cancel()
@@ -130,6 +138,7 @@ class GeoReminders(private val context: Context) {
         private const val KEY_PLACES = "places"
         private const val KEY_REMINDERS = "reminders"
         private const val KEY_SKIP = "skip_"
+        private const val KEY_REG = "geo_reg_"
         private const val RADIUS = 150f
         const val ACTION = "ai.loli.GEO"
         const val EXTRA_ID = "geo_id"

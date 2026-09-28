@@ -104,6 +104,33 @@ sealed class Game {
         }
     }
 
+    // ------------------------------------------------------------------ Лоли угадывает число человека
+    class ReverseGuess(private val max: Int = 100) : Game() {
+        override val title = "Угадаю ваше число"
+        private var lo = 1
+        private var hi = max
+        private var guess = (lo + hi) / 2
+        private var tries = 1
+
+        override fun start() = "Загадайте число от 1 до $max, а я угадаю. Отвечайте: «больше», «меньше» или «да». Это $guess?"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
+            if (isGiveUp(t)) return GameTurn("Хорошо, в другой раз угадаю!", over = true)
+            when {
+                Regex("""^(?:да|угадала|верно|правильно|точно|оно|это оно|ага|угу|в точку)""").containsMatchIn(t) ->
+                    return GameTurn("Ура! Угадала за ${ai.loli.core.assistant.RuFormat.count(tries, "попытку", "попытки", "попыток")}.", over = true)
+                Regex("""больше|выше|побольше""").containsMatchIn(t) -> lo = guess + 1
+                Regex("""меньше|ниже|поменьше""").containsMatchIn(t) -> hi = guess - 1
+                else -> return GameTurn("Скажите «больше», «меньше» или «да». Я назвала $guess.")
+            }
+            if (lo > hi) return GameTurn("Кажется, вы где-то ошиблись с подсказкой — такого числа нет. Сыграем ещё?", over = true)
+            guess = (lo + hi) / 2
+            tries++
+            return GameTurn(if (lo == hi) "Тогда это $guess!" else "Это $guess?")
+        }
+    }
+
     // ------------------------------------------------------------------ Загадки
     class Riddles(private val random: Random = Random.Default) : Game() {
         override val title = "Загадки"
@@ -142,8 +169,13 @@ sealed class Game {
         /** «Давай поиграем в города», «загадай число», «загадай загадку». */
         fun parseStart(text: String): Game? {
             val t = text.lowercase().replace('ё', 'е').trim().trimEnd('.', '!', '?')
+            val d = ai.loli.core.assistant.DevicePhrases.digitize(t)
             return when {
-                Regex("""(?:играть|игра|поиграем|сыграем|давай|начнем)\s*(?:в|во)?\s*город(?:а|ах)(?![\p{L}])|^города$|^игра в города$""").containsMatchIn(t) -> Cities()
+                Regex("""(?:играть|игра|играй|играем|поиграем|сыграем|давай|начнем)\s*(?:в|во)?\s*город(?:а|ах)(?![\p{L}])|^города$|^игра в города$""").containsMatchIn(t) -> Cities()
+                // «Я загадала число, угадай» — теперь угадывает Лоли.
+                Regex("""^(?:я\s+)?загадал[аи]?\s+(?:тебе\s+)?число|угадай\s+(?:мое|моё|задуманное)\s+число|^угадай,?\s+какое\s+число\s+я""").containsMatchIn(t) -> ReverseGuess()
+                // «Загадай число от 1 до 6» — просто случайное число.
+                Regex("""число\s+от\s+\d+\s+до\s+\d+""").containsMatchIn(d) && !Regex("""угада""").containsMatchIn(t) -> null
                 Regex("""угада(?:й|ть|ю)\s+число|загада(?:й|ла)\s+(?:мне\s+)?(?:какое-нибудь\s+|какое-то\s+|любое\s+)?число|игра\s+(?:в\s+)?(?:угадай\s+)?число""").containsMatchIn(t) -> GuessNumber()
                 Regex("""загад(?:ай|ывай)\s+(?:мне\s+|нам\s+)?загадк|(?:давай|хочу|расскажи|поиграем в|сыграем в)\s+загадк|^загадк[аиу]$|^загадай что[- ]нибудь$""").containsMatchIn(t) -> Riddles()
                 else -> null

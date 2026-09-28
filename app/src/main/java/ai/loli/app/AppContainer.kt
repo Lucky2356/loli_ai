@@ -317,9 +317,10 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    suspend fun rescheduleReminders() {
-        runCatching { timers.rescheduleAll() }
-        runCatching { geo.registerAll() }
+    /** [afterBoot] — телефон перезагрузился: будильники и зоны мест сброшены системой. */
+    suspend fun rescheduleReminders(afterBoot: Boolean = false) {
+        runCatching { timers.rescheduleAll(afterBoot) }
+        runCatching { geo.registerAll(force = afterBoot) }
         reminderScheduler.rescheduleAll(store.reminders.active())
     }
 

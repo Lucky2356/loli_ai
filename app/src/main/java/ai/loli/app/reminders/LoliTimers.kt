@@ -76,8 +76,11 @@ class LoliTimers(private val context: Context) {
      * После перезагрузки телефона будильники системы сбрасываются — ставим заново.
      * Таймеры, закончившиеся, пока телефон был выключен, не пропадают молча: показываем уведомление.
      */
-    fun rescheduleAll() = synchronized(LOCK) {
+    fun rescheduleAll(afterBoot: Boolean = false) = synchronized(LOCK) {
         val now = Instant.now()
+        // Обычный запуск: будильники системы живы, закончившийся таймер ещё прозвенит сам (неточный будильник
+        // может опоздать) — просто планируем всё заново тем же адресом, без «пока телефон был выключен».
+        if (!afterBoot) { stored().forEach { schedule(it) }; return@synchronized }
         val (done, active) = stored().partition { !it.endsAt.isAfter(now) }
         done.forEach { t ->
             val n = NotificationCompat.Builder(context, Notifications.CHANNEL_ALARMS)

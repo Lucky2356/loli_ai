@@ -22,18 +22,26 @@ class NewsService(private val http: HttpClient) {
 
     private val cache = TtlCache<NewsTopic, List<Item>>(10 * 60_000L)
 
-    suspend fun headlines(topic: NewsTopic, limit: Int = 5): List<Item> {
-        cache.get(topic)?.let { return it.take(limit) }
+    /** Лента, из которой пришли заголовки: если рубрика недоступна — это главные новости. */
+    data class Feed(val topic: NewsTopic, val items: List<Item>)
+
+    suspend fun headlines(topic: NewsTopic, limit: Int = 5): List<Item> = feed(topic).items.take(limit)
+
+    /** Все заголовки рубрики (для «ещё»); рубрика не ответила — главные новости, и кэш под ними же. */
+    suspend fun feed(topic: NewsTopic): Feed {
+        cache.get(topic)?.let { return Feed(topic, it) }
         var lastError: Exception? = null
-        // Лента не ответила или прислала не RSS — пробуем следующую, в конце — главные новости.
-        for (url in (topic.feeds + NewsTopic.MAIN.feeds).distinct()) {
-            try {
-                val items = parseRss(http.fetchText(url))
-                if (items.isNotEmpty()) { cache.put(topic, items); return items.take(limit) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e as? InfoUnavailable ?: InfoUnavailable("лента новостей не читается")
+        for (t in listOf(topic, NewsTopic.MAIN).distinct()) {
+            if (t != topic) cache.get(t)?.let { return Feed(t, it) }
+            for (url in t.feeds) {
+                try {
+                    val items = parseRss(http.fetchText(url))
+                    if (items.isNotEmpty()) { cache.put(t, items); return Feed(t, items) }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = e as? InfoUnavailable ?: InfoUnavailable("лента новостей не читается")
+                }
             }
         }
         throw lastError ?: InfoUnavailable("новостей нет")
@@ -59,9 +67,14 @@ class NewsService(private val http: HttpClient) {
             .replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
             .replace(Regex("""\s+"""), " ").trim()
 
-        fun answer(topic: NewsTopic, items: List<Item>): String {
-            if (items.isEmpty()) return "Свежих новостей не нашла."
-            return "${topic.title}:\n" + items.mapIndexed { i, it -> "${i + 1}. ${it.title.trimEnd('.')}." }.joinToString("\n")
+        fun answer(topic: NewsTopic, items: List<Item>, asked: NewsTopic = topic, from: Int = 0): String {
+            if (items.isEmpty()) return if (from > 0) "Больше новостей нет." else "Свежих новостей не нашла."
+            val head = when {
+                asked != topic -> "${asked.title} сейчас недоступны, вот главные:"
+                from > 0 -> "Ещё новости:"
+                else -> "${topic.title}:"
+            }
+            return "$head\n" + items.mapIndexed { i, it -> "${from + i + 1}. ${it.title.trimEnd('.')}." }.joinToString("\n")
         }
     }
 }

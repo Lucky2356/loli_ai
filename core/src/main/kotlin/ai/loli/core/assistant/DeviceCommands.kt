@@ -176,8 +176,10 @@ object DevicePhrases {
             val q = m.groupValues[1].ifBlank { m.groupValues[2] }.trim()
             if (q.isNotEmpty()) return cmd(DeviceCommand.Play(q, youtube = true))
         }
-        re("""^(?:включи|поставь|сыграй|воспроизведи)\s+(?:песню|трек|музыку|альбом|плейлист|группу|исполнителя)\s+(.+)$""").find(t)?.let {
-            return cmd(DeviceCommand.Play(it.groupValues[1].trim()))
+        re("""^(?:включи|поставь|сыграй|воспроизведи|вруби|врубай|запусти)\s+(?:песню|песенку|трек|музыку|музычку|музон|альбом|плейлист|группу|исполнителя)\s+(.+)$""").find(t)?.let {
+            // «вруби музыку группы Кино» → «Кино».
+            val q = it.groupValues[1].trim().replace(re("""^(?:группы|исполнителя|певца|певицы|рэпера)\s+"""), "")
+            if (q.isNotEmpty()) return cmd(DeviceCommand.Play(q))
         }
 
         // Календарь: «добавь в календарь встречу с Машей завтра в 15:00».
@@ -217,7 +219,7 @@ object DevicePhrases {
             re("""^(?:следующ\w*\s+(?:трек|песн\w*|композици\w*)|переключи\s+(?:трек|песню)|следующ(?:ую|ий|ая)$|дальше$|переключи$|другую песню)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.NEXT))
             re("""^(?:предыдущ\w*\s+(?:трек|песн\w*|композици\w*)|верни\s+(?:трек|песню|предыдущ\w*)|предыдущ(?:ую|ий|ая)$)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PREVIOUS))
             re("""^(?:пауза|поставь на паузу|останови музыку|выключи музыку|стоп музыка)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PAUSE))
-            re("""^(?:включи музыку|продолжи музыку|играй|воспроизведи|сними с паузы|продолжи воспроизведение|(?:вруби|поставь|запусти|врубай)\s+(?:музыку|музон|музычку|песенку)|продолжи$|продолжай$)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PLAY))
+            re("""^(?:включи музыку|продолжи музыку|играй|воспроизведи|сними с паузы|продолжи воспроизведение|(?:вруби|поставь|запусти|врубай)\s+(?:музыку|музон|музычку|песенку)$|продолжи$|продолжай$)""").containsMatchIn(t) -> return cmd(DeviceCommand.Media(MediaAction.PLAY))
         }
 
         // Громкость.
@@ -260,7 +262,12 @@ object DevicePhrases {
         }
 
         // Звонок и сообщение: «позвони маме», «набери 8 900 …», «напиши Саше что я задержусь».
-        re("""^(?:позвони|набери|вызови|звонок|звякни|брякни|сделай звонок|соедини с)\s+(?:на\s+номер\s+|номер\s+)?(.+)$""").find(t)?.let { return cmd(DeviceCommand.Call(it.groupValues[1].trim())) }
+        re("""^(?:позвони|набери|вызови|звонок|звякни|брякни|сделай звонок|соедини с)\s+(?:на\s+номер\s+|номер\s+)?(.+)$""").find(t)?.let {
+            // «соедини с интернетом» — не звонок.
+            if (!re("""^(?:интернет|вай|wi|сет|блют|bluetooth|сервер|компьютер|ноутбук|телевизор|колонк|наушник)""").containsMatchIn(it.groupValues[1].trim())) {
+                return cmd(DeviceCommand.Call(it.groupValues[1].trim()))
+            }
+        }
         re("""^(?:напиши|черкни|(?:отправь|скинь|пошли)\s+(?:смс|сообщение|эсэмэску|смску))\s+(\S+(?:\s+\S+)?)\s*(?:,|что|:)\s*(.+)$""").find(t)?.let {
             val who = it.groupValues[1].trim()
             // «напиши заметку: …» — это запись, а не сообщение человеку.
@@ -272,11 +279,11 @@ object DevicePhrases {
         // «отправь маме сообщение перезвоню позже»
         re("""^(?:отправь|напиши|скинь|пошли)\s+(\S+[еуюиам])\s+(?:смс|сообщение|смску|эсэмэску)[,:]?\s*(?:что\s+)?(.+)$""").find(t)?.let {
             val who = it.groupValues[1]
-            if (who !in NOT_RECIPIENTS) return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
+            if (isRecipient(who)) return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
         }
         re("""^(?:напиши|черкни|(?:отправь|скинь|пошли)\s+(?:смс|сообщение|смску|эсэмэску))\s+(\S+[еуюиам])\s+(.+)$""").find(t)?.let {
             val who = it.groupValues[1]
-            if (who !in NOT_RECIPIENTS && !re("""^(?:заметк|иде|задач|список|списк|себе|мне|письм|текст|сообщени|смс|отзыв|пост|стих|сочинени|код)""").containsMatchIn(who)) {
+            if (isRecipient(who) && !re("""^(?:заметк|иде|задач|список|списк|себе|мне|письм|текст|сообщени|смс|отзыв|пост|стих|сочинени|код)""").containsMatchIn(who)) {
                 return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
             }
         }
@@ -309,7 +316,11 @@ object DevicePhrases {
         return null
     }
 
-    private val NOT_RECIPIENTS = setOf("мне", "нам", "все", "всем", "что", "про", "это", "по")
+    private val NOT_RECIPIENTS = setOf("мне", "нам", "все", "всем", "что", "про", "это", "по", "еще", "ещё", "одно", "одну", "такое", "там", "тут", "сейчас", "срочно", "быстро", "потом", "завтра")
+
+    /** «напиши красивое сообщение», «отправь еще сообщение» — прилагательные и наречия не адресаты. */
+    private fun isRecipient(who: String): Boolean =
+        who.lowercase() !in NOT_RECIPIENTS && !Regex("""(?:ое|ее|ие|ые)$""").containsMatchIn(who.lowercase())
 
     private val OWN_SECTIONS = setOf("заметки", "идеи", "задачи", "расходы", "напоминания", "историю", "память", "настройки ассистента")
 
@@ -366,7 +377,7 @@ object DevicePhrases {
         // Монетка, кубик, случайное число.
         if (re("""(подбрось|брось|кинь)\s+монет|орел или решка|орёл или решка""").containsMatchIn(t)) return if (random.nextBoolean()) "Орёл!" else "Решка!"
         if (re("""(брось|кинь|подбрось)\s+(кубик|кость)""").containsMatchIn(t)) return "Выпало ${random.nextInt(1, 7)}."
-        re("""случайное число(?:\s+от\s+(\d+)\s+до\s+(\d+))?""").find(digitize(t))?.let { m ->
+        re("""(?:случайное число|(?:загадай|назови|выбери|придумай)\s+(?:мне\s+)?(?:любое\s+|какое-нибудь\s+|какое-то\s+|случайное\s+)?число(?=\s+от\s+\d))(?:\s+от\s+(\d+)\s+до\s+(\d+))?""").find(digitize(t))?.let { m ->
             val from = m.groupValues[1].toIntOrNull() ?: 1
             val to = m.groupValues[2].toIntOrNull() ?: 100
             if (to > from) return "Пусть будет ${random.nextInt(from, to + 1)}."

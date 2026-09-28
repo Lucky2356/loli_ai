@@ -49,6 +49,8 @@ interface SkillHost {
 
     suspend fun playRadio(station: RadioStation): Boolean = false
     fun stopRadio(): Boolean = false
+    /** Играет ли сейчас радио Лоли: тогда «дальше» — следующая станция, а не трек. */
+    fun radioPlaying(): Boolean = false
 
     /** Громкий сигнал «я здесь». */
     suspend fun ringPhone(): Boolean = false

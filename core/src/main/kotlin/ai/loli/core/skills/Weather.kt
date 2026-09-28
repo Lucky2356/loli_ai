@@ -3,6 +3,10 @@ package ai.loli.core.skills
 import ai.loli.core.assistant.RuFormat
 import ai.loli.core.data.LoliJson
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.pluginOrNull
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
@@ -34,7 +38,9 @@ internal suspend fun HttpClient.fetchText(url: String): String {
     repeat(2) { attempt ->
         val r: HttpResponse = try {
             get(url) {
-                header("User-Agent", "LoliAssistant/2.1 (Android; +https://github.com/Lucky2356/loli_ai)")
+                // Навыку не нужно ждать 90 секунд, как AI: нет ответа за 10 — «нет связи».
+                if (this@fetchText.pluginOrNull(HttpTimeout) != null) timeout { connectTimeoutMillis = 5_000; requestTimeoutMillis = 10_000; socketTimeoutMillis = 10_000 }
+                header("User-Agent", "LoliAssistant/2.2 (Android; +https://github.com/Lucky2356/loli_ai)")
                 header("Accept", "application/json, application/rss+xml, application/xml, text/xml, */*")
                 header("Accept-Language", "ru")
             }
@@ -42,6 +48,8 @@ internal suspend fun HttpClient.fetchText(url: String): String {
             throw e
         } catch (e: Exception) {
             last = e
+            // Таймаут не повторяем: второй раз ждать столько же бессмысленно.
+            if (e is HttpRequestTimeoutException || e is java.net.SocketTimeoutException || e.cause is java.net.SocketTimeoutException) return@repeat
             if (attempt == 0) kotlinx.coroutines.delay(700)
             return@repeat
         }

@@ -45,10 +45,16 @@ class LoliVoice(
         engine = null; loadedId = null
         if (!models.isReady(id)) return null
         val dir = models.dir(id)
+        val modelFile = File(dir, models.voice(id).modelFile)
+        // Параметры звучания, с которыми модель обучали (у голосов сообщества они свои), — из её .onnx.json.
+        val inference = runCatching { org.json.JSONObject(File(modelFile.path + ".json").readText()).optJSONObject("inference") }.getOrNull()
         val vits = OfflineTtsVitsModelConfig(
-            model = File(dir, models.voice(id).modelFile).absolutePath,
+            model = modelFile.absolutePath,
             tokens = File(dir, "tokens.txt").absolutePath,
             dataDir = File(dir, "espeak-ng-data").absolutePath,
+            noiseScale = inference?.optDouble("noise_scale", 0.667)?.toFloat() ?: 0.667f,
+            noiseScaleW = inference?.optDouble("noise_w", 0.8)?.toFloat() ?: 0.8f,
+            lengthScale = inference?.optDouble("length_scale", 1.0)?.toFloat()?.coerceIn(0.5f, 2f) ?: 1f,
         )
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(vits = vits, numThreads = 2, debug = false, provider = "cpu"),

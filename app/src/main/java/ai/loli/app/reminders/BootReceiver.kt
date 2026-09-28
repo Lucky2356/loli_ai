@@ -23,7 +23,7 @@ class BootReceiver : BroadcastReceiver() {
         app.container.appScope.launch(Dispatchers.IO) {
             try {
                 app.container.awaitReady()
-                app.container.rescheduleReminders()
+                app.container.rescheduleReminders(afterBoot = intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == "android.intent.action.QUICKBOOT_POWERON" || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED)
                 if (intent.action == Intent.ACTION_BOOT_COMPLETED && app.container.settings.current().wakeWordEnabled) {
                     val open = PendingIntent.getActivity(
                         context, 0, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

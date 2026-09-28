@@ -66,7 +66,7 @@ class RatesService(private val http: HttpClient) {
             "сом(?:а|ов|ы)?(?![\\p{L}])|kgs" to "KGS",
             "сум(?:а|ов|ы)?(?![\\p{L}])|uzs" to "UZS",
             "армянск\\S*\\s+драм|драм(?:ов)?(?![\\p{L}])|amd" to "AMD",
-            "лари|gel" to "GEL",
+            "лари(?![\\p{L}])|gel" to "GEL",
             "манат|azn" to "AZN",
             "рупи|inr" to "INR",
             "корейск\\S*\\s+вон|вон(?:а|ы)(?![\\p{L}])|krw" to "KRW",
