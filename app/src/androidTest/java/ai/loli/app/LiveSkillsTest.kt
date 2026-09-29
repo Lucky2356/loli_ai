@@ -58,6 +58,16 @@ class LiveSkillsTest {
         assertAnswered("погода на неделю", "Завтра")
     }
 
+    /** Живой диалог через настоящий движок навыков: уточнение к последнему ответу. */
+    @Test fun followUps() = runBlocking {
+        ask("какая погода")
+        val tomorrow = skills.followUp("а завтра?", cfg, null)
+        val text = (tomorrow as? SkillOutcome.Say)?.text.orEmpty()
+        println("LIVE «а завтра?» → $text")
+        assertTrue(text, text.contains("Завтра") || text.contains("°"))
+        assertFalse(text, text.startsWith("Не получилось"))
+    }
+
     @Test fun news() {
         assertAnswered("новости", "1.")
         assertAnswered("новости спорта", "1.")
@@ -91,5 +101,11 @@ class LiveSkillsTest {
         assertEquals(null, p("поставь напоминание завтра провести встречу"))
         assertEquals("Будильник на 7 часов.", SpeechText.forSpeech("Будильник на 7:00."))
         assertEquals("плюс 12 градусов", SpeechText.declineUnits("+12°"))
+        assertEquals("Добавьте 200 грамм сахара.", SpeechText.forSpeech("Добавьте 200 г. сахара."))
+        assertEquals("Счёт 3:00 в пользу хозяев.", SpeechText.forSpeech("Счёт 3:00 в пользу хозяев."))
+        assertTrue(p("какой сегодня праздник") is SkillCommand.Almanac)
+        assertEquals("что там по погоде", ai.loli.core.nlp.Slang.normalize("чё там по погоде"))
+        assertTrue(ai.loli.core.health.HabitPhrases.parse("выпила стакан воды") is ai.loli.core.health.HabitCommand.Water)
+        assertEquals(LocalDate.of(2026, 4, 12), ai.loli.core.skills.Almanac.easter(2026))
     }
 }
