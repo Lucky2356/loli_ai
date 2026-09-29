@@ -35,7 +35,15 @@ sealed interface SkillCommand {
     data class SetCity(val city: String) : SkillCommand
     data class StartGame(val game: Game?) : SkillCommand
     data class Tale(val request: Tales.Request) : SkillCommand
+    /** Праздники, именины, приметы — встроенный календарь. */
+    data class Almanac(val kind: AlmanacKind, val date: LocalDate, val name: String? = null) : SkillCommand
+    /** «Интересный факт», «факт дня». */
+    data class FactOfDay(val ofDay: Boolean) : SkillCommand
+    /** «Поздравь Машу с днём рождения» — готовое поздравление и сообщение ей. */
+    data class Greet(val person: String, val occasion: String) : SkillCommand
 }
+
+enum class AlmanacKind { HOLIDAY, NEXT_HOLIDAY, WHEN_HOLIDAY, NAME_DAY, NAME_DAY_OF, OMEN }
 
 enum class ScreenMode { READ, SUMMARY, TRANSLATE }
 
@@ -56,6 +64,8 @@ object SkillPhrases {
         if (RECORD_VERB.containsMatchIn(t)) return null
         // Явный поиск в интернете — это команда телефону, а не вопрос навыку.
         if (rx("""^(?:найди|поищи|посмотри)\s+в\s+(?:интернете|гугле|яндексе|сети)|^(?:загугли|погугли)\b""").containsMatchIn(t)) return null
+        almanac(t, today)?.let { return it }
+        greet(t, text)?.let { return it }
         weather(t, text, today)?.let { return SkillCommand.Weather(it) }
         rates(t)?.let { return SkillCommand.Rates(it) }
         news(t)?.let { return it }
@@ -69,7 +79,60 @@ object SkillPhrases {
         Game.parseStart(t)?.let { return SkillCommand.StartGame(it) }
         if (Game.isWhatToPlay(t)) return SkillCommand.StartGame(null)
         Tales.parse(t)?.let { return SkillCommand.Tale(it) }
+        factOfDay(t)?.let { return it }
         fact(t, assistantName)?.let { return SkillCommand.Fact(it) }
+        return null
+    }
+
+    // ------------------------------------------------------------------ Календарь и факты
+
+    fun almanac(t: String, today: LocalDate): SkillCommand? {
+        val day = dayOf(t, today) ?: today
+        if (rx("""^(?:а\s+)?(?:какой|какие|что за)\s+(?:сегодня\s+|завтра\s+|послезавтра\s+|сейчас\s+)?праздник\S*(?:\s+(?:сегодня|завтра|послезавтра|в\s+\S+|на\s+\S+))?$|^(?:сегодня|завтра)\s+(?:какой\s+|есть\s+)?праздник|^(?:есть|будет)\s+(?:ли\s+)?(?:сегодня\s+|завтра\s+)?(?:какой-нибудь\s+|какой-то\s+)?праздник|^что\s+(?:сегодня|завтра)\s+(?:празднуют|отмечают|за праздник)|^что\s+(?:празднуют|отмечают)\s+(?:сегодня|завтра)|^праздник\s+(?:сегодня|завтра)$|^какой\s+(?:сегодня|завтра)\s+день\s+в\s+календаре""").containsMatchIn(t)) {
+            return SkillCommand.Almanac(AlmanacKind.HOLIDAY, day)
+        }
+        if (rx("""(?:ближайш|следующ)\S*\s+праздник|^когда\s+(?:следующий|ближайший)\s+праздник|^скоро\s+(?:какой\s+)?праздник""").containsMatchIn(t)) {
+            return SkillCommand.Almanac(AlmanacKind.NEXT_HOLIDAY, today)
+        }
+        rx("""^(?:а\s+)?когда\s+(?:будет\s+|в этом году\s+|наступит\s+|празднуют\s+|отмечают\s+)?(пасха|масленица|масленицу|троица|прощеное воскресенье|вербное воскресенье|медовый спас|яблочный спас|ореховый спас|покров|крещение|рождество|вознесение|старый новый год|татьянин день|иван купала|день\s+(?!рождени)\S+(?:\s+\S+){0,3})$""").find(t)?.let { m ->
+            val name = m.groupValues[1].replace("масленицу", "масленица")
+            Almanac.find(name, today)?.let { d ->
+                val title = (Almanac.holidays(d).firstOrNull { it.lowercase().replace('ё', 'е').contains(name.take(5)) } ?: name)
+                return SkillCommand.Almanac(AlmanacKind.WHEN_HOLIDAY, d, title)
+            }
+        }
+        if (rx("""^(?:а\s+)?(?:у кого|чьи|какие)\s+(?:сегодня\s+|завтра\s+)?именины|^именины\s+(?:сегодня|завтра)|^(?:сегодня|завтра)\s+(?:чьи\s+)?именины|^именины$|^кто\s+(?:сегодня\s+)?именинник""").containsMatchIn(t)) {
+            return SkillCommand.Almanac(AlmanacKind.NAME_DAY, day)
+        }
+        rx("""^когда\s+(?:будут\s+)?(?:именины|день ангела)\s+(?:у\s+)?(\S+)$|^когда\s+(?:у\s+)?(\S+)\s+(?:именины|день ангела)$""").find(t)?.let { m ->
+            val name = m.groupValues[1].ifEmpty { m.groupValues[2] }
+            if (name !in setOf("меня", "тебя", "нас", "вас")) return SkillCommand.Almanac(AlmanacKind.NAME_DAY_OF, today, name)
+        }
+        if (rx("""^(?:а\s+)?(?:какие|какая|скажи|расскажи|назови)?\s*(?:народн\S*\s+)?примет[аыу](?:\s+(?:на|про)\s+(?:сегодня|завтра|этот день))?$|^(?:какие|какая)\s+(?:сегодня\s+|завтра\s+)?(?:народн\S*\s+)?примет|^примета\s+дня|^народный календарь""").containsMatchIn(t)) {
+            return SkillCommand.Almanac(AlmanacKind.OMEN, day)
+        }
+        return null
+    }
+
+    /** «Поздравь Машу с днём рождения», «напиши поздравление маме с 8 марта», «поздравь папу». */
+    fun greet(t: String, original: String): SkillCommand? {
+        val m = rx("""^(?:поздравь|поздравить|отправь поздравление|напиши поздравление|пошли поздравление|сочини поздравление)\s+(?:для\s+)?(\S+)(?:\s+(с\s+.+))?$""").find(t) ?: return null
+        val who = m.groupValues[1]
+        if (who in setOf("меня", "нас", "всех", "с", "коллег")) return null
+        val occ = m.groupValues[2].removePrefix("с ").trim()
+        val occasion = when {
+            occ.isEmpty() -> ""
+            rx("""рожд|днюх|др$""").containsMatchIn(occ) && !occ.contains("рождеств") -> "с днём рождения"
+            else -> "с ${occ}"
+        }
+        return SkillCommand.Greet(original.trim().split(Regex("""\s+""")).firstOrNull { RuTokenizer.normalize(it).trim(',', '.') == who } ?: who, occasion)
+    }
+
+    fun factOfDay(t: String): SkillCommand? {
+        if (rx("""^(?:а\s+)?(?:расскажи|скажи|назови|дай)?\s*(?:мне\s+)?факт\s+дня|^(?:какой\s+)?факт\s+дня""").containsMatchIn(t)) return SkillCommand.FactOfDay(true)
+        if (rx("""^(?:а\s+)?(?:расскажи|скажи|назови|дай)?\s*(?:мне\s+)?(?:еще\s+)?(?:какой-нибудь\s+|один\s+)?(?:интересн|любопытн|случайн|удивительн|научн)\S*\s+факт|^(?:расскажи|скажи)\s+(?:мне\s+)?(?:что-нибудь|что-то)\s+интересное$|^удиви\s+меня$|^(?:ты\s+)?знаешь\s+(?:что-нибудь|что-то)\s+интересное|^расскажи\s+факт$""").containsMatchIn(t)) {
+            return SkillCommand.FactOfDay(false)
+        }
         return null
     }
 

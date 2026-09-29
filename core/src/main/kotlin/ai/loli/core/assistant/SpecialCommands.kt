@@ -103,6 +103,9 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
 
     private fun birthday(text: String, n: String, today: LocalDate): AssistantAction? {
         // Вопросы
+        if (Regex("""^(?:а\s+)?(?:у кого|чей|чьи)\s+(?:скоро|ближайший|следующий|ближайшие|сегодня|завтра)\s+(?:дни|день)\s+рождения|^(?:ближайшие|скорые)\s+дни\s+рождения|^(?:скоро|в ближайшее время)\s+(?:у кого-нибудь\s+)?(?:день|дни)\s+рождения|^(?:кого|кого мне)\s+(?:скоро\s+|сегодня\s+)?(?:нужно\s+|надо\s+)?поздравить|^есть\s+(?:ли\s+)?(?:сегодня\s+|скоро\s+)?(?:у кого-нибудь\s+)?(?:день|дни)\s+рождения""").containsMatchIn(n)) {
+            return AssistantAction.QueryBirthdays(null, soon = true)
+        }
         Regex("""^когда\s+(?:будет\s+)?(?:у\s+(.+?)\s+день\s+рождения|день\s+рождения\s+(?:у\s+)?(.+?))$""").find(n)?.let { m ->
             val g = m.groups[1] ?: m.groups[2]!!
             return AssistantAction.QueryBirthdays(sub(text, g))

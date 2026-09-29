@@ -187,6 +187,7 @@ class AppContainer(private val context: Context) {
             store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
             lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
             agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
+            contactBirthdays = { if (assistantSettings().locked) emptyList() else skillHost.contactBirthdays() },
         )
     }
 

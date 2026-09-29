@@ -46,6 +46,8 @@ interface SkillHost {
 
     suspend fun contact(name: String): ContactInfo? = null
     suspend fun calendar(from: Instant, to: Instant): List<CalendarItem> = emptyList()
+    /** Дни рождения из контактов телефона (только если доступ к контактам уже выдан). */
+    suspend fun contactBirthdays(): List<Pair<String, java.time.MonthDay>> = emptyList()
 
     suspend fun playRadio(station: RadioStation): Boolean = false
     fun stopRadio(): Boolean = false

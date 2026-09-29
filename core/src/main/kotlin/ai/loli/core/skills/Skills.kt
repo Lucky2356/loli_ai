@@ -36,7 +36,7 @@ sealed interface SkillOutcome {
 }
 
 /** Дополнения к плану на день: погода и события календаря. */
-data class AgendaExtras(val weather: String? = null, val events: List<String> = emptyList())
+data class AgendaExtras(val weather: String? = null, val events: List<String> = emptyList(), val birthdays: List<String> = emptyList())
 
 /** Текстовый запрос к облачному AI (если подключён): system, user, maxTokens → ответ. */
 typealias SkillAi = suspend (system: String, user: String, maxTokens: Int) -> String?
@@ -69,6 +69,7 @@ class Skills(
     private var stations: List<RadioStation> = emptyList()
     private var stationIndex = 0
     private var lastTale: String? = null
+    private var lastFact: String? = null
     /** Последний «живой» ответ (погода, курс, новости, сказка) — для «а завтра?», «а евро?», «ещё». */
     private var lastSkill: SkillCommand? = null
     private var lastSkillAt = time.now()
@@ -237,6 +238,8 @@ class Skills(
                 t.contains("город") -> Game.Cities()
                 t.contains("числ") -> Game.GuessNumber()
                 t.contains("загад") -> Game.Riddles()
+                t.contains("виктор") || t.contains("вопрос") -> Game.Quiz()
+                t.contains("слов") -> Game.GuessWord()
                 LocalCommandParser.isYes(t) || t.contains("люб") || t.contains("сама") || t.contains("выбери") -> randomGame()
                 else -> null
             }
@@ -261,7 +264,10 @@ class Skills(
     /** Что можно на экране блокировки: см. [LockPolicy.allowsSkill]. */
     private fun access(cmd: SkillCommand): SkillAccess = when (cmd) {
         is SkillCommand.Weather -> if (cmd.query.place == "дом") SkillAccess.VIEW else SkillAccess.PUBLIC
-        is SkillCommand.Rates, is SkillCommand.News, is SkillCommand.Fact, is SkillCommand.StartGame, is SkillCommand.Tale -> SkillAccess.PUBLIC
+        is SkillCommand.Rates, is SkillCommand.News, is SkillCommand.Fact, is SkillCommand.StartGame, is SkillCommand.Tale,
+        is SkillCommand.Almanac, is SkillCommand.FactOfDay -> SkillAccess.PUBLIC
+        // Готовит сообщение человеку — как «напиши Маше».
+        is SkillCommand.Greet -> SkillAccess.PRIVATE
         // «Подробнее» открывает браузер — как открытие сайта.
         is SkillCommand.NewsDetails -> SkillAccess.PRIVATE
         is SkillCommand.SetName, is SkillCommand.SetCity, is SkillCommand.PlaceRemind -> SkillAccess.CREATE
@@ -334,6 +340,12 @@ class Skills(
         }
         is SkillCommand.StartGame -> cmd.game?.let { startGame(it) } ?: askGame()
         is SkillCommand.Tale -> tale(cmd.request, ai)
+        is SkillCommand.Almanac -> SkillOutcome.Say(almanac(cmd))
+        is SkillCommand.Greet -> greet(cmd, ai)
+        is SkillCommand.FactOfDay -> SkillOutcome.Say(
+            if (cmd.ofDay) "Факт дня: " + Trivia.FACTS[(time.today().toEpochDay() % Trivia.FACTS.size).toInt()]
+            else Trivia.FACTS.filter { it != lastFact }.random().also { lastFact = it },
+        )
         }
     }
 
@@ -350,7 +362,7 @@ class Skills(
 
     private fun askGame(): SkillOutcome {
         awaitGameChoice = true
-        return SkillOutcome.Say("Давайте! Могу сыграть в «Города», «Угадай число» или загадать загадку. Во что играем?", followUp = true)
+        return SkillOutcome.Say("Давайте! Могу сыграть в «Города», «Угадай число», викторину, «Угадай слово» или загадать загадку. Во что играем?", followUp = true)
     }
 
     private fun startGame(g: Game): SkillOutcome {
@@ -407,7 +419,9 @@ class Skills(
             host.calendar(date.atStartOfDay(zone).toInstant(), date.plusDays(1).atStartOfDay(zone).toInstant())
         } ?: emptyList()).map { formatEvent(it, zone, withDate = false) }
         val weather = if (date == time.today()) weatherLine(cfg) else null
-        return AgendaExtras(weather, events)
+        val md = java.time.MonthDay.from(date)
+        val birthdays = if (cfg.locked) emptyList() else (orNull { host.contactBirthdays() } ?: emptyList()).filter { it.second == md }.map { it.first }
+        return AgendaExtras(weather, events, birthdays)
     }
 
     // ------------------------------------------------------------------ Справка
@@ -539,6 +553,7 @@ class Skills(
         return playStation()
     }
 
+    private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
     private val FOLLOW_UP = Regex("""^(?:а|и|ну а|а если|а как)\s+(?:насчет\s+|на счет\s+|что\s+)?""")
     private val MORE = Regex("""^(?:а\s+)?(?:давай\s+)?(?:ещ[её]|еще|дальше|следующие|другую|другие)(?:\s+(?:одну|один|новости|сказку|разок|пожалуйста|давай))?$""")
     private val RADIO_NEXT = Regex("""^(?:дальше|следующ\S*|переключи|другую|другая|давай другую|не то)(?:\s+(?:станци\S*|волн\S*|радио))?$""")
@@ -556,6 +571,58 @@ class Skills(
             stationIndex = (stationIndex + 1) % stations.size
         }
         return SkillOutcome.Say("Радио сейчас не отвечает. Проверьте интернет и попробуйте ещё раз.")
+    }
+
+    // ------------------------------------------------------------------ Поздравления
+
+    private suspend fun greet(cmd: SkillCommand.Greet, ai: SkillAi?): SkillOutcome {
+        val occasion = cmd.occasion
+        val fromAi = ai?.let { a ->
+            orNull { a("Напиши короткое тёплое поздравление на русском (2–3 предложения, без хэштегов и кавычек) — ${occasion.ifBlank { "просто хорошего дня" }}. Обращение на «ты».", "Кому: ${cmd.person}", 200) }
+        }?.trim()?.trim('"', '«', '»')?.takeIf { it.length in 10..600 }
+        val text = fromAi ?: Greetings.pick(occasion)
+        val plan = AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.Message(cmd.person, text))), preface = "Поздравление: «$text»")
+        return SkillOutcome.Run(plan)
+    }
+
+    // ------------------------------------------------------------------ Календарь: праздники, именины, приметы
+
+    private fun almanac(cmd: SkillCommand.Almanac): String {
+        val today = time.today()
+        val d = cmd.date
+        val whenWord = when (d) { today -> "Сегодня"; today.plusDays(1) -> "Завтра"; today.plusDays(2) -> "Послезавтра"; else -> ai.loli.core.assistant.RuFormat.date(d, today).replaceFirstChar { it.uppercase() } }
+        return when (cmd.kind) {
+            AlmanacKind.HOLIDAY -> {
+                val h = Almanac.holidays(d)
+                if (h.isNotEmpty()) "$whenWord: ${h.joinToString(", ")}."
+                else Almanac.nextHoliday(d).let { (nd, names) -> "$whenWord праздника в моём календаре нет. Ближайший — ${names.first()}, ${ai.loli.core.assistant.RuFormat.date(nd, today)}." }
+            }
+            AlmanacKind.NEXT_HOLIDAY -> Almanac.nextHoliday(today).let { (nd, names) ->
+                val days = java.time.temporal.ChronoUnit.DAYS.between(today, nd)
+                "Ближайший праздник — ${names.joinToString(", ")}, ${ai.loli.core.assistant.RuFormat.date(nd, today)}${if (days > 1) " (через ${ai.loli.core.assistant.RuFormat.count(days.toInt(), "день", "дня", "дней")})" else ""}."
+            }
+            AlmanacKind.WHEN_HOLIDAY -> {
+                val name = cmd.name.orEmpty()
+                val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
+                "${name.replaceFirstChar { it.uppercase() }} — ${ai.loli.core.assistant.RuFormat.date(d, today)}" +
+                    (if (days > 1) ", через ${ai.loli.core.assistant.RuFormat.count(days.toInt(), "день", "дня", "дней")}." else ".")
+            }
+            AlmanacKind.NAME_DAY -> {
+                val names = Almanac.NAME_DAYS[java.time.MonthDay.from(d)]
+                if (names != null) "$whenWord именины: ${names.joinToString(", ")}."
+                else {
+                    val next = generateSequence(d.plusDays(1)) { it.plusDays(1) }.take(366).first { Almanac.NAME_DAYS.containsKey(java.time.MonthDay.from(it)) }
+                    "$whenWord главных именин в моём календаре нет. Ближайшие — ${ai.loli.core.assistant.RuFormat.date(next, today)}: ${Almanac.NAME_DAYS.getValue(java.time.MonthDay.from(next)).joinToString(", ")}."
+                }
+            }
+            AlmanacKind.NAME_DAY_OF -> {
+                val name = cmd.name.orEmpty().replaceFirstChar { it.uppercase() }
+                val dates = Almanac.nameDays(name)
+                if (dates.isEmpty()) "Не знаю, когда именины у имени «$name». В моём календаре только главные даты."
+                else "Именины ${name}: " + dates.joinToString(", ") { md -> "${md.dayOfMonth} ${MONTHS_GEN[md.monthValue - 1]}" } + "."
+            }
+            AlmanacKind.OMEN -> "Примета: ${Almanac.omen(d)}"
+        }
     }
 
     // ------------------------------------------------------------------ Таймеры

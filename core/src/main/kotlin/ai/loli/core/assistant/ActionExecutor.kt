@@ -56,6 +56,8 @@ class ActionExecutor(
     private val secrets: ai.loli.core.data.SecretNoteStore? = null,
     /** Погода и события календаря телефона для плана на день. */
     private val agendaExtras: suspend (java.time.LocalDate) -> ai.loli.core.skills.AgendaExtras = { ai.loli.core.skills.AgendaExtras() },
+    /** Дни рождения из контактов телефона — вместе с записанными в Лоли. */
+    private val contactBirthdays: suspend () -> List<Pair<String, java.time.MonthDay>> = { emptyList() },
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -416,7 +418,26 @@ class ActionExecutor(
                     val rule = r.recurrence ?: return@mapNotNull null
                     val name = r.text.removePrefix("День рождения").substringBefore(" — ").trim()
                     Triple(name, rule.month ?: return@mapNotNull null, rule.dayOfMonth ?: return@mapNotNull null)
+                }.let { own ->
+                    val contacts = try { contactBirthdays() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
+                    own + contacts.map { (n, md) -> Triple(n, md.monthValue, md.dayOfMonth) }
                 }.distinctBy { it.first.lowercase() }
+                if (action.soon) {
+                    fun next(e: Triple<String, Int, Int>): java.time.LocalDate = runCatching {
+                        val d = java.time.MonthDay.of(e.second, e.third).atYear(today.year)
+                        if (d.isBefore(today)) java.time.MonthDay.of(e.second, e.third).atYear(today.year + 1) else d
+                    }.getOrDefault(today.plusYears(1))
+                    val soon = entries.map { it to next(it) }.filter { !it.second.isAfter(today.plusDays(30)) }.sortedBy { it.second }
+                    return query(
+                        if (soon.isEmpty()) {
+                            if (entries.isEmpty()) "Дней рождения пока не знаю. Скажите «день рождения мамы 5 мая» или разрешите доступ к контактам."
+                            else "В ближайший месяц дней рождения нет."
+                        } else "Скоро дни рождения:\n" + soon.joinToString("\n") { (e, d) ->
+                            val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
+                            "• ${e.first} — ${e.third} ${MONTHS_GEN[e.second - 1]}" + when (days) { 0L -> " (сегодня!)"; 1L -> " (завтра)"; else -> " (через ${RuFormat.count(days.toInt(), "день", "дня", "дней")})" }
+                        },
+                    )
+                }
                 val filtered = when {
                     action.person != null -> {
                         val stems = ai.loli.core.nlp.TextAnalysis.stems(action.person).toSet()
@@ -541,7 +562,8 @@ class ActionExecutor(
         val spent = if (!date.isAfter(today)) expenses.between(date, date) else emptyList()
         val dayName = RuFormat.date(date, today)
         val extras = try { agendaExtras(date) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { ai.loli.core.skills.AgendaExtras() }
-        val weather = extras.weather?.let { "$it\n" } ?: ""
+        val weather = (extras.weather?.let { "$it\n" } ?: "") +
+            (if (extras.birthdays.isNotEmpty()) "${if (date == today) "Сегодня" else "В этот день"} день рождения: ${extras.birthdays.joinToString(", ")} — можно сказать «поздравь ${extras.birthdays.first().substringBefore(' ')}».\n" else "")
         if (dayTasks.isEmpty() && overdue.isEmpty() && dayReminders.isEmpty() && spent.isEmpty() && extras.events.isEmpty()) {
             val undated = all.count { !it.done && it.dueDate == null }
             return weather + "На $dayName ничего не запланировано." + if (undated > 0) " Задач без срока: $undated." else ""

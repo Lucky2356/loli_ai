@@ -117,7 +117,7 @@ sealed interface AssistantAction {
     /** «День рождения мамы 5 мая». */
     data class AddBirthday(val person: String, val month: Int, val day: Int) : AssistantAction
     /** «Когда день рождения у Саши?», «чьи дни рождения в этом месяце?» (person = null). */
-    data class QueryBirthdays(val person: String?, val thisMonth: Boolean = false) : AssistantAction
+    data class QueryBirthdays(val person: String?, val thisMonth: Boolean = false, val soon: Boolean = false) : AssistantAction
     /** Секретная заметка: только на устройстве, открывается по отпечатку. */
     data class CreateSecretNote(val title: String, val content: String) : AssistantAction
 }

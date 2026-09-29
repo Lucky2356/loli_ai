@@ -163,7 +163,91 @@ sealed class Game {
         }
     }
 
+    // ------------------------------------------------------------------ Викторина
+    class Quiz(private val random: Random = Random.Default, private val rounds: Int = 10) : Game() {
+        override val title = "Викторина"
+        private val order = Trivia.QUIZ.indices.shuffled(random).take(rounds).toMutableList()
+        private var current = order.removeAt(0)
+        private var attempts = 0
+        private var score = 0
+        private var asked = 1
+
+        override fun start() = "Викторина из $rounds вопросов! Первый: ${Trivia.QUIZ[current].first}"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val (_, answers) = Trivia.QUIZ[current]
+            if (isGiveUp(text) && Regex("""(?iu)хватит|стоп|закончи|надоело|всё$|все$""").containsMatchIn(text)) {
+                return GameTurn("Хорошо! Правильных ответов: $score из ${asked - 1 + if (attempts > 0) 1 else 0}.", over = true)
+            }
+            val giveUp = isGiveUp(text) || Regex("""(?iu)не знаю|ответ|скажи|пропуст|дальше""").containsMatchIn(text)
+            return when {
+                answered(text, answers) -> { score++; next("Верно — ${answers.first()}!") }
+                giveUp || attempts >= 1 -> next("Правильный ответ: ${answers.first()}.")
+                else -> { attempts++; GameTurn("Не совсем. Ещё попытка или «не знаю».") }
+            }
+        }
+
+        private fun next(prefix: String): GameTurn {
+            if (order.isEmpty()) {
+                val verdict = when {
+                    score >= rounds * 0.8 -> "Отличный результат!"
+                    score >= rounds / 2 -> "Хороший результат!"
+                    else -> "В следующий раз получится лучше!"
+                }
+                return GameTurn("$prefix Викторина окончена: $score из $rounds. $verdict", over = true)
+            }
+            current = order.removeAt(0); attempts = 0; asked++
+            return GameTurn("$prefix Вопрос $asked: ${Trivia.QUIZ[current].first}")
+        }
+    }
+
+    // ------------------------------------------------------------------ Угадай слово по описанию
+    class GuessWord(private val random: Random = Random.Default) : Game() {
+        override val title = "Угадай слово"
+        private val order = Trivia.WORDS.indices.shuffled(random).toMutableList()
+        private var current = order.removeAt(0)
+        private var attempts = 0
+        private var score = 0
+
+        override fun start() = "Я описываю слово, а вы угадываете. ${Trivia.WORDS[current].first}"
+
+        override suspend fun play(text: String, known: (suspend (String) -> Boolean)?): GameTurn {
+            val (_, answers) = Trivia.WORDS[current]
+            if (isGiveUp(text) && Regex("""(?iu)хватит|стоп|закончи|надоело|всё$|все$""").containsMatchIn(text)) {
+                return GameTurn("Хорошо! Угадано слов: $score.", over = true)
+            }
+            val giveUp = isGiveUp(text) || Regex("""(?iu)не знаю|ответ|скажи""").containsMatchIn(text)
+            val word = answers.first()
+            return when {
+                answered(text, answers) -> { score++; next("Да, это ${word}!") }
+                giveUp || attempts >= 2 -> next("Это было слово «$word».")
+                attempts == 0 -> {
+                    attempts++
+                    GameTurn("Нет. Подсказка: первая буква «${word.first().uppercaseChar()}», всего ${ai.loli.core.assistant.RuFormat.count(word.length, "буква", "буквы", "букв")}.")
+                }
+                else -> { attempts++; GameTurn("Тоже нет. Последняя попытка или «не знаю».") }
+            }
+        }
+
+        private fun next(prefix: String): GameTurn {
+            if (order.isEmpty()) return GameTurn("$prefix Слова кончились — угадано $score!", over = true)
+            current = order.removeAt(0); attempts = 0
+            return GameTurn("$prefix Следующее: ${Trivia.WORDS[current].first}")
+        }
+    }
+
     companion object {
+        /** Ответ засчитан: числа — целым словом («0» не прячется в «100»), слова — по основе. */
+        fun answered(text: String, answers: List<String>): Boolean {
+            val t = RuTokenizer.normalize(text)
+            val words = ai.loli.core.assistant.DevicePhrases.digitize(t).split(' ', ',', '.', '-')
+            return answers.any { a ->
+                val an = RuTokenizer.normalize(a)
+                if (an.all { it.isDigit() }) an in words
+                else t.contains(an.take(maxOf(3, an.length - 2)))
+            }
+        }
+
         fun isGiveUp(text: String) = ai.loli.core.nlp.Rx.of("""(?iu)^(?:сдаюсь|я сдаюсь|хватит|стоп|закончим|закончи игру|конец игры|выход|надоело|не хочу играть|всё|все)\b""").containsMatchIn(text.trim())
 
         /** «Давай поиграем в города», «загадай число», «загадай загадку». */
@@ -177,6 +261,8 @@ sealed class Game {
                 // «Загадай число от 1 до 6» — просто случайное число.
                 Regex("""число\s+от\s+\d+\s+до\s+\d+""").containsMatchIn(d) && !Regex("""угада""").containsMatchIn(t) -> null
                 Regex("""угада(?:й|ть|ю)\s+число|загада(?:й|ла)\s+(?:мне\s+)?(?:какое-нибудь\s+|какое-то\s+|любое\s+)?число|игра\s+(?:в\s+)?(?:угадай\s+)?число""").containsMatchIn(t) -> GuessNumber()
+                Regex("""викторин|^(?:задай|задавай)\s+(?:мне\s+)?(?:вопрос|вопросы)(?:\s+на эрудицию)?$|^проверь\s+(?:мои\s+)?знания|^вопросы на эрудицию""").containsMatchIn(t) -> Quiz()
+                Regex("""угадай\s+слово|угадать\s+слово|(?:игра|играть|поиграем|сыграем|давай)\s+(?:в\s+)?(?:угадай(?:ку)?\s+)?слов(?:а|о)$|^угадайка$""").containsMatchIn(t) -> GuessWord()
                 Regex("""загад(?:ай|ывай)\s+(?:мне\s+|нам\s+)?загадк|(?:давай|хочу|расскажи|поиграем в|сыграем в)\s+загадк|^загадк[аиу]$|^загадай что[- ]нибудь$""").containsMatchIn(t) -> Riddles()
                 else -> null
             }
@@ -223,4 +309,5 @@ sealed class Game {
 }
 
 /** Выбор случайной игры, если человек просто хочет поиграть. */
-fun randomGame(random: Random = Random.Default): Game = listOf<() -> Game>({ Game.Cities() }, { Game.GuessNumber() }, { Game.Riddles() }).random(random)()
+fun randomGame(random: Random = Random.Default): Game =
+    listOf<() -> Game>({ Game.Cities() }, { Game.GuessNumber() }, { Game.Riddles() }, { Game.Quiz() }, { Game.GuessWord() }).random(random)()

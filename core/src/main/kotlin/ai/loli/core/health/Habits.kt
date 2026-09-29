@@ -52,6 +52,10 @@ sealed interface HabitCommand {
     data object Summary : HabitCommand
     data object UndoLast : HabitCommand
     data class Relax(val kind: RelaxKind, val minutes: Int) : HabitCommand
+    /** Своё событие для обратного отсчёта: «запомни, что отпуск 15 июля». */
+    data class EventSave(val name: String, val date: LocalDate) : HabitCommand
+    data class Countdown(val name: String) : HabitCommand
+    data object Events : HabitCommand
 }
 
 object HabitPhrases {
@@ -68,9 +72,40 @@ object HabitPhrases {
     private val DRINK = """(?:выпил[аи]?|попил[аи]?|выпью|пью|выдула|выдул)"""
     private val GLASS_WORDS = """(?:стакан\S*|кружк\S*|чашк\S*|бутылк\S*|литр\S*|пол-?литр\S*|полстакана|пол стакана)"""
 
-    fun parse(text: String): HabitCommand? {
+    private val MONTHS = listOf("январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр")
+    private const val DATE = """(\d{1,2}\s+(?:январ|феврал|март|апрел|ма[яйе]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*(?:\s+\d{4})?|\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)"""
+
+    private fun date(s: String, today: LocalDate): LocalDate? {
+        Regex("""^(\d{1,2})\s+(\S+)(?:\s+(\d{4}))?$""").find(s.trim())?.let { m ->
+            val idx = MONTHS.indexOfFirst { m.groupValues[2].startsWith(it) }.takeIf { it >= 0 } ?: return null
+            val year = m.groupValues[3].toIntOrNull()
+            val d = runCatching { LocalDate.of(year ?: today.year, idx + 1, m.groupValues[1].toInt()) }.getOrNull() ?: return null
+            return if (year == null && d.isBefore(today)) d.plusYears(1) else d
+        }
+        Regex("""^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$""").find(s.trim())?.let { m ->
+            val y = m.groupValues[3].toIntOrNull()?.let { if (it < 100) 2000 + it else it }
+            val d = runCatching { LocalDate.of(y ?: today.year, m.groupValues[2].toInt(), m.groupValues[1].toInt()) }.getOrNull() ?: return null
+            return if (y == null && d.isBefore(today)) d.plusYears(1) else d
+        }
+        return null
+    }
+
+    fun parse(text: String, today: LocalDate = LocalDate.now()): HabitCommand? {
         val raw = text.trim()
         val t = DevicePhrases.digitize(RuTokenizer.normalize(raw).trim().trimEnd('.', '!', '?', ',')).replace(Regex("""\s+"""), " ")
+
+        // Свои события и обратный отсчёт.
+        (rx("""^(?:запомни|запиши|сохрани)[,:]?\s+что\s+(?:у меня\s+|у нас\s+)?(?:мой\s+|моя\s+|мое\s+|наш\s+|наша\s+|наше\s+)?(.+?)\s+(?:будет\s+|начинается\s+|начнется\s+|состоится\s+|назначен\S*\s+)?(?:на\s+)?$DATE$""").find(t)
+            ?: rx("""^(?:мой|моя|мое|наш|наша|наше)\s+(\S+(?:\s+\S+)?)\s+(?:будет\s+|начинается\s+|начнется\s+)?$DATE$""").find(t))?.let { m ->
+            val name = m.groupValues[1].trim()
+            val d = date(m.groupValues[2], today)
+            if (d != null && name.isNotEmpty() && !rx("""рождени|^др$|днюх""").containsMatchIn(name)) return HabitCommand.EventSave(name, d)
+        }
+        rx("""^(?:а\s+)?сколько\s+(?:еще\s+)?(?:осталось\s+)?(?:дней\s+|день\s+|времени\s+)?(?:осталось\s+)?до\s+(?:моего\s+|моей\s+|нашего\s+|нашей\s+|моих\s+|наших\s+)?(.+)$|^через сколько\s+(?:дней\s+)?(?:у меня\s+|будет\s+)?(.+)$""").find(t)?.let { m ->
+            val name = m.groupValues[1].ifEmpty { m.groupValues[2] }.trim()
+            if (name.isNotEmpty()) return HabitCommand.Countdown(name)
+        }
+        if (rx("""^(?:мои|какие)\s+(?:события|даты)(?:\s+(?:я\s+)?(?:запомнил[аи]?|записал[аи]?))?$|^что\s+(?:у меня\s+)?(?:впереди|запланировано из событий)$""").containsMatchIn(t)) return HabitCommand.Events
         val question = raw.trimEnd().endsWith("?") || rx("""(?:^|\s)ли(?:\s|$)""").containsMatchIn(t)
 
         // Дыхание и медитация.
@@ -165,14 +200,15 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
     private var lastLogged: HabitEntry? = null
 
     suspend fun handle(text: String): Reply? {
-        val cmd = HabitPhrases.parse(text) ?: return null
+        val cmd = HabitPhrases.parse(text, time.today()) ?: return null
         return run(cmd)
     }
 
     /** Отметка только что сделана — «отмени последнее» относится к ней. */
     fun recentlyLogged(): Boolean = lastLogged?.let { Duration.between(it.at, time.now()) <= Duration.ofMinutes(3) } == true
 
-    suspend fun run(cmd: HabitCommand): Reply {
+    /** null — команда не про наши данные («сколько дней до Нового года» — ответит календарь). */
+    suspend fun run(cmd: HabitCommand): Reply? {
         val now = time.now()
         val dayStart = time.today().atStartOfDay(time.zone()).toInstant()
         return when (cmd) {
@@ -235,10 +271,41 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
                 Reply("Ваш день:\n" + lines.joinToString("\n"))
             }
             HabitCommand.UndoLast -> {
-                val last = lastLogged ?: store.since(dayStart).lastOrNull { it.kind != GOAL } ?: return Reply("Сегодня отметок нет — нечего отменять.")
+                val last = lastLogged ?: store.since(dayStart).lastOrNull { it.kind != GOAL && it.kind != EVENT } ?: return Reply("Сегодня отметок нет — нечего отменять.")
                 store.delete(last.id)
                 lastLogged = null
                 Reply("Убрала отметку: ${if (last.kind == WATER) glassesText(last.amount) + " воды" else last.name}.", changed = true)
+            }
+            is HabitCommand.EventSave -> {
+                store.log(EVENT, cmd.name, cmd.date.toEpochDay().toDouble(), now)
+                val days = java.time.temporal.ChronoUnit.DAYS.between(time.today(), cmd.date)
+                Reply("Запомнила: ${cmd.name} — ${RuFormat.date(cmd.date, time.today())}. Это через ${RuFormat.count(days.toInt(), "день", "дня", "дней")}. Спросите «сколько дней до ${cmd.name.substringBefore(' ')}».", changed = true)
+            }
+            is HabitCommand.Countdown -> {
+                val today = time.today()
+                val events = store.since(Instant.EPOCH, EVENT).groupBy { it.name }.map { it.value.last() }
+                    .filter { LocalDate.ofEpochDay(it.amount.toLong()) >= today }
+                val hit = events.firstOrNull { similar(it.name, cmd.name) }
+                if (hit != null) {
+                    val d = LocalDate.ofEpochDay(hit.amount.toLong())
+                    val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
+                    return Reply(when (days) {
+                        0L -> "${hit.name.replaceFirstChar { it.uppercase() }} — сегодня!"
+                        1L -> "${hit.name.replaceFirstChar { it.uppercase() }} — уже завтра!"
+                        else -> "До события «${hit.name}» — ${RuFormat.count(days.toInt(), "день", "дня", "дней")} (${RuFormat.date(d, today)})."
+                    })
+                }
+                val d = ai.loli.core.skills.Almanac.find(cmd.name, today) ?: return null
+                val title = ai.loli.core.skills.Almanac.holidays(d).firstOrNull() ?: cmd.name
+                val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
+                Reply(if (days == 0L) "$title — сегодня!" else "До праздника «$title» — ${RuFormat.count(days.toInt(), "день", "дня", "дней")} (${RuFormat.date(d, today)}).", private = false)
+            }
+            HabitCommand.Events -> {
+                val today = time.today()
+                val events = store.since(Instant.EPOCH, EVENT).groupBy { it.name }.map { it.value.last() }
+                    .map { it.name to LocalDate.ofEpochDay(it.amount.toLong()) }.filter { it.second >= today }.sortedBy { it.second }
+                Reply(if (events.isEmpty()) "Событий не записано. Скажите, например: «запомни, что отпуск 15 июля»."
+                else "Впереди:\n" + events.joinToString("\n") { (n, d) -> "• $n — ${RuFormat.date(d, today)}" })
             }
             is HabitCommand.Relax -> when (cmd.kind) {
                 RelaxKind.STOP -> Reply("Останавливаю.", DeviceCommand.Relax(RelaxKind.STOP, 0), private = false)
@@ -256,6 +323,9 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
 
     /** Отменить только что сделанную отметку («отмени последнее» сразу после «выпила воды»). */
     suspend fun undoRecent(): Reply? = if (recentlyLogged()) run(HabitCommand.UndoLast) else null
+
+    /** Разбор фразы (для движка): что это за команда, без выполнения. */
+    fun parse(text: String): HabitCommand? = HabitPhrases.parse(text, time.today())
 
     private suspend fun goal(): Int = store.since(Instant.EPOCH, GOAL).lastOrNull()?.amount?.toInt() ?: 8
 
@@ -294,5 +364,6 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
         const val PILL = "pill"
         const val HABIT = "habit"
         const val GOAL = "goal"
+        const val EVENT = "event"
     }
 }

@@ -223,17 +223,19 @@ class AssistantEngine(
     }
 
     private suspend fun habitReply(text: String, cfg: AssistantSettings): AssistantReply? {
-        val cmd = ai.loli.core.health.HabitPhrases.parse(text) ?: return null
         val h = habits ?: return null
+        val cmd = h.parse(text) ?: return null
         // Здоровье — личное: на экране блокировки только дыхание/медитация и отметки (если разрешено создавать записи).
         val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
         val access = when (cmd) {
             is ai.loli.core.health.HabitCommand.Relax -> SkillAccess.PUBLIC
+            is ai.loli.core.health.HabitCommand.EventSave -> SkillAccess.CREATE
+            is ai.loli.core.health.HabitCommand.Countdown -> SkillAccess.VIEW
             is ai.loli.core.health.HabitCommand.Water, is ai.loli.core.health.HabitCommand.Pill, is ai.loli.core.health.HabitCommand.Mark -> SkillAccess.CREATE
             else -> SkillAccess.PRIVATE
         }
         if (policy != null && !policy.allowsSkill(access)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
-        val r = h.run(cmd)
+        val r = h.run(cmd) ?: return null
         if (r.device != null) {
             // Во время упражнения микрофон не слушает: иначе он услышит подсказки «вдох», «выдох» как команды.
             val relaxing = r.device is DeviceCommand.Relax && r.device.kind != RelaxKind.STOP

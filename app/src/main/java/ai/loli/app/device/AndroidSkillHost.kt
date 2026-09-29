@@ -89,6 +89,33 @@ class AndroidSkillHost(
         }
     }
 
+    /** Дни рождения из контактов — только если доступ уже выдан: вопрос «у кого скоро ДР» не должен дёргать разрешения. */
+    override suspend fun contactBirthdays(): List<Pair<String, java.time.MonthDay>> {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val out = ArrayList<Pair<String, java.time.MonthDay>>()
+            runCatching {
+                context.contentResolver.query(
+                    ContactsContract.Data.CONTENT_URI,
+                    arrayOf(ContactsContract.Data.DISPLAY_NAME, ContactsContract.CommonDataKinds.Event.START_DATE),
+                    "${ContactsContract.Data.MIMETYPE} = ? AND ${ContactsContract.CommonDataKinds.Event.TYPE} = ?",
+                    arrayOf(ContactsContract.CommonDataKinds.Event.CONTENT_ITEM_TYPE, ContactsContract.CommonDataKinds.Event.TYPE_BIRTHDAY.toString()),
+                    null,
+                )?.use { c ->
+                    while (c.moveToNext()) {
+                        val name = c.getString(0) ?: continue
+                        // «1990-05-12», «--05-12» (без года), иногда «12.05.1990».
+                        val raw = c.getString(1) ?: continue
+                        val md = Regex("""(?:\d{4}|-)-(\d{2})-(\d{2})""").find(raw)?.let { m -> runCatching { java.time.MonthDay.of(m.groupValues[1].toInt(), m.groupValues[2].toInt()) }.getOrNull() }
+                            ?: Regex("""^(\d{1,2})\.(\d{1,2})""").find(raw)?.let { m -> runCatching { java.time.MonthDay.of(m.groupValues[2].toInt(), m.groupValues[1].toInt()) }.getOrNull() }
+                        if (md != null) out += name to md
+                    }
+                }
+            }
+            out.distinctBy { it.first }
+        }
+    }
+
     override suspend fun calendar(from: Instant, to: Instant): List<CalendarItem> {
         if (!permissions.ensure(Manifest.permission.READ_CALENDAR)) throw NeedsPermission(Permission.CALENDAR, "нет доступа к календарю")
         return withContext(Dispatchers.IO) {
