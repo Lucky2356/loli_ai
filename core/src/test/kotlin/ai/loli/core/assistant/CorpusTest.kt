@@ -67,11 +67,19 @@ class CorpusTest {
             env.store.memories.all().isNotEmpty() -> "memory"
             env.store.notes.all().any { it.kind == NoteKind.IDEA } -> "idea"
             env.store.notes.all().isNotEmpty() -> "note"
+            env.store.habits.since(Instant.EPOCH).isNotEmpty() -> "habit"
             t.contains("В Википедии") -> "skill:fact"
             rec.calls.isNotEmpty() -> rec.calls.first()
             t.startsWith("Чтобы узнать погоду") -> "skill:weather"
             t.startsWith("Чтобы узнать курс") -> "skill:rates"
             t.startsWith("Чтобы узнать новости") -> "skill:news"
+            t.startsWith("Сегодня воды") || t.startsWith("Сегодня отметок") || t.startsWith("Да, сегодня") || t.startsWith("Ваш день") ||
+                t.startsWith("Пока нет серии") || t.startsWith("Событий не записано") || Regex("""^\p{L}+: \d+ (?:день|дня|дней) подряд""").containsMatchIn(t) -> "habit"
+            t.startsWith("До праздника") -> "answer"
+            t.startsWith("Факт дня") || ai.loli.core.skills.Trivia.FACTS.contains(t) -> "skill:factday"
+            t.startsWith("Примета:") || t.contains("праздник", true) || t.contains("именин", true) || Regex("""— \d{1,2} \p{L}+.*через \d+""").containsMatchIn(t) ||
+                Regex("""^(?:Сегодня|Завтра|Послезавтра|\d+ \p{L}+): """).containsMatchIn(t) -> "skill:almanac"
+            t.startsWith("Викторина") || t.startsWith("Я описываю слово") || t.startsWith("Загадайте число") -> "skill:game"
             t.startsWith("Играем в города") || t.contains("загадала число") || t.startsWith("Отгадайте загадку") || t.contains("Во что играем") -> "skill:game"
             Regex("""^«[^»]+»\. """).containsMatchIn(t) -> "skill:tale"
             t.contains("Не совсем поняла") || t.contains("Сохранить это как заметку") || t.startsWith("Не поняла") -> "unknown"
@@ -360,13 +368,16 @@ class CorpusTest {
             "что такое счастье по твоему", "как успокоиться", "как перестать волноваться")
     }
 
+    /** 2.2: разговорные формы, живой диалог, привычки, календарь, игры, поздравления и то, что не должно срабатывать. */
+    private val v22: List<Pair<String, String>> = CorpusV22.phrases
+
     @Test fun corpus() = runTest {
         val failures = ArrayList<String>()
-        for ((phrase, expected) in corpus + spoken) {
+        for ((phrase, expected) in corpus + spoken + v22) {
             val got = runCatching { classify(phrase) }.getOrElse { "ошибка ${it::class.simpleName}: ${it.message}" }
             if (got != expected) failures += "«$phrase» → $got (ожидалось $expected)"
         }
-        val all = corpus + spoken
+        val all = corpus + spoken + v22
         println("Корпус: ${all.map { it.first }.distinct().size} фраз, ошибок ${failures.size}")
         if (failures.isNotEmpty()) fail("Ошибок ${failures.size} из ${all.size}:\n" + failures.joinToString("\n"))
     }

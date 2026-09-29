@@ -140,24 +140,23 @@ object Almanac {
     }
 
     /** Дата праздника по названию: «Пасха», «Масленица», «День матери» — ближайшая с [from]. */
-    fun find(name: String, from: LocalDate): LocalDate? {
-        val q = name.lowercase().replace('ё', 'е').trim()
-        if (q.length < 4) return null
+    fun find(name: String, from: LocalDate): LocalDate? = findTitled(name, from)?.first
+
+    /** Ближайшая дата и точное название праздника; из похожих — где меньше лишних слов («День матери», а не «…и матери их Софии»). */
+    fun findTitled(name: String, from: LocalDate): Pair<LocalDate, String>? {
+        val qw = words(name)
+        if (qw.isEmpty()) return null
         for (y in listOf(from.year, from.year + 1)) {
             val all = FIXED.flatMap { (md, names) -> names.map { md.atYear(y) to it } } + movable(y).flatMap { (d, names) -> names.map { d to it } }
-            all.filter { (d, n) -> !d.isBefore(from) && !n.startsWith("Канун") && n.lowercase().replace('ё', 'е').let { it.contains(q) || q.contains(it) || stemMatch(it, q) } }
-                .minByOrNull { it.first }?.let { return it.first }
+            all.filter { (d, n) -> !d.isBefore(from) && !n.startsWith("Канун") && !n.startsWith("Первый день") && words(n).containsAll(qw) }
+                .minWithOrNull(compareBy({ words(it.second).size - qw.size }, { it.first }))?.let { return it }
         }
         return null
     }
 
-    private fun stemMatch(title: String, q: String): Boolean {
-        // Основа слова без окончания: «пасхи» ~ «пасха», «победы» ~ «Победы».
-        fun stem(w: String) = w.take(maxOf(4, w.length - 2))
-        val tw = title.split(' ', '-', ',').filter { it.length > 3 }.map(::stem)
-        val qw = q.split(' ', '-').filter { it.length > 3 }.map(::stem)
-        return qw.isNotEmpty() && qw.all { w -> tw.any { it == w } }
-    }
+    /** Основы значимых слов: «пасхи» ~ «пасха», «победы» ~ «Победы». */
+    private fun words(s: String): List<String> = s.lowercase().replace('ё', 'е').split(' ', '-', ',', '«', '»')
+        .filter { it.length > 3 }.map { it.take(maxOf(4, it.length - 2)) }
 
     /** Именины (главные, по православному календарю). */
     val NAME_DAYS: Map<MonthDay, List<String>> = mapOf(

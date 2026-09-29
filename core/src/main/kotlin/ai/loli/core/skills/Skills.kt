@@ -341,7 +341,8 @@ class Skills(
         is SkillCommand.StartGame -> cmd.game?.let { startGame(it) } ?: askGame()
         is SkillCommand.Tale -> tale(cmd.request, ai)
         is SkillCommand.Almanac -> SkillOutcome.Say(almanac(cmd))
-        is SkillCommand.Greet -> greet(cmd, ai)
+        // Поздравление пишет облачный AI; без него — готовые шаблоны (офлайн-модель думает долго).
+        is SkillCommand.Greet -> greet(cmd, ai.takeIf { cfg.useAI })
         is SkillCommand.FactOfDay -> SkillOutcome.Say(
             if (cmd.ofDay) "Факт дня: " + Trivia.FACTS[(time.today().toEpochDay() % Trivia.FACTS.size).toInt()]
             else Trivia.FACTS.filter { it != lastFact }.random().also { lastFact = it },

@@ -72,7 +72,7 @@ class RatesService(private val http: HttpClient) {
             "корейск\\S*\\s+вон|вон(?:а|ы)(?![\\p{L}])|krw" to "KRW",
             "злот|pln" to "PLN",
             "бат(?:а|ов|ы)?(?![\\p{L}])|thb" to "THB",
-            "биткоин|биткойн|битк|btc" to "BTC",
+            "биткоин|биткойн|битк|биток|btc" to "BTC",
             "эфириум\\S*|эфир(?:а|ом|у)?(?![\\p{L}])|ethereum|eth(?![\\p{L}])" to "ETH",
             "тезер|usdt" to "USDT",
         ).map { (p, c) -> Regex("""(?<![\p{L}])(?:$p)""", RegexOption.IGNORE_CASE) to c }

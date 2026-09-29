@@ -168,7 +168,7 @@ object HabitPhrases {
             val what = m.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
             habitName(what)?.let { return HabitCommand.Streak(it) }
         }
-        if (rx("""^(?:мои\s+привычки|статистика\s+(?:привычек|здоровья)|мой день здоровья|как мои привычки|что я сегодня отметил[аи]?|трекер привычек|привычки)$""").containsMatchIn(t)) return HabitCommand.Summary
+        if (rx("""^(?:мои\s+привычки|статистика\s+(?:привычек|здоровья)|мой день здоровья|как мои привычки|что я сегодня отметил[аи]?|трекер привычек|привычки)(?:\s+за\s+(?:неделю|сегодня|день))?$""").containsMatchIn(t)) return HabitCommand.Summary
         return null
     }
 
@@ -295,8 +295,7 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
                         else -> "До события «${hit.name}» — ${RuFormat.count(days.toInt(), "день", "дня", "дней")} (${RuFormat.date(d, today)})."
                     })
                 }
-                val d = ai.loli.core.skills.Almanac.find(cmd.name, today) ?: return null
-                val title = ai.loli.core.skills.Almanac.holidays(d).firstOrNull() ?: cmd.name
+                val (d, title) = ai.loli.core.skills.Almanac.findTitled(cmd.name, today) ?: return null
                 val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
                 Reply(if (days == 0L) "$title — сегодня!" else "До праздника «$title» — ${RuFormat.count(days.toInt(), "день", "дня", "дней")} (${RuFormat.date(d, today)}).", private = false)
             }

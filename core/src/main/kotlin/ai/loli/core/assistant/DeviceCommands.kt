@@ -220,7 +220,7 @@ object DevicePhrases {
         }
 
         // Фонарик.
-        if (re("""^(?:включи|зажги|вруби)\s+(?:фонарик|фонарь|вспышку|свет на телефоне)|^(?:фонарик|фонарь|посвети(?:\s+мне)?)$""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(true))
+        if (re("""^(?:включи|зажги|вруби)\s+(?:фонарик|фонарь|вспышку|свет на телефоне)|^(?:фонарик|фонарь|посвети(?:\s+мне)?)$|^(?:фонарик|фонарь)\s+(?:включи|вруби|зажги)$""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(true))
         if (re("""^(?:выключи|погаси|выруби)\s+(?:фонарик|фонарь|вспышку)""").containsMatchIn(t)) return cmd(DeviceCommand.Flashlight(false))
 
         // Заряд.
@@ -433,7 +433,7 @@ object DevicePhrases {
 
     /** «Сколько времени в Токио», «который час в Нью-Йорке». */
     private fun worldTime(t: String): String? {
-        val m = re("""(?:сколько\s+(?:сейчас\s+)?времени|который\s+(?:сейчас\s+)?час|какое\s+(?:сейчас\s+)?время|^время)\s+(?:сейчас\s+)?(?:в|во)\s+(.+)$""").find(t) ?: return null
+        val m = re("""(?:сколько\s+(?:сейчас\s+)?(?:времени|время)|который\s+(?:сейчас\s+)?час|какое\s+(?:сейчас\s+)?время|^время)\s+(?:сейчас\s+)?(?:в|во)\s+(.+)$""").find(t) ?: return null
         val place = m.groupValues[1].trim()
         val zone = cities.entries.firstOrNull { place.startsWith(it.key) || place.contains(it.key) }?.value ?: return null
         val time = java.time.ZonedDateTime.now(ZoneId.of(zone))

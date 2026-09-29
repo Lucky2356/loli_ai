@@ -126,7 +126,7 @@ class AssistantEngine(
     suspend fun handle(input: String, source: InputSource = InputSource.TEXT): AssistantReply = mutex.withLock {
         currentSource = source
         val cfg = settings()
-        val text = stripWakeWord(input, cfg.assistantName)
+        val text = ai.loli.core.nlp.Slang.normalize(stripWakeWord(input, cfg.assistantName))
         if (text.isBlank()) return@withLock AssistantReply("Слушаю!", expectFollowUp = true, awaitingAnswer = true)
         context.touch()
 
@@ -186,7 +186,7 @@ class AssistantEngine(
 
     /** Понимает ли Лоли фразу без AI — чтобы из нескольких вариантов распознавания выбрать осмысленный. */
     fun understandsLocally(text: String): Boolean = runCatching {
-        val t = stripWakeWord(text, settings().assistantName)
+        val t = ai.loli.core.nlp.Slang.normalize(stripWakeWord(text, settings().assistantName))
         localParser.parse(t, time.now(), time.zone()) != null || skills?.recognizes(t, settings().assistantName) == true
     }.getOrDefault(false)
 
