@@ -5,6 +5,7 @@ import ai.loli.core.assistant.AssistantSettings
 import ai.loli.core.assistant.DeviceCommand
 import ai.loli.core.assistant.DevicePhrases
 import ai.loli.core.assistant.MediaAction
+import io.ktor.client.engine.mock.respond
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
 import java.time.LocalDate
@@ -106,5 +107,20 @@ class Audit22Test {
         val env = TestEnv().apply { settings = AssistantSettings(useAI = false) }
         assertTrue(env.engine.handle("сколько время").text.startsWith("Сейчас"))
         assertFalse(env.engine.handle("сколько времени варить гречку").text.startsWith("Сейчас"))
+    }
+
+    @Test fun cryptoFallsBackWhenCoinGeckoRefuses() = runTest {
+        val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { r ->
+            val u = r.url.toString()
+            when {
+                u.contains("coingecko") -> respond("", io.ktor.http.HttpStatusCode.Forbidden)
+                u.contains("cryptocompare") -> respond("""{"BTC":{"USD":80000},"ETH":{"USD":2500},"USDT":{"USD":1}}""", io.ktor.http.HttpStatusCode.OK)
+                u.contains("cbr-xml-daily") -> respond("""{"Date":"2026-09-26T11:30:00+03:00","Valute":{"USD":{"CharCode":"USD","Nominal":1,"Name":"Доллар США","Value":84.0,"Previous":84.1}}}""", io.ktor.http.HttpStatusCode.OK)
+                else -> respond("", io.ktor.http.HttpStatusCode.NotFound)
+            }
+        })
+        val prices = RatesService(http).crypto()
+        assertEquals(6_720_000.0, prices.getValue("BTC"), 1.0)
+        assertEquals(mapOf("BTC" to 5_000_000.0), RatesService.parseCoinbase("""{"data":{"currency":"USD","rates":{"BTC":"0.00002"}}}""", 100.0))
     }
 }

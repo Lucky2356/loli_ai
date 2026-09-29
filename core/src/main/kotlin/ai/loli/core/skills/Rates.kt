@@ -31,10 +31,39 @@ class RatesService(private val http: HttpClient) {
 
     suspend fun cbr(): Board = cbrCache.get("cbr") ?: parseCbr(http.fetchText("https://www.cbr-xml-daily.ru/daily_json.js")).also { cbrCache.put("cbr", it) }
 
-    /** Цена криптовалют в рублях: BTC, ETH. */
-    suspend fun crypto(): Map<String, Double> = cryptoCache.get("c") ?: parseCrypto(
-        http.fetchText("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether&vs_currencies=rub"),
-    ).also { cryptoCache.put("c", it) }
+    /**
+     * Цена криптовалют в рублях: BTC, ETH, USDT. CoinGecko иногда отвечает 403 (лимит на общий адрес) —
+     * тогда CryptoCompare, затем Coinbase (цена в долларах × курс ЦБ).
+     */
+    suspend fun crypto(): Map<String, Double> {
+        cryptoCache.get("c")?.let { return it }
+        var last: Exception? = null
+        val sources: List<suspend () -> Map<String, Double>> = listOf(
+            { parseCrypto(http.fetchText("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether&vs_currencies=rub")) },
+            { parseCryptoCompare(http.fetchText("https://min-api.cryptocompare.com/data/pricemulti?fsyms=BTC,ETH,USDT&tsyms=RUB,USD"), usdRub()) },
+            { parseCoinbase(http.fetchText("https://api.coinbase.com/v2/exchange-rates?currency=USD"), usdRub()) },
+        )
+        for (source in sources) {
+            try {
+                val prices = source()
+                if (prices.isNotEmpty()) { cryptoCache.put("c", prices); return prices }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last as? InfoUnavailable ?: InfoUnavailable("цена криптовалют недоступна")
+    }
+
+    /** Рублей за доллар по ЦБ — для пересчёта цены из долларов; null — ЦБ недоступен. */
+    private suspend fun usdRub(): Double? = try {
+        cbr().rates["USD"]?.let { it.value / it.nominal }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
 
     suspend fun answer(q: RatesQuery): String {
         val crypto = q.currencies.filter { it in CRYPTO }
@@ -103,6 +132,30 @@ class RatesService(private val http: HttpClient) {
                 price("bitcoin")?.let { put("BTC", it) }
                 price("ethereum")?.let { put("ETH", it) }
                 price("tether")?.let { put("USDT", it) }
+            }
+        }
+
+        /** CryptoCompare: {"BTC":{"RUB":…,"USD":…}}; нет рубля — доллары × курс ЦБ. */
+        fun parseCryptoCompare(json: String, usdRub: Double?): Map<String, Double> {
+            val root = LoliJson.parseToJsonElement(json).jsonObject
+            return buildMap {
+                for (code in listOf("BTC", "ETH", "USDT")) {
+                    val o = root[code] as? JsonObject ?: continue
+                    val rub = o.num("RUB") ?: o.num("USD")?.let { usd -> usdRub?.let { usd * it } }
+                    rub?.takeIf { it > 0 }?.let { put(code, it) }
+                }
+            }
+        }
+
+        /** Coinbase: {"data":{"rates":{"BTC":"0.0000118"}}} — сколько монет за доллар; цена = 1 / курс × рублей за доллар. */
+        fun parseCoinbase(json: String, usdRub: Double?): Map<String, Double> {
+            if (usdRub == null) return emptyMap()
+            val rates = (LoliJson.parseToJsonElement(json).jsonObject["data"] as? JsonObject)?.get("rates") as? JsonObject ?: return emptyMap()
+            return buildMap {
+                for (code in listOf("BTC", "ETH", "USDT")) {
+                    val perUsd = (rates[code] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() ?: continue
+                    if (perUsd > 0) put(code, usdRub / perUsd)
+                }
             }
         }
 
