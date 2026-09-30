@@ -22,6 +22,12 @@ if [ -n "${LOLI_KEYSTORE_BASE64:-}" ]; then
 fi
 
 if [ ! -f "$DIR/loli.jks" ] || [ ! -f "$DIR/password" ]; then
+  # Новый ключ = другая подпись: установленная Лоли перестанет обновляться поверх. Молча этого не делаем.
+  if [ "${LOLI_ALLOW_NEW_KEY:-}" != "1" ]; then
+    echo "::error::Ключ подписи не найден (кэш Actions стёрт, секретов нет). Новый ключ сломает обновления у всех установок."
+    echo "::error::Задайте секреты LOLI_KEYSTORE_BASE64/PASSWORD/ALIAS/KEY_PASSWORD (docs/SIGNING.md) или запустите релиз с new_key=true, если это первая установка."
+    exit 1
+  fi
   echo "Создаю постоянный ключ подписи (хранится в кэше Actions)"
   PASS="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
   keytool -genkeypair -keystore "$DIR/loli.jks" -storetype PKCS12 -alias loli -keyalg RSA -keysize 2048 \

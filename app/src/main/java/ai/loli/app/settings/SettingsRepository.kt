@@ -104,7 +104,10 @@ data class AppSettings(
     val aiEndpoints: Map<AIProviderType, String> = emptyMap(),
     /** Облачный AI выключен по умолчанию: команды понимаются локально, без интернета. */
     val useAI: Boolean = false,
-    val embeddingsEnabled: Boolean = true,
+    /** Отправлять тексты записей провайдеру AI для поиска по смыслу. По умолчанию выключено: личные записи не уходят наружу без вашего согласия. */
+    val embeddingsEnabled: Boolean = false,
+    /** Синхронизировать историю чата с облаком (при входе в аккаунт). По умолчанию выключено: заметки и задачи синхронизируются, переписка — нет. */
+    val syncChat: Boolean = false,
     val ttsEnabled: Boolean = true,
     val speechRate: Float = 1.0f,
     /** Высота голоса (1.0 — как задумал синтезатор). */
@@ -181,6 +184,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         fun endpoint(t: AIProviderType) = stringPreferencesKey("ai_endpoint_${t.id}")
         val useAI = booleanPreferencesKey("use_ai")
         val embeddings = booleanPreferencesKey("embeddings")
+        val syncChat = booleanPreferencesKey("sync_chat")
         val tts = booleanPreferencesKey("tts")
         val rate = floatPreferencesKey("speech_rate")
         val wake = booleanPreferencesKey("wake_word")
@@ -263,7 +267,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             aiModels = models,
             aiEndpoints = endpoints,
             useAI = p[K.useAI] ?: false,
-            embeddingsEnabled = p[K.embeddings] ?: true,
+            embeddingsEnabled = p[K.embeddings] ?: false,
+            syncChat = p[K.syncChat] ?: false,
             ttsEnabled = p[K.tts] ?: true,
             speechRate = p[K.rate] ?: 1.0f,
             speechPitch = p[K.pitch] ?: 1.0f,
@@ -360,6 +365,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
 
     suspend fun setUseAI(v: Boolean) = store.edit { it[K.useAI] = v }
     suspend fun setEmbeddings(v: Boolean) = store.edit { it[K.embeddings] = v }
+    suspend fun setSyncChat(v: Boolean) = store.edit { it[K.syncChat] = v }
     suspend fun setTts(v: Boolean) = store.edit { it[K.tts] = v }
     suspend fun setSpeechRate(v: Float) = store.edit { it[K.rate] = v.coerceIn(0.5f, 2f) }
     suspend fun setWakeWord(v: Boolean) = store.edit { it[K.wake] = v }

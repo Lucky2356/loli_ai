@@ -130,7 +130,7 @@ class AndroidSkillHost(
 
     override suspend fun playRadio(station: RadioStation): Boolean = RadioService.play(context, station)
     override fun stopRadio(): Boolean = RadioService.stop(context)
-    override fun radioPlaying(): Boolean = RadioService.current != null
+    override fun radioPlaying(): Boolean = RadioService.playing
 
     override suspend fun ringPhone(): Boolean = RingService.start(context, "Я здесь!", "Лоли ищет телефон. Коснитесь, чтобы остановить.", loud = true)
 

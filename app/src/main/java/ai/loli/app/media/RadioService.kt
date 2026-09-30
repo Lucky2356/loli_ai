@@ -144,6 +144,7 @@ class RadioService : Service() {
     }
 
     private fun state(s: Int) {
+        playing = s == PlaybackState.STATE_PLAYING || s == PlaybackState.STATE_BUFFERING
         session?.setPlaybackState(
             PlaybackState.Builder().setState(s, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
                 .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP or PlaybackState.ACTION_SKIP_TO_NEXT)
@@ -186,6 +187,7 @@ class RadioService : Service() {
 
     override fun onDestroy() {
         releaseWifi()
+        playing = false
         focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
         player?.release()
         player = null
@@ -204,6 +206,9 @@ class RadioService : Service() {
         private const val EXTRA_URL = "url"
 
         @Volatile var current: RadioStation? = null
+            private set
+        /** Звук сейчас идёт (станция выбрана и не на паузе). На паузе [current] остаётся, а «дальше» не должно переключать станцию. */
+        @Volatile var playing: Boolean = false
             private set
         @Volatile private var pendingResult: CompletableDeferred<Boolean>? = null
 

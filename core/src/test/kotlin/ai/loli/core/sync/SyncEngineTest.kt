@@ -27,6 +27,8 @@ import kotlin.test.assertTrue
 class FakeSupabase {
     var currentUser = "user-a"
     var offline = false
+    /** Как в Postgres: все строки одного запроса получают одну и ту же метку server_updated_at. */
+    var sharedStamp = false
     private var serverClock = Instant.parse("2026-09-25T00:00:00Z")
     val tables = HashMap<String, LinkedHashMap<String, JsonObject>>()
 
@@ -35,22 +37,27 @@ class FakeSupabase {
             currentUser = user
             if (offline) throw RemoteException.Offline()
             val t = tables.getOrPut(table) { LinkedHashMap() }
+            if (sharedStamp) serverClock = serverClock.plusSeconds(1)
             for (row in rows) {
                 val id = (row["id"] as JsonPrimitive).content
                 val existing = t[id]
                 if (existing != null && existing.s("user_id") != user) throw RemoteException.Http(403, "row-level security")
                 if (existing != null && Instant.parse(row.s("updated_at")!!).isBefore(Instant.parse(existing.s("updated_at")!!))) continue
-                serverClock = serverClock.plusSeconds(1)
+                if (!sharedStamp) serverClock = serverClock.plusSeconds(1)
                 t[id] = JsonObject(row + mapOf("user_id" to JsonPrimitive(user), "server_updated_at" to JsonPrimitive(serverClock.toString())))
             }
         }
 
-        override suspend fun fetchChanges(table: String, since: Instant?, limit: Int): List<JsonObject> {
+        override suspend fun fetchChanges(table: String, since: Instant?, afterId: String?, limit: Int): List<JsonObject> {
             if (offline) throw RemoteException.Offline()
+            fun stamp(r: JsonObject) = Instant.parse(r.s("server_updated_at")!!)
             return tables[table].orEmpty().values
                 .filter { it.s("user_id") == user }
-                .filter { since == null || Instant.parse(it.s("server_updated_at")!!).isAfter(since) }
-                .sortedBy { it.s("server_updated_at") }
+                .filter { r ->
+                    since == null || stamp(r).isAfter(since) ||
+                        (afterId != null && stamp(r) == since && r.s("id")!! > afterId)
+                }
+                .sortedWith(compareBy({ stamp(it) }, { it.s("id") }))
                 .take(limit)
         }
 
@@ -164,5 +171,27 @@ class SyncEngineTest {
         assertFailsWith<RemoteException.Http> {
             server.remoteFor("user-b").upsert("memories", listOf(JsonObject(row + ("content" to JsonPrimitive("взлом")))))
         }
+    }
+
+    @Test fun pagesWithSharedTimestampLoseNothing() = runTest {
+        val server = FakeSupabase().apply { sharedStamp = true }
+        val laptop = device(); val phone = device()
+        // 7 записей одним запросом: у всех одна метка сервера; страница — 3 строки, граница режет группу.
+        repeat(7) { laptop.memories.create("факт $it", "fact") }
+        engine(laptop, server.remoteFor("user-a")).sync()
+        SyncEngine(phone, server.remoteFor("user-a"), userId = { "user-a" }, pageSize = 3).sync()
+        assertEquals(7, phone.memories.all().size, "ни одна строка с общей меткой не должна потеряться на границе страницы")
+    }
+
+    @Test fun chatTableSkippedUntilEnabled() = runTest {
+        val server = FakeSupabase()
+        val a = device(); val b = device()
+        a.conversations.add("conv-1", ai.loli.core.model.MessageRole.USER, "личная переписка")
+        a.notes.create(NoteKind.NOTE, "заметка", "текст")
+        SyncEngine(a, server.remoteFor("user-a"), userId = { "user-a" }, tableEnabled = { it != "conversation_messages" }).sync()
+        assertTrue(server.tables["conversation_messages"].isNullOrEmpty(), "переписка не должна уходить на сервер без согласия")
+        assertEquals(1, server.tables["notes"]?.size)
+        SyncEngine(a, server.remoteFor("user-a"), userId = { "user-a" }).sync()
+        assertEquals(1, server.tables["conversation_messages"]?.size, "после включения переписка синхронизируется")
     }
 }

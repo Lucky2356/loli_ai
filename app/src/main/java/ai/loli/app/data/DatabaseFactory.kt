@@ -24,11 +24,14 @@ object DatabaseFactory {
             val db = context.getDatabasePath(NAME)
             db.renameTo(java.io.File(db.parentFile, "$NAME.orphan-${System.currentTimeMillis()}"))
         }
+        // Пароль берём ДО любых действий с файлом. Если Keystore временно недоступен, исключение уходит наружу:
+        // базу мы не трогаем (раньше её в этот момент откладывали и создавали пустую — данные «пропадали»).
+        val passphrase = secrets.databasePassphrase()
         return try {
-            open(context, secrets).also { verify(it) }
+            open(context, passphrase).also { verify(it) }
         } catch (e: Exception) {
-            // Не удаляем данные: откладываем файл БД и пароль к нему, создаём новую БД.
-            // Несинхронизированные записи можно будет восстановить, облачные вернутся синхронизацией.
+            // Пароль верный, а файл не открывается — БД повреждена. Не удаляем данные: откладываем файл БД и пароль к нему,
+            // создаём новую. Облачные записи вернутся синхронизацией; файл .bak остаётся на телефоне.
             Logger.e(TAG, "Не удалось открыть зашифрованную БД — сохраняю копию и создаю новую", e)
             val suffix = System.currentTimeMillis().toString()
             val db = context.getDatabasePath(NAME)
@@ -37,16 +40,16 @@ object DatabaseFactory {
             java.io.File(db.parentFile, "$NAME-wal").delete()
             java.io.File(db.parentFile, "$NAME-shm").delete()
             secrets.moveDatabasePassphraseAside(suffix)
-            open(context, secrets).also { verify(it) }
+            open(context, secrets.databasePassphrase()).also { verify(it) }
         }
     }
 
-    private fun open(context: Context, secrets: KeystoreSecretStore): SqlDriver =
+    private fun open(context: Context, passphrase: ByteArray): SqlDriver =
         AndroidSqliteDriver(
             schema = LoliDatabase.Schema,
             context = context,
             name = NAME,
-            factory = SupportOpenHelperFactory(secrets.databasePassphrase()),
+            factory = SupportOpenHelperFactory(passphrase),
         )
 
     private fun verify(driver: SqlDriver) {

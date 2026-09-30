@@ -19,6 +19,7 @@ import java.time.Instant
 object Diagnostics {
     private const val CRASH_FILE = "last_crash.txt"
     private const val PHRASES = "unknown_phrases"
+    private const val PHRASES_KEY = "unknown_phrases_v2"
     private const val REPO = "Lucky2356/loli_ai"
 
     fun install(context: Context) {
@@ -53,11 +54,10 @@ object Diagnostics {
 
     fun clearCrash(context: Context) { runCatching { File(context.filesDir, CRASH_FILE).delete() } }
 
-    /** Непонятая фраза — для улучшения разбора. Хранятся последние 50, только на телефоне. */
+    /** Непонятая фраза — для улучшения разбора. Хранятся последние 50, только на телефоне и зашифрованными (ключ Android Keystore). */
     fun rememberUnknown(context: Context, phrase: String) {
-        val p = context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE)
-        val list = (p.getString("list", "").orEmpty().split('\n').filter { it.isNotBlank() } + scrub(phrase)).takeLast(50)
-        p.edit().putString("list", list.joinToString("\n")).apply()
+        val list = (unknownPhrases(context) + scrub(phrase)).takeLast(50)
+        secrets(context).put(PHRASES_KEY, list.joinToString("\n"))
     }
 
     /**
@@ -70,10 +70,26 @@ object Diagnostics {
         .replace(Regex("""\+?\d[\d\s()-]{4,}\d"""), "[число]")
         .take(200)
 
-    fun unknownPhrases(context: Context): List<String> =
-        context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE).getString("list", "").orEmpty().split('\n').filter { it.isNotBlank() }
+    fun unknownPhrases(context: Context): List<String> {
+        migrateOldPhrases(context)
+        return secrets(context).get(PHRASES_KEY).orEmpty().split('\n').filter { it.isNotBlank() }
+    }
 
-    fun clearUnknown(context: Context) = context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE).edit().clear().apply()
+    fun clearUnknown(context: Context) {
+        secrets(context).put(PHRASES_KEY, null)
+        context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE).edit().clear().apply()
+    }
+
+    private fun secrets(context: Context) = ai.loli.app.security.KeystoreSecretStore(context.applicationContext)
+
+    /** До 2.3 фразы лежали в обычных настройках открытым текстом — переносим в зашифрованное хранилище и стираем. */
+    private fun migrateOldPhrases(context: Context) {
+        val old = context.getSharedPreferences(PHRASES, Context.MODE_PRIVATE)
+        val text = old.getString("list", null) ?: return
+        val store = secrets(context)
+        if (store.get(PHRASES_KEY).isNullOrEmpty()) store.put(PHRASES_KEY, text)
+        old.edit().clear().apply()
+    }
 
     /** Новое обращение на GitHub с готовым текстом (человек видит его и сам решает, отправлять ли). */
     fun issueIntent(title: String, body: String): Intent {

@@ -64,7 +64,10 @@ class SearchService(
         if (docs.isEmpty() || (query.isBlank() && extraKeywords.isEmpty())) return emptyList()
         // Без AI синонимы берутся из встроенного словаря — поиск «по смыслу» работает офлайн.
         val keywords = extraKeywords.ifEmpty { if (useSynonyms) Synonyms.expand(query) else emptyList() }
-        val lexical = docs.associate { it.id to lexicalScore(query, keywords, it) }
+        // Слова запроса разбираются один раз, а не для каждой записи.
+        val q = TextAnalysis.stems(query).distinct()
+        val extra = keywords.flatMap { TextAnalysis.stems(it) }.distinct().filter { it !in q }
+        val lexical = docs.associate { it.id to lexicalScore(q, extra, stemsOf(it)) }
         val semantic = if (useEmbeddings) semanticScores(query, docs) else null
         return docs.map { d ->
             val lex = lexical.getValue(d.id)
@@ -80,12 +83,29 @@ class SearchService(
     fun lexicalScore(query: String, extraKeywords: List<String>, doc: SearchDoc): Double {
         val q = TextAnalysis.stems(query).distinct()
         val extra = extraKeywords.flatMap { TextAnalysis.stems(it) }.distinct().filter { it !in q }
+        return lexicalScore(q, extra, stemsOf(doc))
+    }
+
+    private class DocStems(val title: Set<String>, val body: Set<String>)
+
+    /** Основы слов записей не пересчитываются при каждом вопросе: кэш по (id, время правки). */
+    private val stemCache = object : LinkedHashMap<String, DocStems>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DocStems>?) = size > 3000
+    }
+
+    private fun stemsOf(doc: SearchDoc): DocStems {
+        val key = "${doc.id}|${doc.updatedAt.toEpochMilli()}"
+        synchronized(stemCache) { stemCache[key]?.let { return it } }
+        val computed = DocStems(TextAnalysis.stems(doc.title).toSet(), TextAnalysis.stems(doc.body).toSet())
+        synchronized(stemCache) { stemCache[key] = computed }
+        return computed
+    }
+
+    private fun lexicalScore(q: List<String>, extra: List<String>, doc: DocStems): Double {
         if (q.isEmpty() && extra.isEmpty()) return 0.0
-        val title = TextAnalysis.stems(doc.title).toSet()
-        val body = TextAnalysis.stems(doc.body).toSet()
         fun best(stem: String): Double {
-            val t = title.maxOfOrNull { TextAnalysis.stemSimilarity(stem, it) } ?: 0.0
-            val b = body.maxOfOrNull { TextAnalysis.stemSimilarity(stem, it) } ?: 0.0
+            val t = doc.title.maxOfOrNull { TextAnalysis.stemSimilarity(stem, it) } ?: 0.0
+            val b = doc.body.maxOfOrNull { TextAnalysis.stemSimilarity(stem, it) } ?: 0.0
             return maxOf(t, b * 0.8)
         }
         val main = if (q.isEmpty()) 0.0 else q.sumOf { best(it) } / q.size

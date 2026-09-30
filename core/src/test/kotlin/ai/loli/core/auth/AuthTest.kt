@@ -106,6 +106,16 @@ class AuthTest {
         assertNull(store.value)
     }
 
+    @Test fun offlineRefreshKeepsSessionAndReturnsOldToken() = runTest {
+        val http = HttpClient(MockEngine { throw IOException("no route") })
+        val store = MemoryStore().apply { value = AuthSession("tok1", "r1", time.now().epochSecond + 30, "uid-1", "a@b.c") }
+        val auth = AuthManager({ SupabaseAuthClient(http, config) }, store, time)
+        auth.restore()
+        assertEquals("tok1", auth.accessToken(), "без сети отдаём прежний токен, а не падаем")
+        assertIs<AuthState.SignedIn>(auth.state.value)
+        assertEquals("tok1", store.value?.accessToken, "сессия не стёрта")
+    }
+
     @Test fun postgrestRetriesOnceAfter401WithFreshToken() = runTest {
         val tokens = mutableListOf<String?>()
         var calls = 0
@@ -116,7 +126,7 @@ class AuthTest {
             if (calls == 1) respond("{}", HttpStatusCode.Unauthorized, json) else respond("[]", HttpStatusCode.OK, json)
         })
         val remote = PostgrestRemote(http, config) { force -> if (force) "fresh" else "stale" }
-        remote.fetchChanges("notes", Instant.parse("2026-09-25T08:58:00Z"), 500)
+        remote.fetchChanges("notes", Instant.parse("2026-09-25T08:58:00Z"), null, 500)
         assertEquals(listOf<String?>("Bearer stale", "Bearer fresh"), tokens)
     }
 
@@ -134,6 +144,6 @@ class AuthTest {
 
     @Test fun postgrestOfflineMapped() = runTest {
         val http = HttpClient(MockEngine { throw IOException("offline") })
-        assertFailsWith<RemoteException.Offline> { PostgrestRemote(http, config) { "t" }.fetchChanges("notes", null, 10) }
+        assertFailsWith<RemoteException.Offline> { PostgrestRemote(http, config) { "t" }.fetchChanges("notes", null, null, 10) }
     }
 }

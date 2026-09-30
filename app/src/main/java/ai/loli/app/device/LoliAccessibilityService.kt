@@ -42,7 +42,9 @@ class LoliAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return null
         if (root.packageName?.toString() == packageName) {
             // Сверху окно Лоли (ассистент) — читаем окно под ним.
-            val other = windows.mapNotNull { it.root }.firstOrNull { it.packageName?.toString() != packageName } ?: return null
+            // Клавиатуру пропускаем: по тексту её окна можно было бы восстановить набираемое.
+            val other = windows.filter { it.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+                .mapNotNull { it.root }.firstOrNull { it.packageName?.toString() != packageName } ?: return null
             return collect(other)
         }
         return collect(root)

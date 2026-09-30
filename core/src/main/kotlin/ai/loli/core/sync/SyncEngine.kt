@@ -59,6 +59,9 @@ class SyncEngine(
     private val profile: ProfileSync? = null,
     private val userId: () -> String?,
     private val clock: () -> Instant = Instant::now,
+    /** Какие таблицы синхронизировать (например, история чата — только по согласию). По умолчанию все. */
+    private val tableEnabled: (remoteTable: String) -> Boolean = { true },
+    private val pageSize: Int = PAGE,
 ) {
     private val mutex = Mutex()
     private val _status = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
@@ -70,7 +73,7 @@ class SyncEngine(
         var pushed = 0
         var conflicts = 0
         val report = try {
-            for (table in local.syncTables) {
+            for (table in local.syncTables.filter { tableEnabled(it.remoteTable) }) {
                 try {
                     val p = pull(table)
                     pulled += p.first
@@ -105,17 +108,21 @@ class SyncEngine(
         val cursorRaw = local.cursor(table.remoteTable)
         val cursor = cursorRaw?.let { parseInstant(it) }
         var since = cursor?.minusSeconds(OVERLAP_SECONDS)
+        var afterId: String? = null
         var maxSeen = cursor
         while (true) {
-            val rows = remote.fetchChanges(table.remoteTable, since, PAGE)
+            val rows = remote.fetchChanges(table.remoteTable, since, afterId, pageSize)
             for (row in rows) {
                 if (applyRemote(table, row)) conflicts++
                 count++
                 val serverTime = (row["server_updated_at"] as? JsonPrimitive)?.contentOrNull?.let { parseInstant(it) }
                 if (serverTime != null && (maxSeen == null || serverTime.isAfter(maxSeen))) maxSeen = serverTime
             }
-            if (rows.size < PAGE) break
-            since = rows.last()["server_updated_at"]?.let { (it as? JsonPrimitive)?.contentOrNull }?.let { parseInstant(it) } ?: break
+            if (rows.size < pageSize) break
+            val last = rows.last()
+            since = last["server_updated_at"]?.let { (it as? JsonPrimitive)?.contentOrNull }?.let { parseInstant(it) } ?: break
+            // Следующая страница — за этой строкой: строки с такой же меткой, не поместившиеся на страницу, не теряются.
+            afterId = (last["id"] as? JsonPrimitive)?.contentOrNull ?: break
         }
         if (maxSeen != null && maxSeen != cursor) local.setCursor(table.remoteTable, maxSeen.toString())
         return count to conflicts

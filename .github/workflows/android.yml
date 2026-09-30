@@ -84,30 +84,9 @@ jobs:
       - name: Offline speech model (embedded into APK)
         run: ./scripts/fetch-vosk-model.sh
 
-      # Постоянный ключ подписи: из секрета LOLI_KEYSTORE_BASE64, а если его нет — созданный один раз
-      # и хранящийся в кэше Actions. Одинаковая подпись нужна, чтобы новые версии ставились поверх старых.
-      - name: Restore signing key from cache
-        id: keycache
-        uses: actions/cache/restore@v4
-        with:
-          path: .signing
-          key: loli-signing-key-v1
-
-      - name: Prepare signing key
-        env:
-          LOLI_KEYSTORE_BASE64: ${{ secrets.LOLI_KEYSTORE_BASE64 }}
-          LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
-          LOLI_KEY_ALIAS_SECRET: ${{ secrets.LOLI_KEY_ALIAS }}
-          LOLI_KEY_PASSWORD_SECRET: ${{ secrets.LOLI_KEY_PASSWORD }}
-        run: ./scripts/signing-key.sh
-
-      - name: Save signing key to cache
-        if: steps.keycache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .signing
-          key: loli-signing-key-v1
-
+      # Проверки (в том числе на чужих pull request) НЕ получают релизный ключ подписи: он лежит в кэше Actions,
+      # и изменённый workflow мог бы его прочитать. Здесь сборки подписываются временным debug-ключом;
+      # постоянный ключ используется только в release.yml (запуск вручную и по тегу).
       - name: Lint, unit tests, assemble
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL }}

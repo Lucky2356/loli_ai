@@ -14,6 +14,10 @@ on:
         type: choice
         options: [release, debug]
         default: release
+      new_key:
+        description: "Создать НОВЫЙ ключ подписи, если прежнего нет (обновления поверх установленной Лоли перестанут ставиться!)"
+        type: boolean
+        default: false
       beta:
         description: "Бета-версия (увидят только те, кто включил бета-обновления; версия вида 2.0.0-beta.1)"
         type: boolean
@@ -35,6 +39,14 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+
+      # Релиз подписывается постоянным ключом, который доступен только тут; из чужой ветки его не читаем.
+      - name: Release only from main or a version tag
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/v*) ;;
+            *) echo "::error::Релиз собирается только из main или тега vX.Y.Z (сейчас: $GITHUB_REF)"; exit 1 ;;
+          esac
 
       - name: Resolve version
         id: v
@@ -69,6 +81,7 @@ jobs:
           LOLI_KEYSTORE_PASSWORD_SECRET: ${{ secrets.LOLI_KEYSTORE_PASSWORD }}
           LOLI_KEY_ALIAS_SECRET: ${{ secrets.LOLI_KEY_ALIAS }}
           LOLI_KEY_PASSWORD_SECRET: ${{ secrets.LOLI_KEY_PASSWORD }}
+          LOLI_ALLOW_NEW_KEY: ${{ inputs.new_key == true && '1' || '' }}
         run: ./scripts/signing-key.sh
 
       - name: Save signing key to cache

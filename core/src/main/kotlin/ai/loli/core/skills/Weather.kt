@@ -55,12 +55,20 @@ internal suspend fun HttpClient.fetchText(url: String): String {
         }
         if (r.status.value in 500..599 && attempt == 0) { kotlinx.coroutines.delay(700); return@repeat }
         if (!r.status.isSuccess()) throw InfoUnavailable("источник ответил ${r.status.value}")
-        return decodeBody(r.bodyAsBytes(), r.headers["Content-Type"])
+        // Ответ сервиса не должен раздуть память: читаем не больше MAX_BODY_BYTES (новости, погода и справка гораздо меньше).
+        val declared = r.headers["Content-Length"]?.toLongOrNull() ?: 0L
+        if (declared > MAX_BODY_BYTES) throw InfoUnavailable("источник ответил слишком большим файлом")
+        val bytes = r.bodyAsBytes()
+        if (bytes.size > MAX_BODY_BYTES) throw InfoUnavailable("источник ответил слишком большим файлом")
+        return decodeBody(bytes, r.headers["Content-Type"])
     }
     // Причина в сообщении — по ней видно, что не так (нет сети, сертификат, таймаут).
     val cause = last?.let { e -> generateSequence<Throwable>(e) { it.cause }.last()::class.simpleName } ?: "нет ответа"
     throw InfoUnavailable("нет связи ($cause)")
 }
+
+/** Предел размера ответа сетевого навыка. */
+internal const val MAX_BODY_BYTES = 3L * 1024 * 1024
 
 /** Кодировка: из заголовка, из пролога XML («windows-1251»), иначе UTF-8. */
 internal fun decodeBody(bytes: ByteArray, contentType: String?): String {

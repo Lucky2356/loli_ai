@@ -143,8 +143,13 @@ fun AiPage(c: AppContainer, onBack: () -> Unit, openProvider: (AIProviderType) -
         item(key = "emb") {
             SectionLabel("Поиск")
             Group {
-                SwitchItem("Поиск по смыслу через AI", "Эмбеддинги OpenAI или Gemini (если подключены). Без них работает локальный поиск с синонимами.",
+                SwitchItem("Поиск по смыслу через AI", "Тексты ваших заметок, задач и напоминаний отправляются провайдеру AI (OpenAI или Gemini, если подключены). Выключено — работает локальный поиск с синонимами, ничего не уходит наружу.",
                     s.embeddingsEnabled) { v -> scope.launch { c.settings.setEmbeddings(v) } }
+            }
+            SectionLabel("Облако")
+            Group {
+                SwitchItem("Синхронизировать историю чата", "Заметки, задачи и расходы синхронизируются при входе в аккаунт. Переписка с Лоли — только если включить это: она хранится на сервере открытым текстом.",
+                    s.syncChat) { v -> scope.launch { c.settings.setSyncChat(v) } }
             }
         }
     }

@@ -47,7 +47,11 @@ import kotlinx.coroutines.launch
  * UI → VoiceController/ViewModel → AssistantEngine (core) → репозитории (core) → SQLCipher / Supabase.
  */
 class AppContainer(private val context: Context) {
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Сбой в фоновой корутине пишется в журнал и не роняет приложение (раньше любое необработанное исключение завершало процесс). */
+    private val backgroundErrors = kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+        if (e !is kotlinx.coroutines.CancellationException) ai.loli.core.util.Logger.e("App", "Необработанный сбой в фоне", e)
+    }
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + backgroundErrors)
     val time = SystemTimeSource()
 
     val secrets = KeystoreSecretStore(context)
@@ -86,11 +90,13 @@ class AppContainer(private val context: Context) {
             // Конфигурация может меняться в настройках — создаём клиент на каждый вызов.
             private fun remote() = PostgrestRemote(http, supabaseConfig()) { force -> auth.accessToken(force) }
             override suspend fun upsert(table: String, rows: List<kotlinx.serialization.json.JsonObject>) = remote().upsert(table, rows)
-            override suspend fun fetchChanges(table: String, since: java.time.Instant?, limit: Int) = remote().fetchChanges(table, since, limit)
+            override suspend fun fetchChanges(table: String, since: java.time.Instant?, afterId: String?, limit: Int) = remote().fetchChanges(table, since, afterId, limit)
             override suspend fun fetchSingle(table: String) = remote().fetchSingle(table)
         },
         profile = settings,
         userId = { auth.userId },
+        // История чата уходит на сервер открытым текстом — только если пользователь сам включил.
+        tableEnabled = { table -> table != "conversation_messages" || settings.settings.value.syncChat },
     ) }
     val network = NetworkMonitor(context) { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon(1) }
 
@@ -265,6 +271,36 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /** Хранилище ключей Android временно недоступно: база не тронута, интерфейс предлагает «Повторить». */
+    private val _storeProblem = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val storeProblem: kotlinx.coroutines.flow.StateFlow<Boolean> = _storeProblem
+    private var storeListenersAttached = false
+
+    /** Открывает БД вне главного потока и подписывается на изменения (синхронизация, виджеты). */
+    private fun warmStoreAsync() {
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val s = store
+                _storeProblem.value = false
+                synchronized(this@AppContainer) {
+                    if (storeListenersAttached) return@launch
+                    storeListenersAttached = true
+                }
+                s.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
+                // Виджеты «Задачи на сегодня» и «Покупки» обновляются сразу после изменений.
+                s.changes.addListener { table ->
+                    if (table == "tasks" || table == "shopping_items") runCatching { ai.loli.app.widget.ListWidget.refreshAll(context) }
+                }
+            } catch (e: KeystoreSecretStore.KeystoreUnavailableException) {
+                ai.loli.core.util.Logger.w("Store", "Хранилище ключей недоступно — жду повтора", e)
+                _storeProblem.value = true
+            }
+        }
+    }
+
+    /** Кнопка «Повторить» на экране о недоступном хранилище. */
+    fun retryStore() = warmStoreAsync()
+
     /** Завершается, когда сессия и настройки загружены (важно для холодного старта из WorkManager/Receiver). */
     private val ready = CompletableDeferred<Unit>()
     suspend fun awaitReady() = ready.await()
@@ -274,14 +310,7 @@ class AppContainer(private val context: Context) {
 
     init {
         ai.loli.app.notify.LoliNotificationListener.onNewMessage = { driving.onMessage(it) }
-        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            // Прогрев БД вне главного потока; дальше — подписка на изменения для синхронизации.
-            store.changes.addListener { if (auth.state.value is AuthState.SignedIn) syncScheduler.requestSoon() }
-            // Виджеты «Задачи на сегодня» и «Покупки» обновляются сразу после изменений.
-            store.changes.addListener { table ->
-                if (table == "tasks" || table == "shopping_items") runCatching { ai.loli.app.widget.ListWidget.refreshAll(context) }
-            }
-        }
+        warmStoreAsync()
         appScope.launch {
             auth.restore()
             if (settings.current().localOnly && auth.state.value !is AuthState.SignedIn) auth.useLocalOnly()

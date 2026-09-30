@@ -28,6 +28,8 @@ class LoliNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         connected = false
+        // Пока нас не слушает система, актуальность сообщений неизвестна: старые не отдаём.
+        synchronized(entries) { entries.clear() }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) = add(sbn, fresh = true)
