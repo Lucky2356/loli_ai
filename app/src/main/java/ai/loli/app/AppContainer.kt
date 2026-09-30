@@ -290,6 +290,7 @@ class AppContainer(private val context: Context) {
             _started.value = true
             updates.schedulePeriodic()
             ai.loli.app.reminders.MorningBrief.schedule(context, settings.current().morningBrief)
+            ai.loli.app.reminders.ReminderWatchdog.schedule(context)
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

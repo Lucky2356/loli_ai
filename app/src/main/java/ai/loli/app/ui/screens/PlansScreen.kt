@@ -77,6 +77,7 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
     val zone = c.time.zone()
     val resumeTick = rememberResumeTick()
     val exact = remember(resumeTick) { c.reminderScheduler.canScheduleExact() }
+    val batteryOk = remember(resumeTick) { isBatteryExempt(context) }
 
     val active = tasks.count { !it.done }
     val scheduled = reminders.count { it.active }
@@ -131,6 +132,19 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                         Text("Точные напоминания выключены — Android может задержать их. Нажмите, чтобы разрешить.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+            if (!batteryOk) item(key = "battery") {
+                Surface(
+                    onClick = { requestBatteryExemption(context) },
+                    shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Text("Телефон может усыплять $name ради батареи — напоминания будут опаздывать. Нажмите, чтобы разрешить работу в фоне.",
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(start = 12.dp))
                     }
                 }

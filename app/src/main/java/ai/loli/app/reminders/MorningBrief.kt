@@ -59,7 +59,7 @@ object MorningBrief {
             if (dueToday.isNotEmpty()) add("Задачи: " + dueToday.take(4).joinToString(", ") { it.title } + if (dueToday.size > 4) " и ещё ${dueToday.size - 4}" else "")
             if (reminders.isNotEmpty()) add("Напоминания: " + reminders.take(3).joinToString(", ") {
                 val t = it.triggerAt.atZone(zone).toLocalTime()
-                "%02d:%02d %s".format(t.hour, t.minute, it.text)
+                (if (it.isMissed(java.time.Instant.now())) "пропущено " else "") + "%02d:%02d %s".format(t.hour, t.minute, it.text)
             })
             if (overdue.isNotEmpty()) add("Просрочено: ${overdue.size}")
         }.joinToString("\n")

@@ -1,5 +1,6 @@
 package ai.loli.core.model
 
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -79,7 +80,13 @@ data class Reminder(
     val lastFiredAt: Instant? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
-)
+) {
+    /** На сколько напоминание опоздало к моменту [now]; до срока — ноль. */
+    fun lateBy(now: Instant): Duration = Duration.between(triggerAt, now).let { if (it.isNegative) Duration.ZERO else it }
+
+    /** Срок вышел больше чем на [grace], а напоминание всё ещё активно — значит, будильник системы не сработал. */
+    fun isMissed(now: Instant, grace: Duration = Duration.ofSeconds(60)): Boolean = active && lateBy(now) > grace
+}
 
 data class MemoryItem(
     val id: String,

@@ -6,14 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import ai.loli.app.ui.MainActivity
 import ai.loli.core.assistant.ReminderScheduler
 import ai.loli.core.model.Reminder
 import ai.loli.core.util.Logger
 
 /**
  * Планирование напоминаний через AlarmManager.
- * Точные будильники (setExactAndAllowWhileIdle) — если пользователь разрешил «Будильники и напоминания»
- * (Android 12+, SCHEDULE_EXACT_ALARM). Иначе — почти точные (setAndAllowWhileIdle, возможна задержка в режиме Doze).
+ * Точные — если пользователь разрешил «Будильники и напоминания» (Android 12+, SCHEDULE_EXACT_ALARM).
+ * Ставим их как будильник-часы (setAlarmClock): такой не откладывается в Doze, и оболочки телефонов
+ * трогают его реже, чем обычный точный. Иначе — почти точные (setAndAllowWhileIdle, возможна задержка в режиме Doze).
+ * Если система всё же стёрла будильник, просроченное подберёт [ReminderWatchdog].
  */
 class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
     private val alarms = context.getSystemService(AlarmManager::class.java)
@@ -26,7 +29,7 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
         val pi = pendingIntent(reminder.id, PendingIntent.FLAG_UPDATE_CURRENT) ?: return
         try {
             if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
-                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                alarms.setAlarmClock(AlarmManager.AlarmClockInfo(at, showIntent()), pi)
             } else {
                 alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
             }
@@ -41,6 +44,12 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
     }
 
     fun rescheduleAll(reminders: List<Reminder>) = reminders.forEach { schedule(it) }
+
+    /** Нажатие на значок будильника в шторке открывает Лоли. */
+    private fun showIntent(): PendingIntent = PendingIntent.getActivity(
+        context, 0, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     private fun pendingIntent(id: String, flag: Int): PendingIntent? {
         val intent = Intent(context, ReminderReceiver::class.java)
