@@ -250,7 +250,7 @@ object DevicePhrases {
         }
 
         // Настройки телефона.
-        re("""^(?:открой|включи|выключи|покажи)\s+(?:настройки\s+)?(wi-?fi|вай-?фай|блютуз|bluetooth|звук|экран|яркость|батаре\w*|геолокаци\w*|местоположени\w*|gps|приложения|настройки|режим полета|режим полёта|авиарежим|nfc|нфс|точку доступа|модем|мобильный интернет|мобильные данные|уведомлени\w*|безопасность|спецвозможности|специальные возможности|дату и время|память|хранилище)$""").find(t)?.let { m ->
+        re("""^(?:открой|включи|выключи|покажи)\s+(?:настройки\s+)?(wi[- ]?fi|вай[- ]?фай|блютуз|блю ту[зс]|bluetooth|звук|экран|яркость|батаре\w*|геолокаци\w*|местоположени\w*|gps|приложения|настройки|режим полета|режим полёта|авиарежим|nfc|нфс|точку доступа|модем|мобильный интернет|мобильные данные|уведомлени\w*|безопасность|спецвозможности|специальные возможности|дату и время|память|хранилище)$""").find(t)?.let { m ->
             val s = m.groupValues[1]
             val section = when {
                 s.startsWith("режим пол") || s == "авиарежим" -> SettingsSection.AIRPLANE
@@ -263,7 +263,7 @@ object DevicePhrases {
                 s == "дату и время" -> SettingsSection.DATE_TIME
                 s == "память" || s == "хранилище" -> SettingsSection.STORAGE
                 s.contains("fi") || s.contains("фай") -> SettingsSection.WIFI
-                s.contains("блют") || s.contains("bluetooth") -> SettingsSection.BLUETOOTH
+                s.contains("блю") || s.contains("bluetooth") -> SettingsSection.BLUETOOTH
                 s == "звук" -> SettingsSection.SOUND
                 s == "экран" || s == "яркость" -> SettingsSection.DISPLAY
                 s.startsWith("батаре") -> SettingsSection.BATTERY

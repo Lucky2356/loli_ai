@@ -86,6 +86,11 @@ object RuNumbers {
                 w in teens -> { if (hasT || hasU || hasDigits) break@loop; group += teens.getValue(w); hasT = true; hasU = true }
                 w in tens -> { if (hasT || hasU || hasDigits) break@loop; group += tens.getValue(w); hasT = true }
                 w in units -> { if (hasU || hasDigits) break@loop; group += units.getValue(w); hasU = true }
+                // «две с половиной тысячи» = 2,5 тысячи
+                w == "с" && anyInGroup && !lastWasMultiplier && tokens.getOrNull(i + 1)?.norm.let { it == "половиной" || it == "половиною" } -> {
+                    group += 0.5; hasDigits = true; i += 2
+                    continue@loop
+                }
                 w in halfWords -> { if (anyInGroup) break@loop; group = 1.5; hasDigits = true }
                 w in pairWords -> { if (anyInGroup) break@loop; group = 2.0; hasDigits = true }
                 w in slang -> { if (anyInGroup) break@loop; group = slang.getValue(w).toDouble(); hasDigits = true }

@@ -687,6 +687,8 @@ class AssistantEngine(
         is AssistantAction.CompleteTask -> action.copy(target = action.target.withId(id))
         is AssistantAction.DeleteTask -> action.copy(target = action.target.withId(id))
         is AssistantAction.CancelReminder -> action.copy(target = action.target.withId(id))
+        is AssistantAction.RescheduleReminder -> action.copy(target = action.target.withId(id))
+        is AssistantAction.RescheduleTask -> action.copy(target = action.target.withId(id))
         is AssistantAction.ForgetMemory -> action.copy(target = action.target.withId(id))
         else -> action
     }

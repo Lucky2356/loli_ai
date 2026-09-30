@@ -128,6 +128,16 @@ class ActionExecutor(
         val created: RecordRef? = null,
     )
 
+    /** «Удалить заметку», а не «Удалить заметка». */
+    private fun accusative(t: RecordType): String = when (t) {
+        RecordType.NOTE -> "заметку"
+        RecordType.IDEA -> "идею"
+        RecordType.TASK -> "задачу"
+        RecordType.REMINDER -> "напоминание"
+        RecordType.EXPENSE -> "расход"
+        RecordType.MEMORY -> "запись в памяти"
+    }
+
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
     private fun query(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUERY)))
     private fun error(text: String) = Step(listOf(Outcome(text, Outcome.Kind.ERROR)))
@@ -168,7 +178,7 @@ class ActionExecutor(
 
             is AssistantAction.DeleteNote -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
                 is Resolution.Found -> Step(emptyList(), confirm = PendingConfirmation(
-                    "Удалить ${r.ref.type.titleRu.lowercase()} ${RuFormat.quote(r.ref.title)}?", listOf(DestructiveOp(r.ref.type, r.ref.id, r.ref.title)),
+                    "Удалить ${accusative(r.ref.type)} ${RuFormat.quote(r.ref.title)}?", listOf(DestructiveOp(r.ref.type, r.ref.id, r.ref.title)),
                 ))
                 is Resolution.Ambiguous -> ambiguous(r.options, "удалить", action)
                 Resolution.NotFound -> error("Не нашла такую запись.")
@@ -212,7 +222,7 @@ class ActionExecutor(
 
             is AssistantAction.CreateTask -> {
                 val t = tasks.create(action.title, action.details, action.dueDate, action.dueTime)
-                val due = t.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today)}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
+                val due = t.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today).removePrefix("в ")}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
                 changed("Добавила задачу ${RuFormat.quote(t.title)}$due.", RecordRef(RecordType.TASK, t.id, t.title))
             }
 
@@ -249,6 +259,50 @@ class ActionExecutor(
                 ))
                 is Resolution.Ambiguous -> ambiguous(r.options, "отменить", action)
                 Resolution.NotFound -> error("Не нашла такое напоминание.")
+            }
+
+            is AssistantAction.RescheduleReminder -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
+                is Resolution.Found -> {
+                    if (r.ref.type == RecordType.TASK) {
+                        // «Перенеси купить молоко на завтра» без слова «задачу» — нашлась задача.
+                        val t = tasks.get(r.ref.id) ?: return error("Задача не найдена.")
+                        val d = action.date ?: action.triggerAt?.atZone(zone)?.toLocalDate()
+                        val tm = action.time ?: action.triggerAt?.atZone(zone)?.toLocalTime()
+                        if (d == null && tm == null) return error("Задачу можно перенести на день или время, например: «на завтра».")
+                        val upd = tasks.update(t.copy(dueDate = d ?: t.dueDate ?: today, dueTime = tm ?: t.dueTime))
+                        val due = upd.dueDate?.let { dd -> " на ${RuFormat.dateFull(dd, today).removePrefix("в ")}" + (upd.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
+                        return changed("Перенесла задачу ${RuFormat.quote(upd.title)}$due.", r.ref)
+                    }
+                    val cur = reminders.get(r.ref.id) ?: return error("Напоминание не найдено.")
+                    // Сдвиг считается от срока, если он ещё впереди, иначе (уже сработало) — от «сейчас»: «отложи на 10 минут».
+                    val at = when {
+                        action.triggerAt != null -> action.triggerAt
+                        action.shiftSeconds != null -> (if (cur.active && cur.triggerAt.isAfter(now)) cur.triggerAt else now).plusSeconds(action.shiftSeconds)
+                        else -> {
+                            val base = cur.triggerAt.atZone(zone)
+                            var z = java.time.ZonedDateTime.of(action.date ?: base.toLocalDate(), action.time ?: base.toLocalTime(), zone)
+                            if (action.date == null && !z.toInstant().isAfter(now)) z = z.plusDays(1)
+                            z.toInstant()
+                        }
+                    }
+                    if (!at.isAfter(now)) return error("Это время уже прошло. Скажите, например: «перенеси на завтра в 10».")
+                    val updated = reminders.update(cur.copy(triggerAt = at, active = true))
+                    scheduler.schedule(updated)
+                    changed("Перенесла напоминание ${RuFormat.quote(updated.text)} на ${RuFormat.dateTime(at, zone, now)}.", r.ref)
+                }
+                is Resolution.Ambiguous -> ambiguous(r.options, "перенести", action)
+                Resolution.NotFound -> error("Не нашла, что переносить: такого напоминания или задачи нет.")
+            }
+
+            is AssistantAction.RescheduleTask -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
+                is Resolution.Found -> {
+                    val cur = tasks.get(r.ref.id) ?: return error("Задача не найдена.")
+                    val updated = tasks.update(cur.copy(dueDate = action.dueDate ?: cur.dueDate, dueTime = action.dueTime ?: cur.dueTime))
+                    val due = updated.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today).removePrefix("в ")}" + (updated.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
+                    changed("Перенесла задачу ${RuFormat.quote(updated.title)}$due.", r.ref)
+                }
+                is Resolution.Ambiguous -> ambiguous(r.options, "перенести", action)
+                Resolution.NotFound -> error("Не нашла такую задачу.")
             }
 
             AssistantAction.QueryReminders -> {
@@ -319,7 +373,7 @@ class ActionExecutor(
                 }
                 val target = lastRecord(action.type, ctx) ?: return query("Не нашла, что удалить.")
                 Step(emptyList(), confirm = PendingConfirmation(
-                    "Удалить ${target.type.titleRu.lowercase()} ${RuFormat.quote(target.title)}?",
+                    "Удалить ${accusative(target.type)} ${RuFormat.quote(target.title)}?",
                     listOf(DestructiveOp(target.type, target.id, target.title, cancelOnly = false)),
                 ))
             }

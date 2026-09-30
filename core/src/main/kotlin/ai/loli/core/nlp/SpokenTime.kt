@@ -35,7 +35,9 @@ object SpokenTime {
     private val minNomAlt = MINUTES_NOM.keys.sortedByDescending { it.length }.joinToString("|")
 
     private val ZERO = Regex("""(?iu)$L(\d{1,2}|$hourAlt)\s+ноль\s+(\d|$digitAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
-    private val HALF = Regex("""(?iu)${L}пол\s*-?\s*($ordAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
+    private val HALF = Regex("""(?iu)${L}(?:пол|половин[аеуы])\s*-?\s*($ordAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
+    /** «в час ночи» / «в час дня» — час как число (1:00), а не «через час». */
+    private val HOUR_ONE = Regex("""(?iu)${L}в\s+час\s+(ночи|дня|утра|вечера)$R""")
     private val QUARTER = Regex("""(?iu)${L}четверть\s+($ordAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
     private val MINUTES_PAST = Regex("""(?iu)$L(\d{1,2}|$minNomAlt)\s+минут\p{L}*\s+($ordAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
     private val WITHOUT = Regex("""(?iu)${L}без\s+(\d{1,2}|$minGenAlt)(?:\s+минут)?\s+(\d{1,2}|$hourAlt)$R(\s+(?:утра|дня|вечера|ночи))?""")
@@ -47,6 +49,7 @@ object SpokenTime {
             val d = m.groupValues[2].toIntOrNull() ?: DIGITS[m.groupValues[2].lowercase()] ?: return@replace m.value
             format(h, d, m.groupValues[3], spoken = false)
         }
+        t = HOUR_ONE.replace(t) { m -> "в 1:00 " + m.groupValues[1] }
         t = HALF.replace(t) { m -> ORDINAL_GEN[m.groupValues[1].lowercase()]?.let { format(prev(it), 30, m.groupValues[2]) } ?: m.value }
         t = QUARTER.replace(t) { m -> ORDINAL_GEN[m.groupValues[1].lowercase()]?.let { format(prev(it), 15, m.groupValues[2]) } ?: m.value }
         t = MINUTES_PAST.replace(t) { m ->

@@ -2,6 +2,7 @@ package ai.loli.app.health
 
 import android.content.Context
 import ai.loli.core.skills.IncomingMessage
+import ai.loli.core.voice.SpeechText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -20,7 +21,9 @@ class DrivingMode(context: Context, private val scope: CoroutineScope, private v
 
     fun onMessage(m: IncomingMessage) {
         if (!active()) return
-        scope.launch { speak("${m.sender} пишет в ${m.app}: ${m.text.take(300)}") }
+        // Как и любой ответ Лоли: без эмодзи и разметки, ссылки не читаются по буквам.
+        val text = m.text.take(300).replace(Regex("""https?://\S+|www\.\S+"""), "ссылка")
+        scope.launch { speak(SpeechText.forSpeech("${m.sender} пишет в ${m.app}: $text", maxLines = 1)) }
     }
 
     private companion object {

@@ -3,7 +3,6 @@ package ai.loli.app.device
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.Settings
@@ -12,7 +11,6 @@ import ai.loli.app.media.RingService
 import ai.loli.app.notify.LoliNotificationListener
 import ai.loli.app.reminders.GeoReminders
 import ai.loli.app.reminders.LoliTimers
-import ai.loli.core.nlp.TextAnalysis
 import ai.loli.core.skills.ActiveTimer
 import ai.loli.core.skills.CalendarItem
 import ai.loli.core.skills.ContactInfo
@@ -70,23 +68,7 @@ class AndroidSkillHost(
 
     override suspend fun contact(name: String): ContactInfo? {
         if (!permissions.ensure(Manifest.permission.READ_CONTACTS)) throw NeedsPermission(Permission.CONTACTS, "нет доступа к контактам")
-        return withContext(Dispatchers.IO) {
-            val stem = TextAnalysis.stems(name).firstOrNull() ?: name.lowercase()
-            val key = if (stem.length > 3) stem.take(stem.length.coerceAtMost(5)) else stem
-            val uri = Uri.withAppendedPath(ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI, Uri.encode(key))
-            var found: String? = null
-            val phones = ArrayList<String>()
-            context.contentResolver.query(
-                uri, arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null,
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val n = c.getString(0) ?: continue
-                    if (found == null) found = n
-                    if (n == found) c.getString(1)?.let { phones += it }
-                }
-            }
-            found?.let { ContactInfo(it, phones.distinctBy { p -> p.filter(Char::isDigit).takeLast(10) }) }
-        }
+        return withContext(Dispatchers.IO) { ContactLookup.find(context, name)?.let { ContactInfo(it.name, it.phones) } }
     }
 
     /** Дни рождения из контактов — только если доступ уже выдан: вопрос «у кого скоро ДР» не должен дёргать разрешения. */

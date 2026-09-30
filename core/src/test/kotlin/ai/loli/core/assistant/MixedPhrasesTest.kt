@@ -60,7 +60,7 @@ class MixedPhrasesTest {
 
     @Test fun reminderWithDontForget() {
         val r = assertIs<AssistantAction.CreateReminder>(actions("не забудь напомнить мне завтра про встречу").single())
-        assertEquals("Встречу", r.text)
+        assertEquals("Про встречу", r.text)
     }
 
     @Test fun onlineQuestionsOpenSearch() {

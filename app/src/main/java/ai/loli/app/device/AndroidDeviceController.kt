@@ -419,15 +419,9 @@ class AndroidDeviceController(
         val digits = who.filter { it.isDigit() || it == '+' }
         if (digits.count { it.isDigit() } >= 3) return digits to null
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return null
-        val stem = TextAnalysis.stems(who).firstOrNull() ?: norm(who)
-        val key = if (stem.length > 3) stem.take(stem.length.coerceAtMost(5)) else stem
-        val uri = Uri.withAppendedPath(ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI, Uri.encode(key))
-        context.contentResolver.query(
-            uri, arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME), null, null, null,
-        )?.use { c ->
-            if (c.moveToFirst()) return c.getString(0) to c.getString(1)
-        }
-        return null
+        val hit = ContactLookup.find(context, who) ?: return null
+        val number = hit.phones.firstOrNull() ?: return null
+        return number to hit.name
     }
 
     /** «Позвони маме» без доступа к контактам — спрашиваем разрешение прямо сейчас (для номера цифрами не нужно). */

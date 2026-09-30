@@ -69,7 +69,11 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
     /** «Купила молоко и хлеб» без суммы — вычеркнуть из покупок (решает движок: только если такие пункты есть). */
     fun boughtItems(input: String): List<String>? {
         val n = RuTokenizer.normalize(input.trim().trimEnd('.', '!'))
-        val m = Regex("""^(?:я\s+)?(?:уже\s+)?(?:купил|купила|купили|взял|взяла|взяли)\s+(.+)$""").find(n) ?: return null
+        val lists = """(?:списка\s+покупок|списка\s+продуктов|покупок|списка)"""
+        // «Вычеркни молоко», «убери молоко из списка», «убери из списка молоко» — тоже покупка; движок проверит, что пункт есть.
+        val m = Regex("""^(?:я\s+)?(?:уже\s+)?(?:купил|купила|купили|взял|взяла|взяли)\s+(.+)$""").find(n)
+            ?: Regex("""^(?:вычеркни|вычеркнуть|убери|удали)\s+(?:из\s+$lists\s+)?(.+?)(?:\s+из\s+$lists)?$""").find(n)
+            ?: return null
         if (Regex("""\d""").containsMatchIn(n) || Regex("""(?:рубл|₽|доллар|евро|тысяч|сотн|за\s)""").containsMatchIn(n)) return null
         return items(m.groupValues[1]).takeIf { it.isNotEmpty() }
     }
