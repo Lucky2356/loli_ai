@@ -11,7 +11,9 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -33,6 +35,8 @@ class RadioService : Service() {
     private var session: MediaSession? = null
     private var station: RadioStation? = null
     private var focus: AudioFocusRequest? = null
+    /** Пока поток играет, процессор и Wi-Fi не засыпают вместе с экраном — иначе радио обрывается через несколько минут. */
+    private var wifiLock: WifiManager.WifiLock? = null
     /** Пауза из-за звонка или навигатора: когда звук вернут — продолжаем. */
     private var resumeOnGain = false
     private val attrs: AudioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
@@ -48,7 +52,7 @@ class RadioService : Service() {
                     player?.let { runCatching { it.setVolume(1f, 1f) } }
                     if (resumeOnGain) {
                         resumeOnGain = false
-                        player?.let { p -> runCatching { p.start() }.onSuccess { state(PlaybackState.STATE_PLAYING); station?.let { foreground(it, playing = true) } } }
+                        player?.let { p -> runCatching { p.start() }.onSuccess { holdWifi(); state(PlaybackState.STATE_PLAYING); station?.let { foreground(it, playing = true) } } }
                     }
                 }
             }
@@ -90,8 +94,10 @@ class RadioService : Service() {
         player?.release()
         resumeOnGain = false
         getSystemService(AudioManager::class.java)?.requestAudioFocus(focusRequest())
+        holdWifi()
         player = MediaPlayer().apply {
             setAudioAttributes(attrs)
+            runCatching { setWakeMode(this@RadioService, PowerManager.PARTIAL_WAKE_LOCK) }
             setOnPreparedListener { mp ->
                 mp.start()
                 state(PlaybackState.STATE_PLAYING)
@@ -111,8 +117,22 @@ class RadioService : Service() {
         state(PlaybackState.STATE_BUFFERING)
     }
 
+    private fun holdWifi() {
+        if (wifiLock?.isHeld == true) return
+        wifiLock = runCatching {
+            applicationContext.getSystemService(WifiManager::class.java)
+                ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "loli:radio")?.apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
+    }
+
+    private fun releaseWifi() {
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wifiLock = null
+    }
+
     private fun pause() {
         player?.let { runCatching { it.pause() } }
+        releaseWifi()
         state(PlaybackState.STATE_PAUSED)
         station?.let { foreground(it, playing = false) }
     }
@@ -153,6 +173,7 @@ class RadioService : Service() {
     }
 
     private fun stopAll() {
+        releaseWifi()
         player?.let { runCatching { it.stop() }; it.release() }
         player = null
         current = null
@@ -164,6 +185,7 @@ class RadioService : Service() {
     }
 
     override fun onDestroy() {
+        releaseWifi()
         focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
         player?.release()
         player = null

@@ -66,6 +66,17 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             if (body.isNotEmpty()) text = "добавь задачу $body"
         }
 
+        // «Напомни в 7 утра и в 7 вечера пить таблетки» — два напоминания с одним текстом.
+        TWO_TIMES.find(text)?.let { m ->
+            val head = m.groupValues[1]
+            val rest = m.groupValues[4]
+            val first = parseCleaned("$head ${m.groupValues[2]} $rest", now, zone)
+            val second = parseCleaned("$head ${m.groupValues[3]} $rest", now, zone)
+            if (first != null && second != null && first.actions.size == 1 && second.actions.size == 1 &&
+                first.actions.single() is AssistantAction.CreateReminder && second.actions.single() is AssistantAction.CreateReminder
+            ) return AssistantPlan("", first.actions + second.actions)
+        }
+
         wholePhrase(text, now, zone)?.let { return it }
 
         val clauses = smartClauses(text, now, zone, today)
@@ -566,9 +577,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
     private fun parseTaskQuery(n: String): AssistantAction? {
         if (Regex("""^(добавь|создай|запиши|внеси|поставь|заведи)\s""").containsMatchIn(n)) return null
-        val hit = Regex("""(покажи|какие|мои|список|что у меня|что по|сколько( у меня)?|перечисли|выведи)\s.*(задач|дел\b|дела\b)|^(задачи|мои дела|список дел)$""").containsMatchIn(n)
+        val hit = Regex("""(покажи|какие|мои|список|что у меня|что по|сколько( у меня)?|перечисли|выведи)\s.*(задач|дел\b|дела\b)|^(задачи|мои дела|список дел)$|^(?:просроченные|выполненные|невыполненные|активные|текущие|все|мои)\s+(?:задачи|дела)(?:\s+на\s+.+)?$""").containsMatchIn(n)
         if (!hit) return null
         val filter = when {
+            n.contains("невыполн") -> TaskFilter.ACTIVE
             n.contains("просроч") || n.contains("не успел") -> TaskFilter.OVERDUE
             n.contains("сегодня") -> TaskFilter.TODAY
             n.contains("завтра") -> TaskFilter.TOMORROW
@@ -610,6 +622,12 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 return AssistantAction.RescheduleReminder(target(tail.groupValues[1]), shiftSeconds = off.seconds)
             }
         }
+        // «Отложи 10 минут», «сдвинь полчаса» — без «на»: последнее напоминание на этот срок.
+        if (tail == null && !isTask && !hasNoun && Regex("""^(?:\d+|полчаса|полтора|час|пару|пол\s?часа)\b""").containsMatchIn(bn)) {
+            val bare = dates.parse("через $body", today)
+            val off = bare.spec.offset
+            if (off != null && bare.remainder.isBlank()) return AssistantAction.RescheduleReminder(TargetRef(null, null, types), shiftSeconds = off.seconds)
+        }
         val parsed = dates.parse(body, today)
         val spec = parsed.spec
         if (spec.isEmpty) return null
@@ -645,6 +663,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         Regex("""^запланируй\s+(.+)$""").find(n)?.let { p ->
             if (!Regex("""^(?:задач|напомин|встреч|событ)""").containsMatchIn(p.groupValues[1])) return taskFrom(sub(original, p.groups[1]!!), today)
         }
+        // «Задача купить молоко выполнена» — отметка, а не новая задача.
+        if (Regex("""^(?:задача\s+)?.+\s(?:выполнена|сделана|готова|завершена)$""").containsMatchIn(n) && n.startsWith("задача ")) return null
         val m = Regex("""^(?:(?:мне\s+)?(?:надо|нужно)\s+)?(?:(?:добавь|добавить|создай|создать|запиши|записать|поставь|поставить|заведи|завести|внеси|сделай|запланируй)\s+)?(?:мне\s+)?(?:(?:новую\s+)?(?:задачу|задачку)|в\s+(?:мои\s+)?(?:задачи|задачки|задачу|планы|план)|в\s+список\s+задач|в\s+список\s+дел|в\s+(?:мои\s+)?дела|новая\s+задача|задача|в\s+туду|туду)[:,]?\s+(.+)$""").find(n) ?: return null
         // «задачи на завтра» / «задача на сегодня какая?» — это вопрос, а не создание
         if (Regex("""^(?:задачи|задача)\s""").containsMatchIn(n) && dates.parse(sub(original, m.groups[1]!!), today).remainder.isBlank()) return null
@@ -719,6 +739,10 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     // --- Удаление по описанию -------------------------------------------------
 
     private fun parseDelete(original: String, n: String): AssistantAction? {
+        // «Удали все напоминания», «очисти все задачи» — одним вопросом с подтверждением.
+        Regex("""^(?:удали|удалить|очисти|сотри|убери|отмени)\s+(?:все|всё|мои|все мои)\s+(напоминания|задачи)$""").find(n)?.let { m ->
+            return AssistantAction.DeleteAll(if (m.groupValues[1] == "задачи") RecordType.TASK else RecordType.REMINDER)
+        }
         val m = Regex("""^(?:удали|удалить|сотри|убери)\s+(заметку|идею|задачу|напоминание|из памяти)\s+(?:про\s+|о\s+|об\s+|что\s+)?(.+)$""").find(n)
             ?: Regex("""^(?:отмени|отменить)\s+(напоминание)\s+(?:про\s+|о\s+)?(.+)$""").find(n)
             ?: Regex("""^(забудь)[,]?\s+(?:что\s+|про\s+|о\s+)?(.+)$""").find(n)
@@ -847,7 +871,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             return plan(base.copy(category = ExpenseCategories.INCOME, mode = ReportMode.TOTAL))
         }
         // Разделы самого приложения.
-        Regex("""^(?:открой|покажи)\s+(?:мои\s+|все\s+)?(заметки|идеи|записи)$""").find(n)?.let {
+        Regex("""^(?:(?:открой|покажи)\s+(?:мои\s+|все\s+)?|какие\s+(?:у меня\s+|есть\s+)(?:мои\s+)?)(заметки|идеи|записи)$""").find(n)?.let {
             return AssistantPlan("${it.groupValues[1].replaceFirstChar { c -> c.uppercase() }} — на вкладке «Записи». Могу и найти нужную: скажите «найди заметку про …».", emptyList())
         }
         // Что в списке покупок.
@@ -1000,6 +1024,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val continuesExpense = prev is AssistantAction.CreateExpense
         if (amountIdx == null) {
             // «потратила на продукты» — сумма не названа: спросим
+            // «Оплатить кредит», «заплатить за интернет» — намерение (задача), а не рассказ о трате: суммы не спрашиваем.
+            val onlyInfinitive = hasVerb && !explicit && tokens.filter { t -> SPEND_PREFIXES.any { t.norm.startsWith(it) } }.all { it.norm.endsWith("ть") || it.norm.endsWith("ться") }
+            if (onlyInfinitive) return null
             if ((hasVerb || explicit) && !n.contains("сколько")) {
                 val desc = descriptionFrom(tokens, null)
                 if (desc.isNotEmpty() || explicit) {
@@ -1228,6 +1255,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         /** Выход из диалогового режима. */
         /** Места, где фразу можно разрезать: запятые и союзы «и», «а», «но», «потом», «затем», «после этого». */
         private val SEGMENT_SEP = Regex("""(?:(?<!\d),|,(?!\d))\s*(?:(?:а|и|но)\s+)?(?:(?:ещё|еще|потом|затем|также|кроме того|после этого|после)\s+)?|\s+(?:и|а|но)\s+(?:(?:ещё|еще|потом|затем|также)\s+)?|\s+(?:а потом|потом|затем|после этого|а ещё|а еще|кроме того)\s+""", RegexOption.IGNORE_CASE)
+        private const val TIME_AT = """(?:в|к|на)\s+\d{1,2}(?::\d{2})?(?:\s+(?:утра|дня|вечера|ночи))?"""
+        private val TWO_TIMES = Regex("""^(напомни(?:те)?(?:\s+мне)?)\s+($TIME_AT)\s+и\s+($TIME_AT)\s+(.+)$""", RegexOption.IGNORE_CASE)
         private val SUBORDINATE = Regex("""^\s*(?:что|чтобы|о том|об этом|будто|который|которая|которое|которые)(?=[\s,]|$)""", RegexOption.IGNORE_CASE)
         private val TRAILING_BARE = Regex("""^(.+?)[,.]\s*(?:запиши|добавь|запомни|сохрани)(?:\s+это)?$""", RegexOption.IGNORE_CASE)
         private val TRAILING_TASK = Regex("""^(.+?)[,.]?\s+(?:запиши|добавь|поставь|заведи|создай|сделай)\s+(?:это\s+)?(?:как\s+|в\s+)?(?:задачу|задачи|задачку|дела)$""", RegexOption.IGNORE_CASE)

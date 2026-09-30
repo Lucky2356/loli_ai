@@ -261,6 +261,18 @@ class ActionExecutor(
                 Resolution.NotFound -> error("Не нашла такое напоминание.")
             }
 
+            is AssistantAction.DeleteAll -> {
+                val (ops, name) = when (action.type) {
+                    RecordType.REMINDER -> reminders.active().map { DestructiveOp(RecordType.REMINDER, it.id, it.text, cancelOnly = true) } to
+                        Triple("активное напоминание", "активных напоминания", "активных напоминаний")
+                    RecordType.TASK -> tasks.all().filter { !it.done }.map { DestructiveOp(RecordType.TASK, it.id, it.title) } to
+                        Triple("задачу в работе", "задачи в работе", "задач в работе")
+                    else -> return error("Так удалять сразу всё не умею.")
+                }
+                if (ops.isEmpty()) return query(if (action.type == RecordType.TASK) "Активных задач нет — удалять нечего." else "Активных напоминаний нет — удалять нечего.")
+                Step(emptyList(), confirm = PendingConfirmation("Удалить ${ExpenseAnalytics.plural(ops.size, name.first, name.second, name.third)}?", ops))
+            }
+
             is AssistantAction.RescheduleReminder -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
                 is Resolution.Found -> {
                     if (r.ref.type == RecordType.TASK) {
@@ -614,7 +626,7 @@ class ActionExecutor(
         val overdue = if (date == today) all.filter { it.isOverdue(today, nowTime) && it.dueDate != today } else emptyList()
         val dayReminders = reminders.active().filter { it.triggerAt.atZone(zone).toLocalDate() == date }
         val spent = if (!date.isAfter(today)) expenses.between(date, date) else emptyList()
-        val dayName = RuFormat.date(date, today)
+        val dayName = RuFormat.date(date, today).removePrefix("в ")
         val extras = try { agendaExtras(date) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { ai.loli.core.skills.AgendaExtras() }
         val weather = (extras.weather?.let { "$it\n" } ?: "") +
             (if (extras.birthdays.isNotEmpty()) "${if (date == today) "Сегодня" else "В этот день"} день рождения: ${extras.birthdays.joinToString(", ")} — можно сказать «поздравь ${extras.birthdays.first().substringBefore(' ')}».\n" else "")

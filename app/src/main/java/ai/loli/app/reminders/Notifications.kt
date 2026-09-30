@@ -21,6 +21,8 @@ object Notifications {
     /** Радио и отсчёт таймеров. */
     const val CHANNEL_MEDIA = "media"
     const val RING_ID = 1010
+    /** Утренняя сводка. Раньше делила id 1010 с сигналом таймера: сигнал затирал сводку и убирал её при остановке. */
+    const val BRIEF_ID = 1012
     const val RADIO_ID = 1011
     const val TIMER_BASE_ID = 200_000
     const val GEO_BASE_ID = 1200

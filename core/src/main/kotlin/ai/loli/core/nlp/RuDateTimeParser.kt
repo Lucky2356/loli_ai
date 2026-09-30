@@ -19,6 +19,8 @@ data class WhenSpec(
     val recurrence: Recurrence? = null,
     /** Час назван без «утра/вечера» («в 5») — может означать и 05:00, и 17:00. */
     val ambiguousHour: Boolean = false,
+    /** День недели назван словом («в пятницу»); нужен, чтобы в саму пятницу до названного часа взять сегодня, а не через неделю. */
+    val weekday: DayOfWeek? = null,
 ) {
     val isEmpty: Boolean get() = date == null && time == null && offset == null && recurrence == null
 }
@@ -82,6 +84,11 @@ class RuDateTimeParser {
             )
             return options.filter { it.isAfter(nowZ) }.minOf { it }.toInstant()
         }
+        // «Напомни в пятницу в 18:00», когда сегодня пятница и 18:00 ещё впереди, — это сегодня, а не через неделю.
+        if (spec.weekday != null && spec.date != null && spec.time != null && spec.weekday == nowZ.dayOfWeek && spec.date == nowZ.toLocalDate().plusWeeks(1)) {
+            val sameDay = ZonedDateTime.of(nowZ.toLocalDate(), time, zone)
+            if (sameDay.isAfter(nowZ)) return sameDay.toInstant()
+        }
         var candidate = ZonedDateTime.of(date, time, zone)
         if (spec.date == null && !candidate.isAfter(nowZ)) candidate = candidate.plusDays(1)
         return candidate.toInstant()
@@ -135,6 +142,17 @@ class RuDateTimeParser {
             "ежемесячно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.MONTHLY)))
             "ежегодно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.YEARLY)))
             "ежечасно" -> return Match(1, spec.copy(recurrence = Recurrence(Recurrence.Frequency.HOURLY)))
+        }
+        // «раз в неделю», «раз в день» — то же, что «каждую неделю», «каждый день»
+        if (w == "раз" && at(i + 1) == "в") {
+            val freq = when (at(i + 2)) {
+                "день" -> Recurrence.Frequency.DAILY
+                "неделю" -> Recurrence.Frequency.WEEKLY
+                "месяц" -> Recurrence.Frequency.MONTHLY
+                "год" -> Recurrence.Frequency.YEARLY
+                else -> null
+            }
+            if (freq != null) return Match(3, spec.copy(recurrence = Recurrence(freq)))
         }
         if (w == "по") {
             val next = at(i + 1)
@@ -253,13 +271,13 @@ class RuDateTimeParser {
             if (at(k)?.startsWith("эт") == true) k++ // «в эту пятницу»
             val day = WEEKDAY_ANY[at(k)]
             if (day != null) {
-                return Match(k - i + 1, spec.copy(date = nextWeekday(today, day, forceNextWeek)))
+                return Match(k - i + 1, spec.copy(date = nextWeekday(today, day, forceNextWeek), weekday = if (forceNextWeek) null else day))
             }
         }
         WEEKDAY_ACC[w]?.let { day ->
             // Голый день недели без предлога, например «завтра» уже обработано; «пятница 10 утра»
             if (i == 0 || t[i - 1].norm !in setOf("каждый", "каждую", "каждое")) {
-                return Match(1, spec.copy(date = nextWeekday(today, day, false)))
+                return Match(1, spec.copy(date = nextWeekday(today, day, false), weekday = day))
             }
         }
 
@@ -373,6 +391,13 @@ class RuDateTimeParser {
         if ((w == "на" && at(i + 1) == "выходных") || (w == "в" && at(i + 1) == "выходные")) {
             val sat = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SATURDAY)).let { if (it == today) it else it }
             return Match(2, spec.copy(date = sat))
+        }
+        // «до конца месяца», «в конце недели» — последний день месяца / пятница (после пятницы — воскресенье)
+        if ((w == "до" || w == "в") && (at(i + 1) == "конца" || at(i + 1) == "конце")) {
+            when (at(i + 2)) {
+                "месяца" -> return Match(3, spec.copy(date = today.withDayOfMonth(today.lengthOfMonth())))
+                "недели" -> return Match(3, spec.copy(date = today.with(TemporalAdjusters.nextOrSame(if (today.dayOfWeek.value <= 5) DayOfWeek.FRIDAY else DayOfWeek.SUNDAY))))
+            }
         }
         PART_OF_DAY_ADVERBS[w]?.let { time ->
             if (spec.time == null) return Match(1, spec.copy(time = time))

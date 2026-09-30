@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
  */
 object MorningBrief {
     private const val WORK = "loli-morning-brief"
-    const val NOTIFICATION_ID = 1010
+    const val NOTIFICATION_ID = Notifications.BRIEF_ID
     private val AT: LocalTime = LocalTime.of(8, 30)
 
     fun schedule(context: Context, enabled: Boolean) {
