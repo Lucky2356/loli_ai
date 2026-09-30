@@ -77,6 +77,19 @@ sealed interface AssistantAction {
 
     data class CancelReminder(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 
+    /** «Перенеси напоминание про мясо на 9 вечера» ([triggerAt]) или «сдвинь на час» ([shiftSeconds] от текущего срока). */
+    data class RescheduleReminder(
+        val target: TargetRef,
+        val triggerAt: Instant? = null,
+        val shiftSeconds: Long? = null,
+        /** «На завтра» — меняется только день, время остаётся; «на 9 вечера» — только время. */
+        val date: LocalDate? = null,
+        val time: LocalTime? = null,
+    ) : AssistantAction
+
+    /** «Перенеси задачу купить молоко на завтра». */
+    data class RescheduleTask(val target: TargetRef, val dueDate: LocalDate?, val dueTime: LocalTime?) : AssistantAction
+
     data object QueryReminders : AssistantAction
 
     data class Remember(val content: String, val category: String) : AssistantAction

@@ -367,6 +367,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         // Команды телефону: таймер, будильник, фонарик, звонок, приложения, музыка, громкость…
         DevicePhrases.parse(n, now, zone)?.let { return plan(AssistantAction.Device(recase(it.command, original))) }
         // Доходы, долги, накопления, дни рождения, списки покупок.
+        parseReschedule(original, n, now, zone, today)?.let { return plan(it) }
         parseLife(original, n, now, zone, today)?.let { return it }
         // «Напиши заметку: список дел на выходные» — это новая заметка, а не вопрос о задачах.
         if (Regex("""^(?:напиши|запиши|создай|сделай|сохрани|заведи)\s+(?:новую\s+)?заметк""").containsMatchIn(n)) {
@@ -531,7 +532,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val rawText = parsedRaw.remainder.trim().trim(',', '.').trim()
         val isReference = Regex("""^(об этом|про это|это|о ней|о нем|о нём|про неё|про нее|про него)$""").matches(RuTokenizer.normalize(rawText))
         var text = if (isReference) "" else rawText
-            .replace(Regex("""^(что|о том,? что|о том|про|о|об|чтобы|,)\s+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^(?:(?:о том|про то)(?:,?\s+(?:что|чтобы))?|что|чтобы|,)\s+""", RegexOption.IGNORE_CASE), "")
+            // «напомни про встречу» → «Про встречу» (падеж сломался бы), «напомни про то, чтобы позвонить» уже снято выше.
+            .replace(Regex("""^(?:про|о|об)\s+(?=\p{L}+(?:ть|ться|ти|чь)(?![\p{L}]))""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""^(?:(?:мне|нам)\s+)?(?:надо|нужно|необходимо|пора|следует|не забыть|не забудь)\s+""", RegexOption.IGNORE_CASE), "")
             .trim().trim(',', '.').trim()
             .let { if (it.isEmpty()) it else ActionTitle.clean(it) }
@@ -575,6 +578,49 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             else -> TaskFilter.ACTIVE
         }
         return AssistantAction.QueryTasks(filter)
+    }
+
+    /**
+     * «Перенеси напоминание про мясо на 9 вечера», «сдвинь на час», «перенеси задачу купить молоко на завтра»,
+     * «отложи на 10 минут». Без этого фраза превращалась в новое напоминание «Перенеси напоминание…».
+     */
+    private fun parseReschedule(original: String, n: String, now: Instant, zone: ZoneId, today: LocalDate): AssistantAction? {
+        val m = Regex("""^(?:пожалуйста\s+)?(?:перенеси|перенести|сдвинь|сдвинуть|передвинь|отодвинь|отложи)(?:те)?(?:\s+мне)?\s+(.+)$""").find(n) ?: return null
+        val body = sub(original, m.groups[1]!!)
+        val bn = m.groupValues[1]
+        val isTask = Regex("""^(?:мою\s+|эту\s+)?(?:задач|дело(?:\s|$)|дела(?:\s|$))""").containsMatchIn(bn)
+        val hasNoun = Regex("""^(?:мо[ёеию]\s+|эт\w+\s+)?(?:напоминани|задач|дело(?:\s|$)|дела(?:\s|$))""").containsMatchIn(bn)
+        // «Отложи 5000 на отпуск» — накопления, а не перенос.
+        if (Regex("""^отложи""").containsMatchIn(n) && !hasNoun && Regex("""\d""").containsMatchIn(bn) && !Regex("""(?:минут|час|дн|недел|сутк)""").containsMatchIn(bn)) return null
+        val types = when { isTask -> setOf(RecordType.TASK); hasNoun -> setOf(RecordType.REMINDER); else -> setOf(RecordType.REMINDER, RecordType.TASK) }
+        fun target(head: String): TargetRef {
+            val q = head.trim(' ', ',', '«', '»', '"')
+                .replace(Regex("""^(?:мо[ёеию]\s+|эт\w+\s+)?(?:напоминани\w*|задач\w*|дел[оа])\s*""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""^(?:про|о|об)\s+""", RegexOption.IGNORE_CASE), "")
+                .trim()
+            val pronoun = Regex("""^(?:его|ее|её|это|эту|этого)$""", RegexOption.IGNORE_CASE).matches(q)
+            return TargetRef(null, if (q.isEmpty() || pronoun) null else q, types)
+        }
+        // Сдвиг на срок: «на час», «на полчаса», «на 10 минут», «на два дня». Разбираем как «через …».
+        val tail = Regex("""^(.*?)\s*(?:^|\s)на\s+(.+)$""").find(body)
+        if (tail != null) {
+            val shifted = dates.parse("через " + tail.groupValues[2], today)
+            val off = shifted.spec.offset
+            if (off != null && shifted.spec.date == null && shifted.spec.time == null && shifted.remainder.isBlank() && !isTask) {
+                return AssistantAction.RescheduleReminder(target(tail.groupValues[1]), shiftSeconds = off.seconds)
+            }
+        }
+        val parsed = dates.parse(body, today)
+        val spec = parsed.spec
+        if (spec.isEmpty) return null
+        val head = parsed.remainder
+        if (isTask) {
+            if (spec.date == null && spec.time == null) return null
+            return AssistantAction.RescheduleTask(target(head), spec.date, spec.time)
+        }
+        spec.offset?.let { off -> if (spec.date == null && spec.time == null) return AssistantAction.RescheduleReminder(target(head), triggerAt = now.plus(off)) }
+        if (spec.date == null && spec.time == null) return null
+        return AssistantAction.RescheduleReminder(target(head), date = spec.date, time = spec.time)
     }
 
     private fun parseCompleteTask(original: String, n: String): AssistantAction? {
@@ -854,8 +900,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         }
         // День рождения: «у Маши день рождения 12 октября», «день рождения мамы 5 мая» — каждый год + память.
         (Regex("""^(?:у\s+)?([а-я]+(?:\s[а-я]+)?)\s+(?:день рождения|др|днюха)\s+(.+)$""").find(n)
-            ?.takeIf { it.groupValues[1] !in setOf("мой", "моя", "меня", "у меня", "наш") }
-            ?: Regex("""^(?:день рождения|др)\s+(?:у\s+)?([а-я]+(?:\s[а-я]+)?)\s+(.+)$""").find(n))?.let { m ->
+            ?.takeIf { it.groupValues[1] !in setOf("мой", "моя", "меня", "у меня", "наш") && !Regex("""^(?:напомни|запомни|запиши|добавь|поставь)""").containsMatchIn(it.groupValues[1]) }
+            ?: Regex("""^(?:(?:напомни(?:\s+мне)?|запомни|запиши)\s+(?:про\s+|о\s+|об\s+|что\s+)?)?(?:день рождения|др)\s+(?:у\s+)?([а-я]+(?:\s[а-я]+)?)\s+(.+)$""").find(n))?.let { m ->
             // Имя остаётся в родительном падеже, как сказано: «у Маши» → «День рождения Маши».
             val who = sub(original, m.groups[1]!!)
             val spec = dates.parse(m.groupValues[2], today).spec
@@ -945,6 +991,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     // --- Расходы: запись ------------------------------------------------------------
 
     private fun parseExpense(original: String, n: String, today: LocalDate, prev: AssistantAction?): AssistantPlan? {
+        // «Поставь лимит на продукты 20000» — это не трата (лимитов в Лоли нет), выдумывать расход нельзя.
+        if (Regex("""(?:^|\s)(?:лимит|бюджет)\w*""").containsMatchIn(n)) return null
         val tokens = RuTokenizer.tokenize(original)
         val hasVerb = tokens.any { t -> SPEND_PREFIXES.any { t.norm.startsWith(it) } }
         val explicit = Regex("""^(?:запиши|добавь|внеси)?\s*(?:расход|трату|покупку|траты)\b""").containsMatchIn(n)
@@ -1179,7 +1227,7 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
 
         /** Выход из диалогового режима. */
         /** Места, где фразу можно разрезать: запятые и союзы «и», «а», «но», «потом», «затем», «после этого». */
-        private val SEGMENT_SEP = Regex(""",\s*(?:(?:а|и|но)\s+)?(?:(?:ещё|еще|потом|затем|также|кроме того|после этого|после)\s+)?|\s+(?:и|а|но)\s+(?:(?:ещё|еще|потом|затем|также)\s+)?|\s+(?:а потом|потом|затем|после этого|а ещё|а еще|кроме того)\s+""", RegexOption.IGNORE_CASE)
+        private val SEGMENT_SEP = Regex("""(?:(?<!\d),|,(?!\d))\s*(?:(?:а|и|но)\s+)?(?:(?:ещё|еще|потом|затем|также|кроме того|после этого|после)\s+)?|\s+(?:и|а|но)\s+(?:(?:ещё|еще|потом|затем|также)\s+)?|\s+(?:а потом|потом|затем|после этого|а ещё|а еще|кроме того)\s+""", RegexOption.IGNORE_CASE)
         private val SUBORDINATE = Regex("""^\s*(?:что|чтобы|о том|об этом|будто|который|которая|которое|которые)(?=[\s,]|$)""", RegexOption.IGNORE_CASE)
         private val TRAILING_BARE = Regex("""^(.+?)[,.]\s*(?:запиши|добавь|запомни|сохрани)(?:\s+это)?$""", RegexOption.IGNORE_CASE)
         private val TRAILING_TASK = Regex("""^(.+?)[,.]?\s+(?:запиши|добавь|поставь|заведи|создай|сделай)\s+(?:это\s+)?(?:как\s+|в\s+)?(?:задачу|задачи|задачку|дела)$""", RegexOption.IGNORE_CASE)

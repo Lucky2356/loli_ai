@@ -46,7 +46,7 @@ class LoliNotificationListener : NotificationListenerService() {
         val trusted = sbn.packageName in MESSENGERS ||
             sbn.packageName == runCatching { android.provider.Telephony.Sms.getDefaultSmsPackage(this) }.getOrNull()
         if (!trusted) return
-        val (sender, text) = parse(extras) ?: return
+        val (sender, text, latest) = parse(extras) ?: return
         val reply = n.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
         val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val msg = IncomingMessage(sbn.key, app, sender, text, Instant.ofEpochMilli(sbn.postTime), canReply = reply != null)
@@ -58,11 +58,12 @@ class LoliNotificationListener : NotificationListenerService() {
             before != text
         }
         // Режим «за рулём»: новое сообщение (а не повтор того же уведомления) — читаем вслух.
-        if (fresh && isNew) runCatching { onNewMessage?.invoke(msg) }
+        // Читаем только последнее сообщение чата: в тексте уведомления (MessagingStyle) висят и предыдущие, они уже прозвучали.
+        if (fresh && isNew) runCatching { onNewMessage?.invoke(msg.copy(text = latest)) }
     }
 
     /** Отправитель и текст: из MessagingStyle (последние сообщения чата) или из заголовка/текста. */
-    private fun parse(extras: Bundle): Pair<String, String>? {
+    private fun parse(extras: Bundle): Triple<String, String, String>? {
         val title = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()
             ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
             ?: return null
@@ -70,13 +71,14 @@ class LoliNotificationListener : NotificationListenerService() {
             @Suppress("DEPRECATION")
             extras.getParcelableArray(Notification.EXTRA_MESSAGES)?.mapNotNull { (it as? Bundle)?.getCharSequence("text")?.toString() }
         }.getOrNull().orEmpty()
+        val latest = messages.lastOrNull { it.isNotBlank() }?.trim()
         val text = messages.takeLast(3).joinToString(" · ").ifBlank {
             (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
         }.trim()
         if (text.isBlank()) return null
         // «2 новых сообщения» — сводка без текста, не читаем.
         if (Regex("""^\d+\s+(?:новых?|new)\s""", RegexOption.IGNORE_CASE).containsMatchIn(text)) return null
-        return title.trim() to text
+        return Triple(title.trim(), text, latest ?: text)
     }
 
     private data class Entry(val message: IncomingMessage, val reply: Notification.Action?)

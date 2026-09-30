@@ -70,7 +70,7 @@ object HabitPhrases {
     )
 
     private val DRINK = """(?:выпил[аи]?|попил[аи]?|выпью|пью|выдула|выдул)"""
-    private val GLASS_WORDS = """(?:стакан\S*|кружк\S*|чашк\S*|бутылк\S*|литр\S*|пол-?литр\S*|полстакана|пол стакана)"""
+    private val GLASS_WORDS = """(?:стакан\S*|кружк\S*|чашк\S*|бутылк\S*|литр\S*|пол-?литр\S*|полстакана|пол стакана|мл|миллилитр\S*|л)"""
 
     private val MONTHS = listOf("январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр")
     private const val DATE = """(\d{1,2}\s+(?:январ|феврал|март|апрел|ма[яйе]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*(?:\s+\d{4})?|\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)"""
@@ -128,7 +128,7 @@ object HabitPhrases {
         if (rx("""сколько\s+(?:я\s+)?(?:сегодня\s+)?(?:воды\s+)?(?:я\s+)?(?:выпил[аи]?|попил[аи]?)(?:\s+(?:сегодня|воды))*$|сколько\s+(?:сегодня\s+)?(?:стаканов|воды)\s+(?:я\s+)?(?:выпил[аи]?|попил[аи]?)|^(?:моя\s+)?(?:норма|статистика)\s+воды|^(?:сколько\s+)?(?:мне\s+)?(?:еще|ещё)\s+(?:пить|выпить)\s+воды|^как\s+(?:у меня\s+)?с\s+водой""").containsMatchIn(t)) {
             return HabitCommand.WaterToday
         }
-        val water = rx("""^(?:я\s+)?(?:(?:только что|сейчас|уже)\s+)?(?:$DRINK|отметь|запиши|засчитай|добавь)\s+(?:еще\s+|ещё\s+)?(?:(\d+(?:[.,]\d+)?|один|одну|пол)\s+)?($GLASS_WORDS)?\s*(?:воды|водички|водицы|воду)?$""").find(t)
+        val water = rx("""^(?:я\s+)?(?:(?:только что|сейчас|уже)\s+)?(?:$DRINK|отметь|запиши|засчитай|добавь)\s+(?:еще\s+|ещё\s+)?(?:(\d+(?:[.,]\d+)?|один|одну|пол|полтора|полторы)\s+)?($GLASS_WORDS)?\s*(?:воды|водички|водицы|воду)?$""").find(t)
         if (water != null && (t.contains("вод") || (water.groupValues[2].isNotEmpty() && rx("""^(?:я\s+)?$DRINK""").containsMatchIn(t) && !rx("""кофе|чая|чай|сока|молока|пива|вина|кефира""").containsMatchIn(t)))) {
             val unit = water.groupValues[2]
             if (unit.isNotEmpty() || t.contains("вод")) return HabitCommand.Water(glasses(water.groupValues[1], unit))
@@ -173,11 +173,12 @@ object HabitPhrases {
     }
 
     private fun glasses(n: String, unit: String): Double {
-        val count = when (n) { "", "один", "одну" -> 1.0; "пол" -> 0.5; else -> n.replace(',', '.').toDoubleOrNull() ?: 1.0 }
+        val count = when (n) { "", "один", "одну" -> 1.0; "пол" -> 0.5; "полтора", "полторы" -> 1.5; else -> n.replace(',', '.').toDoubleOrNull() ?: 1.0 }
         return when {
             unit.startsWith("пол") && unit.contains("литр") -> 2.0
             unit.startsWith("полстакан") || unit.startsWith("пол стакан") -> 0.5
-            unit.startsWith("литр") -> count * 4
+            unit == "мл" || unit.startsWith("миллилитр") -> count / 250
+            unit == "л" || unit.startsWith("литр") -> count * 4
             unit.startsWith("бутылк") -> count * 2
             else -> count
         }
