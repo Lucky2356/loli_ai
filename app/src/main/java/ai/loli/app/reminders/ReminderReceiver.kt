@@ -14,6 +14,8 @@ import ai.loli.core.assistant.RuFormat
 import ai.loli.core.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -55,24 +57,30 @@ class ReminderReceiver : BroadcastReceiver() {
         private const val SNOOZE_MINUTES = 10L
         /** Опоздание меньше этого порога не показываем: будильники системы и так плавают на минуту. */
         private val LATE_NOTE_AFTER = Duration.ofMinutes(2)
+        private const val EARLY_TOLERANCE_SECONDS = 5L
         fun notificationId(id: String) = 5000 + (id.hashCode() and 0x0fffffff) % 100000
 
+        /** Будильник и страховка ([ReminderWatchdog]) могут прийти одновременно: срабатывание одно за другим, не вместе. */
+        private val fireLock = Mutex()
+
         /**
-         * Срабатывание: уведомление, отметка «сработало» и перенос повторяющегося. Общее для будильника и страховки
-         * ([ReminderWatchdog]): что бы ни сработало первым, второй раз уведомление не покажется (напоминание уже неактивно
-         * или перенесено вперёд).
+         * Срабатывание: уведомление, отметка «сработало» и перенос повторяющегося. Общее для будильника и страховки:
+         * что бы ни сработало первым, второй раз уведомление не покажется (напоминание уже неактивно или перенесено вперёд).
          */
         suspend fun fire(context: Context, c: AppContainer, id: String) {
-            val reminder = c.store.reminders.get(id) ?: return
-            if (!reminder.active) return
-            val now = Instant.now()
-            val late = reminder.lateBy(now)
-            val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
-            val text = if (late > LATE_NOTE_AFTER) {
-                reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())
-            } else reminder.text
-            show(context, id, text)
-            c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
+            fireLock.withLock {
+                val reminder = c.store.reminders.get(id) ?: return
+                val now = Instant.now()
+                // Уже сработавшее соседом: разовое неактивно, повторяющееся перенесено на следующий раз (часы и дни вперёд).
+                if (!reminder.active || reminder.triggerAt.isAfter(now.plusSeconds(EARLY_TOLERANCE_SECONDS))) return
+                val late = reminder.lateBy(now)
+                val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
+                val text = if (late > LATE_NOTE_AFTER) {
+                    reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())
+                } else reminder.text
+                show(context, id, text)
+                c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
+            }
         }
 
         private fun show(context: Context, id: String, text: String) {

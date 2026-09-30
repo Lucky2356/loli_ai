@@ -302,6 +302,12 @@ object DevicePhrases {
             }
         }
 
+        // «Скажи маме, что я приеду вечером» — сообщение маме (не «скажи мне»: это вопрос к Лоли).
+        re("""^(?:скажи|передай|сообщи)\s+(\S+[еуюиам]),?\s+(?:что|чтобы)\s+(.+)$""").find(t)?.let {
+            val who = it.groupValues[1]
+            if (isRecipient(who) && !re("""^(?:мне|нам|тебе|себе|ей|ему|им|всем)$""").matches(who)) return cmd(DeviceCommand.Message(who, it.groupValues[2].trim()))
+        }
+
         // Маршрут.
         re("""^(?:построй\s+маршрут|проложи\s+маршрут|как\s+(?:доехать|добраться|пройти)|маршрут|навигатор|поехали)\s+(?:до|к|в|на)\s+(.+)$""").find(t)?.let {
             return cmd(DeviceCommand.Navigate(it.groupValues[1].trim()))

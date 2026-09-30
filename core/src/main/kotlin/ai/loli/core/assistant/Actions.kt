@@ -87,6 +87,9 @@ sealed interface AssistantAction {
         val time: LocalTime? = null,
     ) : AssistantAction
 
+    /** «Удали все напоминания / задачи» — с подтверждением, одним вопросом. */
+    data class DeleteAll(val type: RecordType) : AssistantAction { override val isDestructive = true }
+
     /** «Перенеси задачу купить молоко на завтра». */
     data class RescheduleTask(val target: TargetRef, val dueDate: LocalDate?, val dueTime: LocalTime?) : AssistantAction
 
