@@ -109,7 +109,13 @@ class LoliTimers(private val context: Context) {
         val at = t.endsAt.toEpochMilli()
         val exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
         runCatching {
-            if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi) else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            if (exact) {
+                val show = PendingIntent.getActivity(
+                    context, 0, Intent(context, ai.loli.app.ui.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                am.setAlarmClock(AlarmManager.AlarmClockInfo(at, show), pi)
+            } else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
         }
         showCountdown(t)
     }

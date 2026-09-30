@@ -6,13 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.app.NotificationCompat
+import ai.loli.app.AppContainer
 import ai.loli.app.LoliApp
 import ai.loli.app.R
 import ai.loli.app.ui.MainActivity
+import ai.loli.core.assistant.RuFormat
 import ai.loli.core.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 
 /** Срабатывание напоминания: уведомление + перенос следующего повтора. Действия «Готово» и «Отложить». */
 class ReminderReceiver : BroadcastReceiver() {
@@ -24,13 +28,7 @@ class ReminderReceiver : BroadcastReceiver() {
             try {
                 val c = app.container
                 when (intent.action) {
-                    ACTION_FIRE -> {
-                        val reminder = c.store.reminders.get(id)
-                        if (reminder != null && reminder.active) {
-                            show(context, id, reminder.text)
-                            c.store.reminders.markFired(id, Instant.now())?.let { if (it.active) c.reminderScheduler.schedule(it) }
-                        }
-                    }
+                    ACTION_FIRE -> fire(context, c, id)
                     ACTION_DONE -> Notifications.cancel(context, notificationId(id))
                     ACTION_SNOOZE -> {
                         Notifications.cancel(context, notificationId(id))
@@ -48,32 +46,6 @@ class ReminderReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun show(context: Context, id: String, text: String) {
-        val nid = notificationId(id)
-        fun action(action: String, code: Int) = PendingIntent.getBroadcast(
-            context, code,
-            Intent(context, ReminderReceiver::class.java).setAction(action).setData(Uri.parse("loli://reminder/$id/$action")).putExtra(EXTRA_ID, id),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val open = PendingIntent.getActivity(
-            context, nid, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val notification = NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
-            .setSmallIcon(R.drawable.ic_stat_loli)
-            .setContentTitle(context.getString(R.string.reminder_title))
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setAutoCancel(true)
-            .setContentIntent(open)
-            .addAction(0, context.getString(R.string.reminder_done), action(ACTION_DONE, 1))
-            .addAction(0, context.getString(R.string.reminder_snooze), action(ACTION_SNOOZE, 2))
-            .build()
-        Notifications.notifySafely(context, nid, notification)
-    }
-
     companion object {
         private const val TAG = "Reminder"
         const val ACTION_FIRE = "ai.loli.action.REMINDER_FIRE"
@@ -81,6 +53,52 @@ class ReminderReceiver : BroadcastReceiver() {
         const val ACTION_SNOOZE = "ai.loli.action.REMINDER_SNOOZE"
         const val EXTRA_ID = "reminder_id"
         private const val SNOOZE_MINUTES = 10L
+        /** Опоздание меньше этого порога не показываем: будильники системы и так плавают на минуту. */
+        private val LATE_NOTE_AFTER = Duration.ofMinutes(2)
         fun notificationId(id: String) = 5000 + (id.hashCode() and 0x0fffffff) % 100000
+
+        /**
+         * Срабатывание: уведомление, отметка «сработало» и перенос повторяющегося. Общее для будильника и страховки
+         * ([ReminderWatchdog]): что бы ни сработало первым, второй раз уведомление не покажется (напоминание уже неактивно
+         * или перенесено вперёд).
+         */
+        suspend fun fire(context: Context, c: AppContainer, id: String) {
+            val reminder = c.store.reminders.get(id) ?: return
+            if (!reminder.active) return
+            val now = Instant.now()
+            val late = reminder.lateBy(now)
+            val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
+            val text = if (late > LATE_NOTE_AFTER) {
+                reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())
+            } else reminder.text
+            show(context, id, text)
+            c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
+        }
+
+        private fun show(context: Context, id: String, text: String) {
+            val nid = notificationId(id)
+            fun action(action: String, code: Int) = PendingIntent.getBroadcast(
+                context, code,
+                Intent(context, ReminderReceiver::class.java).setAction(action).setData(Uri.parse("loli://reminder/$id/$action")).putExtra(EXTRA_ID, id),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val open = PendingIntent.getActivity(
+                context, nid, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val notification = NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
+                .setSmallIcon(R.drawable.ic_stat_loli)
+                .setContentTitle(context.getString(R.string.reminder_title))
+                .setContentText(text.lineSequence().first())
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .addAction(0, context.getString(R.string.reminder_done), action(ACTION_DONE, 1))
+                .addAction(0, context.getString(R.string.reminder_snooze), action(ACTION_SNOOZE, 2))
+                .build()
+            Notifications.notifySafely(context, nid, notification)
+        }
     }
 }

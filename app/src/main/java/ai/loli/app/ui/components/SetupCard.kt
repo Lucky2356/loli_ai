@@ -108,14 +108,14 @@ fun SetupCard(c: AppContainer, name: String, onVisible: (Boolean) -> Unit = {}) 
         if (!assistant) SetupStep("assistant", Icons.Rounded.TouchApp, "Сделать $name ассистентом",
             "Чтобы вызывать $name долгим нажатием кнопки «Домой» или жестом.", optional = true) { guide = true } else null,
         // «Поверх приложений» и спецвозможности — в «Настройки → Безопасность и разрешения»: нужны не всем.
-        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи", oem.battery, optional = true) { requestBatteryExemption(context) } else null,
+        if (!battery) SetupStep("battery", Icons.Rounded.BatteryChargingFull, "Не усыплять ради батареи", oem.battery, optional = !oem.strict) { requestBatteryExemption(context) } else null,
         if (!exact) SetupStep("exact", Icons.Rounded.Alarm, "Точные напоминания",
             "Включите переключатель «Разрешить» напротив $name.") {
             runCatching {
                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:${context.packageName}")))
             }
         } else null,
-        if (oem.autostart != null && !oemDone) SetupStep("autostart", Icons.Rounded.BatteryChargingFull, "Автозапуск (${oem.brand})", oem.autostart, optional = true) {
+        if (oem.autostart != null && !oemDone) SetupStep("autostart", Icons.Rounded.BatteryChargingFull, "Автозапуск (${oem.brand})", oem.autostart, optional = !oem.strict) {
             oemDone = true
             prefs.edit().putBoolean("oem_autostart_done", true).apply()
             OemHints.openAutostart(context)
