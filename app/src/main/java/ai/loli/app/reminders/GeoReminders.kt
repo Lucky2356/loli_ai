@@ -72,7 +72,6 @@ class GeoReminders(private val context: Context) {
         return gone.size
     }
 
-    /** После перезагрузки зоны приближения сбрасываются — регистрируем заново. */
     /**
      * После перезагрузки ([force]) зоны приближения сброшены — регистрируем все заново. При обычном запуске
      * только новые и те, у которых место сдвинулось: повторная регистрация дала бы ложное «вы пришли».
@@ -122,19 +121,31 @@ class GeoReminders(private val context: Context) {
         pi.cancel()
     }
 
+    /** Места (дом, работа) — это адреса человека, поэтому лежат зашифрованными ключом Android Keystore, а не в открытых настройках. */
+    private val secrets by lazy { ai.loli.app.security.KeystoreSecretStore(context.applicationContext) }
+
+    /** До 2.3 списки лежали в обычных настройках открытым текстом — переносим в зашифрованное хранилище и стираем. */
+    private fun migrate(key: String) {
+        val old = prefs.getString(key, null) ?: return
+        if (secrets.get(SECRET_PREFIX + key).isNullOrEmpty()) secrets.put(SECRET_PREFIX + key, old)
+        prefs.edit().remove(key).apply()
+    }
+
     private fun read(key: String): List<JSONObject> {
-        val arr = runCatching { JSONArray(prefs.getString(key, "[]")) }.getOrDefault(JSONArray())
+        migrate(key)
+        val arr = runCatching { JSONArray(secrets.get(SECRET_PREFIX + key) ?: "[]") }.getOrDefault(JSONArray())
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
     }
 
     private fun write(key: String, list: List<JSONObject>) {
         val arr = JSONArray()
         list.forEach { arr.put(it) }
-        prefs.edit().putString(key, arr.toString()).apply()
+        secrets.put(SECRET_PREFIX + key, arr.toString())
     }
 
     companion object {
         private const val TAG = "Geo"
+        private const val SECRET_PREFIX = "geo_"
         private const val KEY_PLACES = "places"
         private const val KEY_REMINDERS = "reminders"
         private const val KEY_SKIP = "skip_"

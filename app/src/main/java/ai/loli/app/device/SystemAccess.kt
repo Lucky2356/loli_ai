@@ -131,9 +131,10 @@ class SystemAccess(private val context: Context) {
         }
         // Службу спецвозможностей включаем сами: разрешение WRITE_SECURE_SETTINGS уже выдано.
         val a11y = accessibilityOn() || enableAccessibility() || shell(
-            "settings put secure enabled_accessibility_services " +
+            "settings put secure enabled_accessibility_services " + quote(
                 (Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
                     .split(':').filter { it.isNotBlank() } + a11yService).distinct().joinToString(":"),
+            ),
         ) != null
         val assistant = isAssistant()
         val overlay = BackgroundLauncher(context).canLaunchFromBackground()
@@ -144,6 +145,9 @@ class SystemAccess(private val context: Context) {
         }
         SetupResult(assistant, a11y, overlay, msg)
     }
+
+    /** Значение для `sh -c` в одинарных кавычках: `$` в имени вложенного класса чужой службы («Outer$Inner») не должен раскрываться. */
+    private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     /** Команда оболочки с правами ADB через Shizuku; null — ошибка. */
     private fun shell(command: String): String? = runCatching {

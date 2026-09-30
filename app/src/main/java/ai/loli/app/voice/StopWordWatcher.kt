@@ -74,7 +74,9 @@ class StopWordWatcher(private val context: Context, private val engine: VoskEngi
             val buffer = ShortArray(minBuf / 2)
             while (isActive) {
                 val n = record.read(buffer, 0, buffer.size)
-                if (n <= 0) continue
+                // Ошибка чтения (микрофон занят или отобран) — выходим; пустое чтение не должно грузить процессор.
+                if (n < 0) return@withContext false
+                if (n == 0) { kotlinx.coroutines.delay(20); continue }
                 if (recognizer.acceptWaveForm(buffer, n) && heardStop(recognizer.result)) return@withContext true
             }
             false

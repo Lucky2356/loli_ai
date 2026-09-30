@@ -261,6 +261,24 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
         return
     }
 
+    // Хранилище ключей Android временно недоступно (бывает сразу после загрузки телефона): базу не трогаем и просим повторить.
+    val storeProblem by c.storeProblem.collectAsStateWithLifecycle()
+    if (storeProblem) {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Хранилище ключей Android сейчас недоступно", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Ваши записи целы и не тронуты. Подождите несколько секунд и нажмите «Повторить»; если не помогает — перезагрузите телефон.",
+                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 12.dp),
+            )
+            ai.loli.app.ui.components.PrimaryButton("Повторить", { c.retryStore() })
+        }
+        return
+    }
+
     // Вход по отпечатку/PIN, если включён в «Доступ и безопасность».
     val appUnlocked by c.appLock.unlocked.collectAsStateWithLifecycle()
     if (settings.appLock && !appUnlocked && c.appLock.deviceSecure()) {

@@ -1,6 +1,10 @@
 package ai.loli.core.assistant
 
 import ai.loli.core.TestEnv
+import ai.loli.core.ai.AIProvider
+import ai.loli.core.ai.AIProviderType
+import ai.loli.core.ai.AIRequest
+import ai.loli.core.ai.AIResponse
 import kotlinx.coroutines.test.runTest
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -10,6 +14,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** 2.2.2: найденные при перепроверке ошибки. Сегодня пятница 25.09.2026, 12:00 МСК. */
+private class BrokenAi : AIProvider {
+    override val type = AIProviderType.OPENAI
+    override val model = "boom"
+    override suspend fun complete(request: AIRequest): AIResponse = error("сбой не из AI-слоя")
+}
+
 class Audit222Test {
     private val zone = ZoneId.of("Europe/Moscow")
     private fun env() = TestEnv().apply { settings = AssistantSettings(useAI = false) }
@@ -149,5 +159,15 @@ class Audit222Test {
     @Test fun spacedWifiOpensSettings() {
         val cmd = (LocalCommandParser().parse("включи вай фай", java.time.Instant.parse("2026-09-25T09:00:00Z"), zone)?.actions?.single() as AssistantAction.Device).command
         assertEquals(DeviceCommand.OpenSettings(SettingsSection.WIFI), cmd)
+    }
+
+    @Test fun brokenAiBranchFallsBackToLocalParsing() = runTest {
+        val e = TestEnv().apply {
+            settings = AssistantSettings(useAI = true)
+            ai = BrokenAi()
+        }
+        val text = e.engine.handle("напомни в 7:50 достать мясо").text
+        assertTrue(text.startsWith("Напомню"), text)
+        assertEquals(1, e.store.reminders.all().size)
     }
 }

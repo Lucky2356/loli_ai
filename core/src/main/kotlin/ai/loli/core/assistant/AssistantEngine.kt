@@ -389,6 +389,8 @@ class AssistantEngine(
         var aiError: AIException? = null
         if (cfg.useAI) {
             val provider = try { aiProvider() } catch (e: AIException) { aiError = e; null }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { Logger.w(TAG, "AI-провайдер не создан: ${e::class.simpleName}"); aiError = AIException.Network(e); null }
             if (provider != null) {
                 try {
                     val plan = guardDeviceActions(planWithAI(provider, text, cfg), text)
@@ -401,6 +403,11 @@ class AssistantEngine(
                 } catch (e: AIException) {
                     Logger.w(TAG, "AI недоступен: ${e::class.simpleName}")
                     aiError = e
+                    lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
+                } catch (e: Exception) {
+                    // Любой другой сбой AI-ветки (разбор ответа, сеть под капотом) не должен ломать команду: работаем на устройстве.
+                    Logger.w(TAG, "AI-ветка не сработала: ${e::class.simpleName}")
+                    aiError = AIException.Network(e)
                     lastAiFailure = AiFailure(e.message ?: e::class.simpleName.orEmpty(), time.now())
                 }
             }
@@ -528,21 +535,12 @@ class AssistantEngine(
      * отправка, открытие сайтов и контакты от AI выполняются, только если вы сами об этом попросили в этой фразе.
      */
     private fun guardDeviceActions(plan: AssistantPlan, userText: String): AssistantPlan {
-        val n = ai.loli.core.nlp.RuTokenizer.normalize(userText)
         val rejected = ArrayList(plan.rejected)
         val kept = plan.actions.filter { a ->
             val cmd = (a as? AssistantAction.Device)?.command ?: return@filter true
-            val asked = when (cmd) {
-                is DeviceCommand.Call -> Regex("""позвон|набер|звонок|вызов|звякн""").containsMatchIn(n)
-                is DeviceCommand.Message -> Regex("""напиш|сообщ|смс|sms|отправ|перешл|скажи""").containsMatchIn(n)
-                is DeviceCommand.Share -> Regex("""отправ|перешл|подел|скинь|напиш""").containsMatchIn(n)
-                is DeviceCommand.OpenUrl -> Regex("""сайт|ссылк|страниц|открой|зайди|перейди|http|www|\.ru|\.com""").containsMatchIn(n)
-                is DeviceCommand.AddContact -> Regex("""контакт|номер""").containsMatchIn(n)
-                is DeviceCommand.OpenApp -> Regex("""открой|запусти|включи|зайди|перейди|приложени""").containsMatchIn(n)
-                else -> true
-            }
-            if (!asked) rejected += "AI предложил действие, о котором вы не просили — не выполняю"
-            asked
+            val ok = DeviceGuard.allowed(cmd, userText)
+            if (!ok) rejected += "AI предложил действие, о котором вы не просили — не выполняю"
+            ok
         }
         return if (kept.size == plan.actions.size) plan else plan.copy(actions = kept, rejected = rejected)
     }

@@ -16,6 +16,8 @@ const MODEL = Deno.env.get("LOLI_AI_MODEL") ?? "deepseek/deepseek-chat";
 const DAILY_LIMIT = Number(Deno.env.get("LOLI_AI_DAILY_LIMIT") ?? "100");
 const MAX_TOKENS = 1500;
 const MAX_CHARS = 24_000;
+const MAX_BODY_BYTES = 128 * 1024;
+const UPSTREAM_TIMEOUT_MS = 60_000;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -41,9 +43,14 @@ Deno.serve(async (req) => {
   if (!user || (user as { is_anonymous?: boolean }).is_anonymous) return error(401, "Войдите в аккаунт Лоли, чтобы пользоваться облаком");
 
   // Сначала проверяем запрос, потом списываем лимит: кривой запрос не должен съедать попытки.
+  // Размер проверяем до чтения тела: вошедший пользователь не должен заставлять функцию разбирать гигабайты.
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (declared > MAX_BODY_BYTES) return error(413, "Слишком длинный запрос");
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    const raw = await req.text();
+    if (raw.length > MAX_BODY_BYTES) return error(413, "Слишком длинный запрос");
+    body = JSON.parse(raw);
   } catch {
     return error(400, "Некорректный запрос");
   }
@@ -76,18 +83,31 @@ Deno.serve(async (req) => {
   if (limitError) return error(500, "Не удалось проверить лимит");
   if (!allowed) return error(429, `Лимит облака на сегодня исчерпан (${DAILY_LIMIT} запросов). Завтра снова можно.`);
 
-  const upstream = await fetch(`${BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-      "HTTP-Referer": "https://github.com/Lucky2356/loli_ai",
-      "X-Title": "Loli Assistant",
-    },
-    body: JSON.stringify(upstreamBody),
-  });
-  const text = await upstream.text();
+  // Единица лимита возвращается, если ответа не вышло по вине провайдера: пользователь не платит за чужой сбой.
+  const refund = async () => { await admin.rpc("ai_usage_refund", { p_user: user.id }); };
+  let upstream: Response;
+  let text: string;
+  try {
+    upstream = await fetch(`${BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "HTTP-Referer": "https://github.com/Lucky2356/loli_ai",
+        "X-Title": "Loli Assistant",
+      },
+      body: JSON.stringify(upstreamBody),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    text = await upstream.text();
+  } catch {
+    await refund();
+    return error(504, "Провайдер AI не ответил вовремя");
+  }
   // Ошибки провайдера не раскрывают ключ: отдаём статус и короткое сообщение.
-  if (!upstream.ok) return error(upstream.status === 429 ? 429 : 502, `Провайдер AI ответил ${upstream.status}`);
+  if (!upstream.ok) {
+    if (upstream.status >= 500) await refund();
+    return error(upstream.status === 429 ? 429 : 502, `Провайдер AI ответил ${upstream.status}`);
+  }
   return new Response(text, { status: 200, headers: { "Content-Type": "application/json" } });
 });

@@ -25,8 +25,12 @@ import java.time.Instant
 interface RemoteDataSource {
     /** Вставка или обновление строк по id. Сервер сам проверяет владельца (RLS) и last-write-wins (триггер). */
     suspend fun upsert(table: String, rows: List<JsonObject>)
-    /** Строки, изменённые на сервере после [since] (по server_updated_at), по возрастанию. */
-    suspend fun fetchChanges(table: String, since: Instant?, limit: Int): List<JsonObject>
+    /**
+     * Строки, изменённые на сервере после [since] (по server_updated_at), по возрастанию; при равной метке — по id.
+     * [afterId] — id последней строки предыдущей страницы: продолжаем ровно за ней, не теряя строки с той же меткой
+     * (строки одной транзакции получают одинаковый server_updated_at).
+     */
+    suspend fun fetchChanges(table: String, since: Instant?, afterId: String?, limit: Int): List<JsonObject>
     suspend fun fetchSingle(table: String): JsonObject?
 }
 
@@ -58,13 +62,17 @@ class PostgrestRemote(
         }
     }
 
-    override suspend fun fetchChanges(table: String, since: Instant?, limit: Int): List<JsonObject> {
+    override suspend fun fetchChanges(table: String, since: Instant?, afterId: String?, limit: Int): List<JsonObject> {
         val response = request { t ->
             http.get("${config.url}/rest/v1/$table") {
                 auth(t)
                 parameter("select", "*")
-                if (since != null) parameter("server_updated_at", "gt.$since")
-                parameter("order", "server_updated_at.asc")
+                when {
+                    since != null && afterId != null ->
+                        parameter("or", "(server_updated_at.gt.$since,and(server_updated_at.eq.$since,id.gt.$afterId))")
+                    since != null -> parameter("server_updated_at", "gt.$since")
+                }
+                parameter("order", "server_updated_at.asc,id.asc")
                 parameter("limit", limit)
             }
         }
