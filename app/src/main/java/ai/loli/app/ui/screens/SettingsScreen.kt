@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Payments
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.RecordVoiceOver
@@ -163,6 +164,10 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
     var guide by remember { mutableStateOf(false) }
     var edit by remember { mutableStateOf<String?>(null) }
     var placesTick by remember { mutableIntStateOf(0) }
+    // Финансовый помощник: раздел виден, только если он стоит на телефоне (и подписан своим ключом).
+    var finance by remember { mutableStateOf<ai.loli.app.device.FinanceBridge.Status?>(null) }
+    var financeOn by remember { mutableStateOf(c.finance.enabled()) }
+    LaunchedEffect(resumeTick) { finance = c.finance.status() }
     if (guide) AssistantGuideDialog(s.assistantName) { guide = false }
     when (edit) {
         "name" -> TextDialog(
@@ -238,6 +243,27 @@ private fun SettingsRoot(c: AppContainer, open: (SettingsPage) -> Unit) {
                 GroupDivider(inset = 66.dp)
                 val places = remember(resumeTick, placesTick) { c.geo.places() }
                 ValueItem("Места", places.joinToString { it.name }.ifBlank { "не заданы" }, Icons.Rounded.Place) { edit = "places" }
+            }
+        }
+        finance?.takeIf { it.available }?.let { st ->
+            item(key = "finance") {
+                SectionLabel("Финансовый помощник")
+                Group {
+                    SwitchItem(
+                        "Передавать траты",
+                        when {
+                            !financeOn -> "Траты остаются только у ${s.assistantName}"
+                            !st.enabled -> "Связь выключена в самом помощнике: включите её там — «Настройки» → «Лоли — голосовой помощник»"
+                            st.auto -> "Траты сразу записываются в учёт помощника. Поправили или отменили здесь — меняется и там"
+                            else -> "Траты попадают в «Подсказки» помощника — там их подтверждают одним нажатием"
+                        },
+                        financeOn, icon = Icons.Rounded.Payments,
+                    ) { v -> financeOn = v; c.finance.setEnabled(v) }
+                }
+                Hint(
+                    if (financeOn && st.enabled && st.share) "Спросите: «сколько можно тратить сегодня?», «хватит ли до зарплаты?», «сколько осталось на продукты?», «сколько у меня денег?»"
+                    else "Отвечать о деньгах по цифрам помощника ${s.assistantName} сможет, когда в нём разрешат отдавать сводку.",
+                )
             }
         }
         item(key = "pages") {

@@ -38,6 +38,8 @@ class AndroidSkillHost(
     val geo: GeoReminders,
     private val onUserName: (String?) -> Unit,
     private val onCity: (String?) -> Unit,
+    private val finance: FinanceBridge? = null,
+    private val financePendingSince: suspend (Instant) -> List<ai.loli.core.model.Expense> = { emptyList() },
 ) : SkillHost {
     private val locator = Locator(context)
 
@@ -160,6 +162,9 @@ class AndroidSkillHost(
 
     override fun placeReminders(): List<PlaceReminder> = geo.reminders()
     override fun cancelPlaceReminders(place: String?): Int = geo.cancel(place)
+
+    override suspend fun financeSummary(): String? = finance?.summary()
+    override suspend fun financePending(since: Instant): List<ai.loli.core.model.Expense> = financePendingSince(since)
 
     override fun setUserName(name: String?) = onUserName(name)
     override fun setCity(city: String?) = onCity(city)
