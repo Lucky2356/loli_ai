@@ -27,13 +27,21 @@ object SleepMode {
     fun enable(context: Context, from: LocalTime, to: LocalTime) {
         prefs(context).edit().putBoolean("on", true).putInt("from", from.toSecondOfDay() / 60).putInt("to", to.toSecondOfDay() / 60).commit()
         reschedule(context)
+        // Включили посреди «ночи» — тишина нужна сразу, а не завтра вечером.
+        if (inWindow(from, to)) setDnd(context, true)
     }
 
+    private fun inWindow(from: LocalTime, to: LocalTime, now: LocalTime = LocalTime.now()): Boolean =
+        if (from <= to) now >= from && now < to else now >= from || now < to
+
     fun disable(context: Context) {
-        prefs(context).edit().putBoolean("on", false).commit()
+        val p = prefs(context)
+        val wasInWindow = p.getBoolean("on", false) &&
+            inWindow(LocalTime.ofSecondOfDay(p.getInt("from", 23 * 60) * 60L), LocalTime.ofSecondOfDay(p.getInt("to", 7 * 60) * 60L))
+        p.edit().putBoolean("on", false).commit()
         cancel(context, ACTION_ENTER); cancel(context, ACTION_LEAVE)
-        // Если сейчас «ночь» по нашему расписанию — возвращаем звук.
-        setDnd(context, false)
+        // Звук возвращаем только если «Не беспокоить» включили мы (сейчас «ночь» по нашему расписанию), а не пользователь сам.
+        if (wasInWindow) setDnd(context, false)
     }
 
     /** Ставит оба будильника на ближайшие границы; безопасно вызывать сколько угодно раз. */

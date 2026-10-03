@@ -229,14 +229,20 @@ class AssistantEngine(
         val h = habits ?: return null
         val today = time.today()
         val zone = time.zone()
-        val done = tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today }
-        val r = h.diary(text, done, daySpend(today), localParser.startsWithCommand(text)) ?: return null
+        // Задачи и траты считаем только для «итогов дня», а не на каждую фразу.
+        val r = h.diary(
+            text,
+            tasksDone = { tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today } },
+            spend = { daySpend(today) },
+            startsCommand = localParser.startsWithCommand(text),
+        ) ?: return null
         val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
         if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — дневник личный, без разблокировки не открываю.")
         return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
     }
 
     private var cook: ai.loli.core.skills.CookingSession? = null
+    private var cookAskedAt: java.time.Instant? = null
     private var cookAt = time.now()
 
     /** Готовка забывается после часа молчания. */
@@ -245,10 +251,15 @@ class AssistantEngine(
         if (active != null && java.time.Duration.between(cookAt, time.now()) > java.time.Duration.ofMinutes(60)) cook = null
         val session = cook
         if (session == null) {
-            val dish = ai.loli.core.skills.Cooking.startDish(text) ?: return null
+            // Спросили «Что готовим?» — следующая короткая фраза и есть название блюда.
+            val asked = cookAskedAt?.let { java.time.Duration.between(it, time.now()) <= java.time.Duration.ofMinutes(3) } == true
+            cookAskedAt = null
+            val dish = ai.loli.core.skills.Cooking.startDish(text)
+                ?: (if (asked && !localParser.startsWithCommand(text) && text.trim().split(Regex("\\s+")).size <= 4 && !LocalCommandParser.isNo(text)) text.trim().trimEnd('.', '!', '?') else null)
+                ?: return null
             val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (policy != null && !policy.view) return AssistantReply("Разблокируйте телефон — рецепты без разблокировки не открываю.")
-            if (dish.isEmpty()) return AssistantReply("Что готовим? Скажите, например: «давай приготовим борщ». Рецепт должен быть в заметках.", awaitingAnswer = true)
+            if (dish.isEmpty()) { cookAskedAt = time.now(); return AssistantReply("Что готовим? Скажите название блюда — рецепт должен быть в заметках.", awaitingAnswer = true) }
             val note = ai.loli.core.skills.Cooking.find(notes.all(), dish)
                 ?: return AssistantReply("В заметках нет рецепта «$dish». Продиктуйте его: «запиши заметку рецепт $dish: ингредиенты — …, сначала …, потом …».")
             val recipe = ai.loli.core.skills.Cooking.parse(note)

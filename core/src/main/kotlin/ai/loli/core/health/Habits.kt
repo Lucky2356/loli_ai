@@ -394,7 +394,7 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
      * Дневник дня: «как прошёл день» → настроение 1–5 → пара слов; «итоги дня»; «настроение за неделю».
      * [tasksDone] — сколько задач закрыто сегодня, [spend] — строка про траты за день (если есть).
      */
-    suspend fun diary(text: String, tasksDone: Int, spend: String?, startsCommand: Boolean): Reply? {
+    suspend fun diary(text: String, tasksDone: suspend () -> Int, spend: suspend () -> String?, startsCommand: Boolean): Reply? {
         val t = ai.loli.core.nlp.RuTokenizer.normalize(text).trim().trimEnd('.', '!', '?')
         // Ждём пару слов к уже названной оценке.
         pendingMood?.let { score ->
@@ -422,15 +422,15 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
             awaitMood = true; diaryAskedAt = time.now()
             return Reply("Как настроение от 1 до 5?")
         }
+        if (Regex("""^(?:как\s+я\s+себя\s+чувствовал[аи]?|какое\s+(?:у\s+меня\s+)?было\s+настроение|настроение|мо[её]\s+настроение)\s*(?:на\s+этой\s+неделе|за\s+неделю|на\s+неделе)$""").containsMatchIn(t)) {
+            return Reply(moodWeek())
+        }
         Regex("""^(?:моё\s+|мое\s+)?настроение\s+(?:сегодня\s+)?(.+)$""").find(t)?.let { m ->
             val score = moodScore(m.groupValues[1]) ?: return null
             return Reply(saveMood(score, ""), changed = true)
         }
         if (Regex("""^(?:итоги\s+дня|подведи\s+итоги(?:\s+дня)?|как\s+я\s+провел[аи]?\s+день|что\s+(?:я\s+)?сегодня\s+сделал[аи]?)$""").containsMatchIn(t)) {
-            return Reply(daySummary(tasksDone, spend))
-        }
-        if (Regex("""^(?:как\s+я\s+себя\s+чувствовал[аи]?|какое\s+(?:у\s+меня\s+)?было\s+настроение|настроение|мо[её]\s+настроение)\s*(?:на\s+этой\s+неделе|за\s+неделю|на\s+неделе)$""").containsMatchIn(t)) {
-            return Reply(moodWeek())
+            return Reply(daySummary(tasksDone(), spend()))
         }
         return null
     }

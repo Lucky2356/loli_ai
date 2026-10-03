@@ -48,4 +48,11 @@ class Diary25Test {
         assertEquals(1, e.store.expenses.all().size)
         assertEquals("", e.store.habits.since(java.time.Instant.EPOCH, Habits.MOOD).single().name)
     }
+
+    @Test fun weekPhrasesStartingWithMoodAreNotScores() = runTest {
+        val e = env()
+        e.engine.handle("настроение 2")
+        assertTrue(e.engine.handle("настроение за неделю").text.contains("Среднее настроение за неделю — 2"))
+        assertEquals(1, e.store.habits.since(java.time.Instant.EPOCH, Habits.MOOD).size)
+    }
 }

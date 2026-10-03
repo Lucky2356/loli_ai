@@ -22,7 +22,7 @@ sealed interface CookingCommand {
 
 /** Режим готовки: ведёт по шагам рецепта из заметки, руки заняты — отвечает коротко. */
 object Cooking {
-    private val START = Rx.of("""^(?:давай\s+|давайте\s+)?(?:приготовим|готовим|будем\s+готовить|начн[её]м\s+готовить|начни\s+готовить|помоги\s+приготовить|помоги\s+мне\s+приготовить|как\s+приготовить\s+по\s+рецепту)\s*(.*)$|^режим\s+готовки\s*(.*)$""")
+    private val START = Rx.of("""^(?:давай\s+|давайте\s+)?(?:приготовим|готовим|готовить|будем\s+готовить|начн[её]м\s+готовить|начни\s+готовить|помоги\s+приготовить|помоги\s+мне\s+приготовить|как\s+приготовить\s+по\s+рецепту)\s*(.*)$|^режим\s+готовки\s*(.*)$""")
 
     /** Название блюда из фразы «давай приготовим борщ»; "" — блюдо не названо; null — это не про готовку. */
     fun startDish(text: String): String? {
@@ -58,7 +58,8 @@ object Cooking {
             when {
                 h != null -> { mode = 1; ingredients = line.substring(line.length - h.groupValues[1].length).trim().ifEmpty { null } }
                 s != null -> { mode = 2; s.groupValues[1].takeIf { it.isNotBlank() }?.let { body += line.substring(line.length - it.length) } }
-                mode == 1 && !Rx.of("""^\d+[.)]""").containsMatchIn(low) -> ingredients = listOfNotNull(ingredients, line).joinToString(", ")
+                mode == 1 && looksLikeIngredients(line) -> ingredients = listOfNotNull(ingredients, line.trimStart('-', '•', '*', ' ')).joinToString(", ")
+                mode == 1 -> { mode = 2; body += line }
                 else -> body += line
             }
         }
@@ -68,6 +69,13 @@ object Cooking {
             if (body.size == 1) clean.split(Regex("""(?<=[.!])\s+""")).filter { it.isNotBlank() } else listOf(clean)
         }.map { it.trim().trimEnd(';') }.filter { it.isNotEmpty() }
         return Recipe(note.title.replace(Regex("""(?i)^рецепт[:\s]+"""), "").ifBlank { note.title }, ingredients, steps)
+    }
+
+    /** Продолжение списка продуктов: пункт с маркером или короткая строка без точки; шаги заканчиваются точкой и не нумеруются как продукты. */
+    private fun looksLikeIngredients(line: String): Boolean {
+        if (Regex("""^\s*\d+[.)]""").containsMatchIn(line)) return false
+        if (Regex("""^\s*[-•*]""").containsMatchIn(line)) return true
+        return !line.trimEnd().endsWith(".") && line.split(Regex("""\s+""")).size <= 8 && !Regex("""(?iu)минут|час""").containsMatchIn(line)
     }
 
     /** Лучшая заметка под название блюда: совпадение слов в заголовке важнее, чем в тексте. */
