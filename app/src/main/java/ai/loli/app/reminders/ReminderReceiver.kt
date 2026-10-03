@@ -31,12 +31,33 @@ class ReminderReceiver : BroadcastReceiver() {
                 val c = app.container
                 when (intent.action) {
                     ACTION_FIRE -> fire(context, c, id)
-                    ACTION_DONE -> Notifications.cancel(context, notificationId(id))
-                    ACTION_SNOOZE -> {
+                    ACTION_DONE -> {
                         Notifications.cancel(context, notificationId(id))
+                        // «Готово» останавливает и настойчивые повторы.
+                        c.nags.clear(id)
                         c.store.reminders.get(id)?.let { r ->
-                            val snoozed = c.store.reminders.update(r.copy(triggerAt = Instant.now().plusSeconds(SNOOZE_MINUTES * 60), active = true))
+                            if (r.recurrence == null && r.active) {
+                                c.store.reminders.update(r.copy(active = false))
+                                c.reminderScheduler.cancel(id)
+                            }
+                        }
+                    }
+                    ACTION_SNOOZE, ACTION_SNOOZE_HOUR -> {
+                        Notifications.cancel(context, notificationId(id))
+                        val minutes = if (intent.action == ACTION_SNOOZE_HOUR) 60L else SNOOZE_MINUTES
+                        c.store.reminders.get(id)?.let { r ->
+                            val snoozed = c.store.reminders.update(r.copy(triggerAt = Instant.now().plusSeconds(minutes * 60), active = true))
                             c.reminderScheduler.schedule(snoozed)
+                        }
+                    }
+                    ACTION_TOMORROW -> {
+                        Notifications.cancel(context, notificationId(id))
+                        c.nags.clear(id)
+                        c.store.reminders.get(id)?.let { r ->
+                            val zone = runCatching { ZoneId.of(r.timeZone) }.getOrDefault(ZoneId.systemDefault())
+                            var next = r.triggerAt.atZone(zone).plusDays(1)
+                            while (!next.toInstant().isAfter(Instant.now())) next = next.plusDays(1)
+                            c.reminderScheduler.schedule(c.store.reminders.update(r.copy(triggerAt = next.toInstant(), active = true)))
                         }
                     }
                 }
@@ -53,6 +74,8 @@ class ReminderReceiver : BroadcastReceiver() {
         const val ACTION_FIRE = "ai.loli.action.REMINDER_FIRE"
         const val ACTION_DONE = "ai.loli.action.REMINDER_DONE"
         const val ACTION_SNOOZE = "ai.loli.action.REMINDER_SNOOZE"
+        const val ACTION_SNOOZE_HOUR = "ai.loli.action.REMINDER_SNOOZE_HOUR"
+        const val ACTION_TOMORROW = "ai.loli.action.REMINDER_TOMORROW"
         const val EXTRA_ID = "reminder_id"
         private const val SNOOZE_MINUTES = 10L
         /** Опоздание меньше этого порога не показываем: будильники системы и так плавают на минуту. */
@@ -75,15 +98,26 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (!reminder.active || reminder.triggerAt.isAfter(now.plusSeconds(EARLY_TOLERANCE_SECONDS))) return
                 val late = reminder.lateBy(now)
                 val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
-                val text = if (late > LATE_NOTE_AFTER) {
+                var text = if (late > LATE_NOTE_AFTER) {
                     reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())
                 } else reminder.text
-                show(context, id, text)
-                c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
+                val repeatsBefore = c.nags.repeats(id)
+                if (repeatsBefore != null && repeatsBefore > 0) text += "\nНапоминаю снова ($repeatsBefore из ${NagStore.MAX_REPEATS})"
+                show(context, id, text, recurring = reminder.recurrence != null)
+                val fired = c.store.reminders.markFired(id, now)
+                fired?.let { if (it.active) c.reminderScheduler.schedule(it) }
+                // Настойчивое: пока не нажали «Готово», ещё раз через 10 минут (не больше MAX_REPEATS раз).
+                if (repeatsBefore != null) {
+                    if (repeatsBefore < NagStore.MAX_REPEATS) {
+                        c.nags.bump(id)
+                        val again = c.store.reminders.update((fired ?: reminder).copy(active = true, triggerAt = now.plusSeconds(NagStore.INTERVAL_MINUTES * 60)))
+                        c.reminderScheduler.schedule(again)
+                    } else c.nags.clear(id)
+                }
             }
         }
 
-        private fun show(context: Context, id: String, text: String) {
+        private fun show(context: Context, id: String, text: String, recurring: Boolean) {
             val nid = notificationId(id)
             fun action(action: String, code: Int) = PendingIntent.getBroadcast(
                 context, code,
@@ -105,6 +139,11 @@ class ReminderReceiver : BroadcastReceiver() {
                 .setContentIntent(open)
                 .addAction(0, context.getString(R.string.reminder_done), action(ACTION_DONE, 1))
                 .addAction(0, context.getString(R.string.reminder_snooze), action(ACTION_SNOOZE, 2))
+                // Разовое можно перенести на завтра; повторяющееся — на час (его следующий срок и так известен).
+                .apply {
+                    if (recurring) addAction(0, context.getString(R.string.reminder_hour), action(ACTION_SNOOZE_HOUR, 3))
+                    else addAction(0, context.getString(R.string.reminder_tomorrow), action(ACTION_TOMORROW, 3))
+                }
                 .build()
             Notifications.notifySafely(context, nid, notification)
         }

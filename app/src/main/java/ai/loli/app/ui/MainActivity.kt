@@ -95,6 +95,10 @@ class MainActivity : ComponentActivity() {
     private val listenRequest = MutableStateFlow(0)
     /** Открыть настройки (из системных настроек телефона — «Настройки в приложении»). */
     private val openSettingsRequest = MutableStateFlow(0)
+    /** Открыть экран резервной копии («Лоли, сделай резервную копию»). */
+    private val openBackupRequest = MutableStateFlow(0)
+    /** Ярлык «Расход / Задача / Заметка» с долгого нажатия на значок: открыть чат с готовым началом фразы. */
+    private val quickRequest = MutableStateFlow(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -121,7 +125,7 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             }
             LoliTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest, openSettingsRequest) }
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest) }
             }
         }
     }
@@ -155,12 +159,24 @@ class MainActivity : ComponentActivity() {
             }
             // «Настройки приложения» из системных настроек телефона.
             Intent.ACTION_APPLICATION_PREFERENCES -> openSettingsRequest.value = openSettingsRequest.value + 1
+            ACTION_BACKUP -> openBackupRequest.value = openBackupRequest.value + 1
+            ACTION_QUICK -> {
+                container.quickDraft.value = when (intent.getStringExtra("kind")) {
+                    "expense" -> "Запиши расход "
+                    "task" -> "Добавь задачу "
+                    "note" -> "Запиши заметку "
+                    else -> null
+                }
+                quickRequest.value = quickRequest.value + 1
+            }
         }
     }
 
     companion object {
         const val ACTION_LISTEN = "ai.loli.action.LISTEN"
         const val ACTION_UPDATE = "ai.loli.action.UPDATE"
+        const val ACTION_BACKUP = "ai.loli.action.BACKUP"
+        const val ACTION_QUICK = "ai.loli.action.QUICK"
         const val EXTRA_TOKEN = "ai.loli.token"
 
         /** Случайный секрет этой установки для своих уведомлений. */
@@ -239,7 +255,7 @@ fun rememberListenAction(c: AppContainer): () -> Unit {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>) {
+private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, openSettingsRequest: MutableStateFlow<Int>, openBackupRequest: MutableStateFlow<Int>, quickRequest: MutableStateFlow<Int>) {
     val settings by c.settings.settings.collectAsStateWithLifecycle()
     var showAuth by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
@@ -315,6 +331,22 @@ private fun LoliRoot(c: AppContainer, listenRequest: MutableStateFlow<Int>, open
         if (settingsRequest > 0) {
             openSettingsRequest.value = 0
             nav.showRoot(Tab.SETTINGS)
+        }
+    }
+    val quick by quickRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(quick) {
+        if (quick > 0) {
+            quickRequest.value = 0
+            nav.showRoot(Tab.HOME)
+            nav.open("chat/input")
+        }
+    }
+    val backupRequest by openBackupRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(backupRequest) {
+        if (backupRequest > 0) {
+            openBackupRequest.value = 0
+            nav.showRoot(Tab.SETTINGS)
+            nav.open(SettingsPage.BACKUP.route, Tab.SETTINGS)
         }
     }
     BackHandler(enabled = nav.canGoBack) { nav.back() }

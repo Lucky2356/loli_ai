@@ -313,6 +313,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".quick.QuickInputReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".reminders.BootReceiver"
             android:exported="true">
             <intent-filter>

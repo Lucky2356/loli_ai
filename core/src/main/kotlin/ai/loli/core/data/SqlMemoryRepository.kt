@@ -54,6 +54,7 @@ class SqlMemoryRepository(
 
     override suspend fun dirtyRows(): List<SyncRow> = io { q.selectDirty().executeAsList().map { it.toSyncRow() } }
     override suspend fun row(id: String): SyncRow? = io { q.selectById(id).executeAsOneOrNull()?.toSyncRow() }
+    override suspend fun allRows(): List<SyncRow> = io { q.selectEvery().executeAsList().map { it.toSyncRow() } }
     override suspend fun markSynced(id: String, updatedAt: Long) { io { q.markSynced(updatedAt, id) } }
     override suspend fun clear() { io { q.deleteAll() } }
 

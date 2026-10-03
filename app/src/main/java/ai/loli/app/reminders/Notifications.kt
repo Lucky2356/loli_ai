@@ -20,9 +20,12 @@ object Notifications {
     const val CHANNEL_ALARMS = "alarms"
     /** Радио и отсчёт таймеров. */
     const val CHANNEL_MEDIA = "media"
+    /** Быстрый ввод из шторки. */
+    const val CHANNEL_QUICK = "quick"
     const val RING_ID = 1010
     /** Утренняя сводка. Раньше делила id 1010 с сигналом таймера: сигнал затирал сводку и убирал её при остановке. */
     const val BRIEF_ID = 1012
+    const val QUICK_ID = 1013
     const val RADIO_ID = 1011
     const val TIMER_BASE_ID = 200_000
     const val GEO_BASE_ID = 1200
@@ -55,6 +58,13 @@ object Notifications {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_MEDIA, "Радио и отсчёт таймера", NotificationManager.IMPORTANCE_LOW).apply {
                 setShowBadge(false)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_QUICK, "Быстрый ввод", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Поле «Что записать?» в шторке"
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
             },
         )
         nm.createNotificationChannel(

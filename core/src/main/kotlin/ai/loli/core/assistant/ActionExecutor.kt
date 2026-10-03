@@ -58,6 +58,8 @@ class ActionExecutor(
     private val agendaExtras: suspend (java.time.LocalDate) -> ai.loli.core.skills.AgendaExtras = { ai.loli.core.skills.AgendaExtras() },
     /** Дни рождения из контактов телефона — вместе с записанными в Лоли. */
     private val contactBirthdays: suspend () -> List<Pair<String, java.time.MonthDay>> = { emptyList() },
+    /** Напоминание «настойчиво, пока не отмечу» создано: приложение запоминает его id и повторяет срабатывание. */
+    private val onPersistentReminder: (String) -> Unit = {},
 ) {
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
@@ -248,9 +250,11 @@ class ActionExecutor(
             is AssistantAction.CreateReminder -> {
                 val reminder = reminders.create(action.text, action.triggerAt, action.recurrence, zone.id)
                 scheduler.schedule(reminder)
+                if (action.persistent) onPersistentReminder(reminder.id)
                 val whenText = RuFormat.dateTime(reminder.triggerAt, zone, now)
                 val repeat = action.recurrence?.let { " Повтор: ${it.describeRu()}." } ?: ""
-                changed("Напомню ${RuFormat.quote(reminder.text)} $whenText.$repeat", RecordRef(RecordType.REMINDER, reminder.id, reminder.text))
+                val nag = if (action.persistent) " Буду напоминать каждые 10 минут, пока не нажмёте «Готово»." else ""
+                changed("Напомню ${RuFormat.quote(reminder.text)} $whenText.$repeat$nag", RecordRef(RecordType.REMINDER, reminder.id, reminder.text))
             }
 
             is AssistantAction.CancelReminder -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {

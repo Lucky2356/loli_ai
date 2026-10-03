@@ -73,7 +73,8 @@ sealed interface AssistantAction {
 
     data class DeleteTask(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 
-    data class CreateReminder(val text: String, val triggerAt: Instant, val recurrence: Recurrence?) : AssistantAction
+    /** [persistent] — «настойчиво, пока не отмечу»: после срабатывания напоминание повторяется, пока его не отметят (только разовое). */
+    data class CreateReminder(val text: String, val triggerAt: Instant, val recurrence: Recurrence?, val persistent: Boolean = false) : AssistantAction
 
     data class CancelReminder(val target: TargetRef) : AssistantAction { override val isDestructive = true }
 

@@ -33,5 +33,13 @@ class SecretNoteStore(private val db: LoliDatabase, private val dispatcher: Coro
 
     suspend fun delete(id: String) = withContext(dispatcher) { q.deleteById(id); Unit }
 
+    /** Восстановление из резервной копии с прежними временами; более свежая локальная версия не затирается. */
+    suspend fun restore(note: SecretNote): Boolean = withContext(dispatcher) {
+        val local = q.selectAll().executeAsList().firstOrNull { it.id == note.id }
+        if (local != null && local.updated_at >= note.updatedAt.toEpochMilli()) return@withContext false
+        q.insertOrReplace(ai.loli.core.db.Secret_note(note.id, note.title, note.content, note.createdAt.toEpochMilli(), note.updatedAt.toEpochMilli()))
+        true
+    }
+
     private fun ai.loli.core.db.Secret_note.toDomain() = SecretNote(id, title, content, Instant.ofEpochMilli(created_at), Instant.ofEpochMilli(updated_at))
 }

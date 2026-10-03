@@ -22,6 +22,10 @@ INSERT OR REPLACE INTO memory VALUES ?;
 selectDirty:
 SELECT * FROM memory WHERE dirty = 1;
 
+-- Все строки, включая удалённые: для резервной копии.
+selectEvery:
+SELECT * FROM memory;
+
 markSynced:
 UPDATE memory SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
 

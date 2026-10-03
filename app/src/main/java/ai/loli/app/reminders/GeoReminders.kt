@@ -121,6 +121,26 @@ class GeoReminders(private val context: Context) {
         pi.cancel()
     }
 
+    /** Для резервной копии: места и напоминания по месту как JSON-строки. */
+    @Synchronized
+    fun exportRaw(): Map<String, String> = mapOf(
+        "geo_places" to JSONArray().also { a -> read(KEY_PLACES).forEach { a.put(it) } }.toString(),
+        "geo_reminders" to JSONArray().also { a -> read(KEY_REMINDERS).forEach { a.put(it) } }.toString(),
+    )
+
+    /** Из копии берём только то, чего на этом телефоне ещё нет (места по названию, напоминания по id). */
+    @Synchronized
+    fun importRaw(values: Map<String, String>) {
+        fun parse(raw: String?): List<JSONObject> {
+            val arr = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+        }
+        val havePlaces = read(KEY_PLACES).map { it.optString("name") }.toSet()
+        write(KEY_PLACES, read(KEY_PLACES) + parse(values["geo_places"]).filter { it.optString("name").isNotBlank() && it.optString("name") !in havePlaces })
+        val haveIds = read(KEY_REMINDERS).map { it.optString("id") }.toSet()
+        write(KEY_REMINDERS, read(KEY_REMINDERS) + parse(values["geo_reminders"]).filter { it.optString("id").isNotBlank() && it.optString("id") !in haveIds })
+    }
+
     /** Места (дом, работа) — это адреса человека, поэтому лежат зашифрованными ключом Android Keystore, а не в открытых настройках. */
     private val secrets by lazy { ai.loli.app.security.KeystoreSecretStore(context.applicationContext) }
 

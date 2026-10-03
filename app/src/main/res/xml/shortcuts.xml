@@ -11,4 +11,43 @@
             android:targetPackage="ai.loli.app"
             android:targetClass="ai.loli.app.ui.MainActivity" />
     </shortcut>
+    <shortcut
+        android:shortcutId="quick_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_tile"
+        android:shortcutShortLabel="@string/shortcut_expense_short"
+        android:shortcutLongLabel="@string/shortcut_expense_long">
+        <intent
+            android:action="ai.loli.action.QUICK"
+            android:targetPackage="ai.loli.app"
+            android:targetClass="ai.loli.app.ui.MainActivity">
+            <extra android:name="kind" android:value="expense" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="quick_task"
+        android:enabled="true"
+        android:icon="@drawable/ic_tile"
+        android:shortcutShortLabel="@string/shortcut_task_short"
+        android:shortcutLongLabel="@string/shortcut_task_long">
+        <intent
+            android:action="ai.loli.action.QUICK"
+            android:targetPackage="ai.loli.app"
+            android:targetClass="ai.loli.app.ui.MainActivity">
+            <extra android:name="kind" android:value="task" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="quick_note"
+        android:enabled="true"
+        android:icon="@drawable/ic_tile"
+        android:shortcutShortLabel="@string/shortcut_note_short"
+        android:shortcutLongLabel="@string/shortcut_note_long">
+        <intent
+            android:action="ai.loli.action.QUICK"
+            android:targetPackage="ai.loli.app"
+            android:targetClass="ai.loli.app.ui.MainActivity">
+            <extra android:name="kind" android:value="note" />
+        </intent>
+    </shortcut>
 </shortcuts>

@@ -32,12 +32,15 @@ class TestEnv(
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { LoliDatabase.Schema.create(it) }
     val store = LocalStore(driver, time, Dispatchers.Unconfined)
     val scheduler = RecordingScheduler()
+    /** Напоминания, созданные как «настойчивые». */
+    val persistent = mutableListOf<String>()
     var embeddings: EmbeddingProvider? = null
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
     val executor = ActionExecutor(
         store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
         shopping = store.shopping, routines = store.routines, secrets = store.secrets,
+        onPersistentReminder = { persistent += it },
     )
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
