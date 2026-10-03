@@ -120,9 +120,13 @@ class Skills(
             if (parsed == null) continuation(text, cfg, ai)?.let { return it }
             // Играет радио: «дальше», «переключи» — следующая станция из того же списка, что и «следующая станция».
             if (host.radioPlaying() && RADIO_NEXT.containsMatchIn(SkillPhrases.norm(text))) return radioNext()
-            val cmd = parsed ?: SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
-            // Деньги — только если помощник отдал сводку; иначе фразу разберёт сама Лоли (её траты).
-            if (cmd is SkillCommand.Finance) return finance(cmd, cfg)
+            var cmd = parsed ?: SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
+            // Деньги — только если помощник отдал сводку и знает ответ; иначе фразу разберут
+            // другие навыки или сама Лоли (её траты).
+            if (cmd is SkillCommand.Finance) {
+                finance(cmd, cfg)?.let { return it }
+                cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName, money = false) ?: return null
+            }
             val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (cfg.locked && private(cmd)) {
                 return SkillOutcome.Say("Разблокируйте телефон — ${privateWhat(cmd)} без разблокировки не показываю.")

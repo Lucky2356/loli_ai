@@ -59,13 +59,14 @@ object SkillPhrases {
     /** Фраза — это запись/напоминание/задача, а не вопрос («напомни взять зонт»). */
     private val RECORD_VERB = rx("""^(?:напомни|запиши|записать|добавь|создай|поставь задачу|поставь напоминание|заметка|заметку|купи|список|сохрани заметку|потратил|потратила|заплатил|заплатила)\b""")
 
-    fun parse(text: String, today: LocalDate, assistantName: String = "Лоли"): SkillCommand? {
+    /** [money] = false — без вопросов о деньгах: помощник на них не ответил, пусть фразу возьмёт другой навык. */
+    fun parse(text: String, today: LocalDate, assistantName: String = "Лоли", money: Boolean = true): SkillCommand? {
         val t = norm(text)
         if (t.isEmpty()) return null
         profile(t, text)?.let { return it }
         places(t, text)?.let { return it }
         if (RECORD_VERB.containsMatchIn(t)) return null
-        finance(t)?.let { return it }
+        if (money) finance(t)?.let { return it }
         // Явный поиск в интернете — это команда телефону, а не вопрос навыку.
         if (rx("""^(?:найди|поищи|посмотри)\s+в\s+(?:интернете|гугле|яндексе|сети)|^(?:загугли|погугли)\b""").containsMatchIn(t)) return null
         almanac(t, today)?.let { return it }
@@ -90,6 +91,9 @@ object SkillPhrases {
 
     // ------------------------------------------------------------------ Деньги (Финансовый помощник)
 
+    /** «Сколько осталось на таймере», «сколько на часах» — не про деньги. */
+    private const val NOT_MONEY = "таймер|будильник|часах|часы|батаре|заряд|телефон|улице|дворе|градуснике|термометре"
+
     private const val TODAY_WORDS = """(?:\s+(?:сегодня|на сегодня|за сегодня|в день|на день|сегодня ещё|сегодня еще))?"""
 
     /**
@@ -113,14 +117,14 @@ object SkillPhrases {
         // «Сколько денег на Т-Банке», «сколько на карте Сбера», «баланс Тинькофф» — счёт по имени.
         rx("""^(?:сколько\s+(?:у меня\s+)?(?:денег\s+(?:на|в)|на)\s+(?:карте\s+|счете\s+|счету\s+)?|(?:какой\s+)?(?:баланс|остаток)\s+(?:на\s+|по\s+)?(?:карте\s+|счете\s+|карты\s+|счета\s+)?)(.{2,40})$""").find(q)?.let { m ->
             val subject = m.groupValues[1].trim()
-            if (!rx("""^(?:сегодня|день|неделю|месяц|этот месяц|зарплат|часах|улице|дворе|градуснике)""").containsMatchIn(subject)) {
+            if (!rx("""^(?:сегодня|день|неделю|месяц|этот месяц|зарплат|${NOT_MONEY})""").containsMatchIn(subject)) {
                 return SkillCommand.Finance(FinanceAsk.BALANCE, subject)
             }
         }
         // «Сколько осталось на продукты», «сколько ещё можно потратить на кафе», «какой лимит на такси».
         rx("""^(?:сколько\s+(?:мне\s+|у меня\s+)?(?:ещё\s+|еще\s+)?(?:осталось|остается|остаётся|можно\s+потратить|могу\s+потратить|можно\s+тратить)\s+(?:на|по)\s+|(?:какой\s+)?(?:у меня\s+)?(?:лимит|бюджет)\s+(?:на|по)\s+)(.{2,40}?)(?:\s+(?:в этом месяце|до конца месяца|на этот месяц|в месяц|на месяц))?$""").find(q)?.let { m ->
             val subject = m.groupValues[1].trim()
-            if (!rx("""^(?:сегодня|день|неделю|месяц|этот месяц|жизнь)$""").containsMatchIn(subject)) {
+            if (!rx("""^(?:сегодня$|день$|неделю$|месяц$|этот месяц$|жизнь$|${NOT_MONEY})""").containsMatchIn(subject)) {
                 return SkillCommand.Finance(FinanceAsk.CATEGORY, subject)
             }
         }
