@@ -148,15 +148,15 @@ fun ExpensesScreen(c: AppContainer) {
 
     if (adding) {
         ExpenseEditor(today, null, onDismiss = { adding = false }, onSave = { amount, category, description, date ->
-            scope.launch { c.store.expenses.create(Money.toMinor(amount), "RUB", category, description, date) }
+            scope.launch { c.expenses.create(Money.toMinor(amount), "RUB", category, description, date) }
             adding = false
         }, onDelete = {})
     }
     editing?.let { e ->
         ExpenseEditor(today, e, onDismiss = { editing = null }, onSave = { amount, category, description, date ->
-            scope.launch { c.store.expenses.update(e.copy(amountMinor = Money.toMinor(amount), category = category, description = description, occurredOn = date)) }
+            scope.launch { c.expenses.update(e.copy(amountMinor = Money.toMinor(amount), category = category, description = description, occurredOn = date)) }
             editing = null
-        }, onDelete = { scope.launch { c.store.expenses.delete(e.id) }; editing = null })
+        }, onDelete = { scope.launch { c.expenses.delete(e.id) }; editing = null })
     }
 }
 

@@ -444,6 +444,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         val m = Regex("""^(?:а|и)\s+(.+)$""").find(n) ?: return null
         val tail = m.groupValues[1].trim()
         if (tail.split(" ").size > 5) return null
+        // «А сколько можно тратить сегодня?» — новый вопрос о бюджете, а не «а за сегодня?».
+        if (Regex("""(?:можно|могу|осталось|остается|хватит|хватает|лимит|баланс|денег|зарплат)""").containsMatchIn(tail)) return null
         val today = now.atZone(zone).toLocalDate()
         monthRange(tail, today)?.let { (from, to) -> return previous.copy(preset = null, from = from, to = to) }
         val periodHit = Regex("""(сегодня|вчера|недел|месяц|год|вс[её] время)""").containsMatchIn(tail)

@@ -69,6 +69,14 @@ interface SkillHost {
     fun placeReminders(): List<PlaceReminder> = emptyList()
     fun cancelPlaceReminders(place: String?): Int = 0
 
+    /**
+     * Сводка «Финансового помощника» (JSON, договор версии 1) или null:
+     * помощника нет, связь выключена или он не разрешил отдавать сводку.
+     */
+    suspend fun financeSummary(): String? = null
+    /** Траты Лоли, переданные в помощник после [since], — в его сводке их ещё нет. */
+    suspend fun financePending(since: Instant): List<ai.loli.core.model.Expense> = emptyList()
+
     fun setUserName(name: String?) {}
     fun setCity(city: String?) {}
 }

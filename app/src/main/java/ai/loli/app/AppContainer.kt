@@ -165,11 +165,17 @@ class AppContainer(private val context: Context) {
         val r = store.reminders.create(text, at, null, time.zone().id)
         reminderScheduler.schedule(r)
     }, timers = timers, relaxation = relaxation, driving = driving)
+    /** Связь с «Финансовым помощником»: траты уходят туда, ответы о деньгах — оттуда. */
+    val finance = ai.loli.app.device.FinanceBridge(context, appScope)
+    /** Траты, которые заодно уходят в помощник. Сама Лоли пишет их так же, как раньше. */
+    val expenses: ai.loli.core.domain.ExpenseRepository by lazy { ai.loli.core.finance.FinanceLinkedExpenses(store.expenses, finance) }
     /** Погода, курсы, новости, сообщения, экран, радио, игры, сказки… */
     val skillHost = ai.loli.app.device.AndroidSkillHost(
         context, permissions, launcher, timers, geo,
         onUserName = { n -> appScope.launch { settings.setUserName(n.orEmpty()) } },
         onCity = { c -> appScope.launch { settings.setCity(c.orEmpty()) } },
+        finance = finance,
+        financePendingSince = { since -> store.expenses.all().filter { it.createdAt.isAfter(since) && finance.known(it.id) } },
     )
     val skills = ai.loli.core.skills.Skills(skillHost, http, time)
     /** Офлайн-модель для разговора (~1 ГБ, скачивается по кнопке). */
@@ -197,7 +203,7 @@ class AppContainer(private val context: Context) {
 
     val executor: ai.loli.core.assistant.ActionExecutor by lazy {
         ActionExecutor(
-            store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
+            store.notes, expenses, store.tasks, store.reminders, store.memories, search, resolver, reminderScheduler, time, device,
             lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
             agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
             contactBirthdays = { if (assistantSettings().locked) emptyList() else skillHost.contactBirthdays() },

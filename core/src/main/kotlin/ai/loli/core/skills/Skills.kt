@@ -9,6 +9,8 @@ import ai.loli.core.assistant.LocalCommandParser
 import ai.loli.core.assistant.LockPolicy
 import ai.loli.core.assistant.SkillAccess
 import ai.loli.core.assistant.RuFormat
+import ai.loli.core.finance.FinanceAnswers
+import ai.loli.core.finance.FinanceSummary
 import ai.loli.core.nlp.RuStemmer
 import ai.loli.core.nlp.RuTokenizer
 import ai.loli.core.util.Logger
@@ -118,7 +120,13 @@ class Skills(
             if (parsed == null) continuation(text, cfg, ai)?.let { return it }
             // Играет радио: «дальше», «переключи» — следующая станция из того же списка, что и «следующая станция».
             if (host.radioPlaying() && RADIO_NEXT.containsMatchIn(SkillPhrases.norm(text))) return radioNext()
-            val cmd = parsed ?: SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
+            var cmd = parsed ?: SkillPhrases.parse(text, time.today(), cfg.assistantName) ?: return null
+            // Деньги — только если помощник отдал сводку и знает ответ; иначе фразу разберут
+            // другие навыки или сама Лоли (её траты).
+            if (cmd is SkillCommand.Finance) {
+                finance(cmd, cfg)?.let { return it }
+                cmd = SkillPhrases.parse(text, time.today(), cfg.assistantName, money = false) ?: return null
+            }
             val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
             if (cfg.locked && private(cmd)) {
                 return SkillOutcome.Say("Разблокируйте телефон — ${privateWhat(cmd)} без разблокировки не показываю.")
@@ -259,7 +267,8 @@ class Skills(
     // ------------------------------------------------------------------ Выполнение
 
     private fun private(cmd: SkillCommand) = cmd is SkillCommand.ReadMessages || cmd is SkillCommand.ReplyMessage || cmd is SkillCommand.Screen ||
-        cmd is SkillCommand.ContactNumber || cmd is SkillCommand.Calendar || cmd is SkillCommand.ListPlaces || cmd is SkillCommand.SavePlace
+        cmd is SkillCommand.ContactNumber || cmd is SkillCommand.Calendar || cmd is SkillCommand.ListPlaces || cmd is SkillCommand.SavePlace ||
+        cmd is SkillCommand.Finance
 
     /** Что можно на экране блокировки: см. [LockPolicy.allowsSkill]. */
     private fun access(cmd: SkillCommand): SkillAccess = when (cmd) {
@@ -275,7 +284,7 @@ class Skills(
         SkillCommand.TimersLeft, is SkillCommand.TimersCancel -> SkillAccess.DEVICE
         SkillCommand.AskName -> SkillAccess.VIEW
         is SkillCommand.ReadMessages, is SkillCommand.ReplyMessage, is SkillCommand.Screen, is SkillCommand.ContactNumber,
-        is SkillCommand.Calendar, SkillCommand.ListPlaces, is SkillCommand.SavePlace -> SkillAccess.PRIVATE
+        is SkillCommand.Calendar, SkillCommand.ListPlaces, is SkillCommand.SavePlace, is SkillCommand.Finance -> SkillAccess.PRIVATE
     }
 
     private fun privateWhat(cmd: SkillCommand) = when (cmd) {
@@ -283,6 +292,7 @@ class Skills(
         is SkillCommand.Screen -> "содержимое экрана"
         is SkillCommand.ContactNumber -> "контакты"
         is SkillCommand.Calendar -> "календарь"
+        is SkillCommand.Finance -> "деньги"
         else -> "места"
     }
 
@@ -343,6 +353,7 @@ class Skills(
         is SkillCommand.Almanac -> SkillOutcome.Say(almanac(cmd))
         // Поздравление пишет облачный AI; без него — готовые шаблоны (офлайн-модель думает долго).
         is SkillCommand.Greet -> greet(cmd, ai.takeIf { cfg.useAI })
+        is SkillCommand.Finance -> finance(cmd, cfg)
         is SkillCommand.FactOfDay -> SkillOutcome.Say(
             if (cmd.ofDay) "Факт дня: " + Trivia.FACTS[(time.today().toEpochDay() % Trivia.FACTS.size).toInt()]
             else Trivia.FACTS.filter { it != lastFact }.random().also { lastFact = it },
@@ -360,6 +371,15 @@ class Skills(
     }
 
     private fun offline(what: String) = SkillOutcome.Say("Чтобы узнать $what, нужен интернет.")
+
+    /** Ответ по сводке Финансового помощника; null — сводки нет или она не знает ответа. */
+    private suspend fun finance(cmd: SkillCommand.Finance, cfg: AssistantSettings): SkillOutcome? {
+        val summary = FinanceSummary.parse(orNull { host.financeSummary() }) ?: return null
+        if (cfg.locked) return SkillOutcome.Say("Разблокируйте телефон — про деньги без разблокировки не рассказываю.")
+        val pending = orNull { host.financePending(summary.updatedAt) }.orEmpty()
+        val text = FinanceAnswers.answer(summary, cmd.ask, cmd.subject, pending, time.today(), time.zone()) ?: return null
+        return SkillOutcome.Say(text, sensitive = true)
+    }
 
     private fun askGame(): SkillOutcome {
         awaitGameChoice = true
