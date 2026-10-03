@@ -46,6 +46,10 @@ sealed interface DeviceCommand {
     data class Driving(val on: Boolean) : DeviceCommand
     /** «Сделай резервную копию» / «восстановить из копии»: открывает экран копии (пароль вводится на экране, не голосом). */
     data object OpenBackup : DeviceCommand
+    /** Помодоро: цикл «работа — отдых» таймерами; on = false останавливает. */
+    data class Focus(val on: Boolean, val workMinutes: Int = 25, val restMinutes: Int = 5) : DeviceCommand
+    /** Режим сна: каждый вечер в [from] включается «Не беспокоить», утром в [to] выключается; on = false отменяет. */
+    data class SleepMode(val on: Boolean, val from: LocalTime? = null, val to: LocalTime? = null) : DeviceCommand
 }
 
 enum class RelaxKind { BREATHING, MEDITATION, STOP }
@@ -84,6 +88,49 @@ object DevicePhrases {
         return tokens.joinToString(" ") { t ->
             t.number?.let { v -> if (v % 1.0 == 0.0) v.toLong().toString() else v.toString() } ?: t.norm
         }
+    }
+
+    /** «Работаем 25 минут», «помодоро», «хватит работать»; «режим сна с 23 до 7», «выключи режим сна». */
+    internal fun focus(t: String): DeviceCommand? {
+        val d = digitize(t)
+        if (re("""^(?:хватит\s+работать|останови\s+(?:помодоро|фокус|работу)|выключи\s+(?:помодоро|фокус|режим\s+фокуса)|отмени\s+(?:помодоро|фокус)|закончи\s+(?:помодоро|фокус)|хватит\s+помодоро)$""").containsMatchIn(d)) return DeviceCommand.Focus(false)
+        if (re("""^(?:выключи|отключи|отмени|убери)\s+режим\s+сна$|^хватит\s+(?:спать\s+по\s+режиму|режима\s+сна)$""").containsMatchIn(d)) return DeviceCommand.SleepMode(false)
+        re("""^(?:включи\s+|поставь\s+|давай\s+)?(?:режим\s+)?сна?\s+(?:с|от)\s+(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)?\s+(?:до|по)\s+(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)?$""").find(d)?.let { m ->
+            return sleepRange(m)
+        }
+        re("""^(?:включи\s+|поставь\s+)?режим\s+сна\s+(?:с|от)\s+(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)?\s+(?:до|по)\s+(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)?$""").find(d)?.let { return sleepRange(it) }
+        if (re("""^(?:включи\s+|поставь\s+)?режим\s+сна$""").containsMatchIn(d)) return DeviceCommand.SleepMode(true, LocalTime.of(23, 0), LocalTime.of(7, 0))
+        val m = re("""^(?:давай\s+)?(?:включи\s+|запусти\s+|начни\s+)?(?:(?:работаем|поработаем|работать|сосредоточимся|фокус(?:ируемся)?)\s*(?:на\s+)?(\d{1,3})?\s*(?:минут\w*)?|помодоро|режим\s+фокуса|фокус)(?:\s*(?:на\s+)?(\d{1,3})\s*(?:минут\w*)?)?(?:[,\s]+(?:отдых|перерыв)\s*(\d{1,2})\s*(?:минут\w*)?)?$""").find(d) ?: return null
+        val work = (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull() ?: 25
+        val rest = m.groupValues[3].toIntOrNull() ?: 5
+        if (work !in 1..180 || rest !in 1..60) return null
+        // «работаем» без числа и без слов про фокус — слишком общая фраза.
+        if (!d.contains("помодоро") && !d.contains("фокус") && m.groupValues[1].isEmpty() && m.groupValues[2].isEmpty()) return null
+        return DeviceCommand.Focus(true, work, rest)
+    }
+
+    private fun sleepRange(m: MatchResult): DeviceCommand.SleepMode? {
+        fun hour(h: String, marker: String, isStart: Boolean, other: Int): Int? {
+            var x = h.toIntOrNull() ?: return null
+            if (x > 23) return null
+            when (marker) {
+                "вечера" -> if (x < 12) x += 12
+                "дня" -> if (x < 6) x += 12
+                "ночи" -> if (x == 12) x = 0
+                "утра" -> if (x == 12) x = 0
+                else -> if (isStart && x in 6..11 && other < x) x += 12
+            }
+            return x
+        }
+        val endRaw = m.groupValues[4].toIntOrNull() ?: return null
+        val from = hour(m.groupValues[1], m.groupValues[3], true, endRaw) ?: return null
+        val to = hour(m.groupValues[4], m.groupValues[6], false, from) ?: return null
+        val fromMin = m.groupValues[2].toIntOrNull() ?: 0
+        val toMin = m.groupValues[5].toIntOrNull() ?: 0
+        if (fromMin > 59 || toMin > 59) return null
+        val a = LocalTime.of(from, fromMin); val b = LocalTime.of(to, toMin)
+        if (a == b) return null
+        return DeviceCommand.SleepMode(true, a, b)
     }
 
     /** Длительность: «5 минут», «1 час 20 минут», «90 секунд», «минуту». */
@@ -217,6 +264,10 @@ object DevicePhrases {
         if (re("""^(?:(?:сделай|создай|сохрани|сделать|создать|сохранить)\s+(?:мне\s+)?(?:резервную\s+копию(?:\s+(?:данных|записей|всего))?|бэкап|бекап|копию\s+(?:данных|записей|всего))|резервн\w+\s+копи\w+|бэкап|бекап|(?:восстанови|восстановить|верни)\s+(?:данные|записи|всё|все)?\s*(?:из\s+(?:резервной\s+)?копии|из\s+бэкапа)|как\s+(?:перенести|перекинуть)\s+(?:данные|записи|всё|все)\s+на\s+нов\w+\s+телефон|перенос\s+на\s+нов\w+\s+телефон)$""").containsMatchIn(t)) {
             return cmd(DeviceCommand.OpenBackup)
         }
+
+
+        // Фокус (помодоро) и режим сна.
+        focus(t)?.let { return cmd(it) }
 
         // «Я за рулём» — сообщения вслух.
         if (re("""^(?:я\s+)?(?:сейчас\s+)?(?:за рул[её]м|веду машину|еду на машине|в машине|сажусь за руль|поехала|поехал)$|^(?:включи\s+)?режим\s+(?:вождения|за рул[её]м|водителя|автомобиля)$|^(?:включи\s+)?автомобильный режим$""").containsMatchIn(t)) {
@@ -501,6 +552,14 @@ object DevicePhrases {
 
     /** «переведи 5 миль в километры», «сколько 10 фунтов в кг», «100 градусов фаренгейта в цельсии». */
     fun convert(t: String): String? {
+        ai.loli.core.nlp.Kitchen.answer(t)?.let { return it }
+        // «72 по фаренгейту» / «20 градусов по цельсию»: целевая шкала — противоположная.
+        re("""(?:сколько\s+(?:это\s+)?)?(-?\d+(?:\.\d+)?)\s*(?:градус\w*\s*)?по\s+(фаренгейт\w*|цельси\w*)\s*[?.!]*$""").find(t)?.let { m ->
+            val v = m.groupValues[1].toDouble()
+            val fromF = m.groupValues[2].startsWith("фарен")
+            val r = if (fromF) (v - 32) * 5 / 9 else v * 9 / 5 + 32
+            return "${fmt(v)}° ${if (fromF) "F" else "C"} = ${fmt(r)}° ${if (fromF) "C" else "F"}."
+        }
         re("""(-?\d+(?:\.\d+)?)\s*градус\w*\s*(фаренгейт\w*|цельси\w*)\s+(?:в|во)\s+(фаренгейт\w*|цельси\w*)""").find(t)?.let { m ->
             val v = m.groupValues[1].toDouble()
             val toC = m.groupValues[3].startsWith("цельс")

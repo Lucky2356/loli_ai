@@ -105,6 +105,8 @@ class AssistantEngine(
     private val localChat: ai.loli.core.ai.LocalChat? = null,
     /** Вода, лекарства, привычки, дыхание. */
     private val habits: ai.loli.core.health.Habits? = null,
+    /** Строка про траты за день для «итогов дня» (null — не показывать). */
+    private val daySpend: suspend (java.time.LocalDate) -> String? = { null },
 ) {
     val context = ConversationContext(time)
     private val mutex = Mutex()
@@ -222,6 +224,56 @@ class AssistantEngine(
         return AssistantReply(out, offline = cfg.useAI, provider = "Офлайн-модель")
     }
 
+    /** Дневник дня: настроение, итоги, неделя. Личное — на заблокированном экране не показываем. */
+    private suspend fun diaryTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val h = habits ?: return null
+        val today = time.today()
+        val zone = time.zone()
+        val done = tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today }
+        val r = h.diary(text, done, daySpend(today), localParser.startsWithCommand(text)) ?: return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — дневник личный, без разблокировки не открываю.")
+        return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
+    }
+
+    private var cook: ai.loli.core.skills.CookingSession? = null
+    private var cookAt = time.now()
+
+    /** Готовка забывается после часа молчания. */
+    private suspend fun cookingTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val active = cook
+        if (active != null && java.time.Duration.between(cookAt, time.now()) > java.time.Duration.ofMinutes(60)) cook = null
+        val session = cook
+        if (session == null) {
+            val dish = ai.loli.core.skills.Cooking.startDish(text) ?: return null
+            val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+            if (policy != null && !policy.view) return AssistantReply("Разблокируйте телефон — рецепты без разблокировки не открываю.")
+            if (dish.isEmpty()) return AssistantReply("Что готовим? Скажите, например: «давай приготовим борщ». Рецепт должен быть в заметках.", awaitingAnswer = true)
+            val note = ai.loli.core.skills.Cooking.find(notes.all(), dish)
+                ?: return AssistantReply("В заметках нет рецепта «$dish». Продиктуйте его: «запиши заметку рецепт $dish: ингредиенты — …, сначала …, потом …».")
+            val recipe = ai.loli.core.skills.Cooking.parse(note)
+            if (recipe.steps.isEmpty()) return AssistantReply("В заметке «${note.title}» нет шагов. Допишите приготовление по шагам.")
+            val s = ai.loli.core.skills.CookingSession(recipe)
+            cook = s; cookAt = time.now()
+            return AssistantReply(s.intro(), expectFollowUp = true)
+        }
+        val cmd = ai.loli.core.skills.Cooking.command(text) ?: return null
+        cookAt = time.now()
+        return when (cmd) {
+            ai.loli.core.skills.CookingCommand.Stop -> { cook = null; AssistantReply("Хорошо, закончили готовить.", endsDialog = true) }
+            ai.loli.core.skills.CookingCommand.Next -> AssistantReply(session.next(), expectFollowUp = !session.finished, endsDialog = session.finished).also { if (session.finished) cook = null }
+            ai.loli.core.skills.CookingCommand.Repeat -> AssistantReply(if (session.finished) "Блюдо готово!" else session.current(), expectFollowUp = true)
+            ai.loli.core.skills.CookingCommand.Back -> AssistantReply(session.back(), expectFollowUp = true)
+            ai.loli.core.skills.CookingCommand.Ingredients -> AssistantReply(session.ingredients(), expectFollowUp = true)
+            is ai.loli.core.skills.CookingCommand.Go -> AssistantReply(session.go(cmd.step), expectFollowUp = true)
+            ai.loli.core.skills.CookingCommand.Timer -> {
+                val sec = session.timerSeconds() ?: return AssistantReply("В этом шаге времени нет. Скажите, например: «таймер на 10 минут».", expectFollowUp = true)
+                execute(AssistantPlan("", listOf(AssistantAction.Device(DeviceCommand.Timer(sec, session.recipe.title)))), usedAI = false, offline = false, name = cfg.assistantName)
+                    .copy(expectFollowUp = true)
+            }
+        }
+    }
+
     private suspend fun habitReply(text: String, cfg: AssistantSettings): AssistantReply? {
         val h = habits ?: return null
         val cmd = h.parse(text) ?: return null
@@ -300,6 +352,9 @@ class AssistantEngine(
             if (skills.interruptedBy(text, cfg, ::isCommand)) skills.reset()
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
+        // 0.4. Режим готовки: «дальше», «повтори», «назад», «таймер».
+        cookingTurn(text, cfg)?.let { return it }
+        diaryTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }
         // 1. Ожидаем подтверждение опасного действия.

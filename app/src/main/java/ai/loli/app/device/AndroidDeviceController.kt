@@ -293,6 +293,27 @@ class AndroidDeviceController(
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 "Открываю резервную копию. Пароль для файла введите на экране.", "Резервная копия",
             )
+            is DeviceCommand.Focus -> {
+                if (!c.on) {
+                    return if (ai.loli.app.reminders.FocusSession.stop(context)) DeviceResult("Хватит так хватит. Отличная работа!") else DeviceResult("Помодоро сейчас не идёт.", ok = false)
+                }
+                ai.loli.app.reminders.FocusSession.start(context, c.workMinutes, c.restMinutes)
+                DeviceResult("Работаем ${RuFormat.count(c.workMinutes, "минуту", "минуты", "минут")}, потом отдых ${RuFormat.count(c.restMinutes, "минуту", "минуты", "минут")}. Скажу, когда пора. Остановить — «хватит работать».")
+            }
+            is DeviceCommand.SleepMode -> {
+                if (!c.on) {
+                    ai.loli.app.reminders.SleepMode.disable(context)
+                    return DeviceResult("Режим сна выключен.")
+                }
+                val nm = context.getSystemService(NotificationManager::class.java)
+                if (!nm.isNotificationPolicyAccessGranted) {
+                    return open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Разрешите Лоли управлять режимом «Не беспокоить» — и повторите команду.", "Режим сна")
+                }
+                val from = c.from ?: LocalTime.of(23, 0)
+                val to = c.to ?: LocalTime.of(7, 0)
+                ai.loli.app.reminders.SleepMode.enable(context, from, to)
+                DeviceResult("Режим сна включён: «Не беспокоить» каждый день с ${RuFormat.time(from)} до ${RuFormat.time(to)}. Выключить — «выключи режим сна».")
+            }
             is DeviceCommand.Driving -> {
                 val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
                 if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }

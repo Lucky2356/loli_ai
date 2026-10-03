@@ -216,6 +216,10 @@ class AppContainer(private val context: Context) {
         onNotUnderstood = { ai.loli.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
         localChat = offlineLlm,
         habits = ai.loli.core.health.Habits(store.habits, time),
+        daySpend = { day ->
+            store.expenses.between(day, day).filter { it.category != ai.loli.core.nlp.ExpenseCategories.INCOME }.takeIf { it.isNotEmpty() }
+                ?.let { list -> "Потрачено: " + list.groupBy { it.currency }.entries.joinToString(", ") { (cur, items) -> ai.loli.core.nlp.Money.format(items.sumOf { it.amountMinor }, cur) } + "." }
+        },
     ) }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
@@ -369,6 +373,7 @@ class AppContainer(private val context: Context) {
     suspend fun rescheduleReminders(afterBoot: Boolean = false) {
         runCatching { timers.rescheduleAll(afterBoot) }
         runCatching { geo.registerAll(force = afterBoot) }
+        runCatching { ai.loli.app.reminders.SleepMode.reschedule(context) }
         reminderScheduler.rescheduleAll(store.reminders.active())
     }
 
