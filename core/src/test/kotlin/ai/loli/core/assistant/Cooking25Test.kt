@@ -52,4 +52,19 @@ class Cooking25Test {
         val r = e.engine.handle("давай приготовим плов").text
         assertTrue(r.contains("нет рецепта"), r)
     }
+
+    @Test fun unnumberedStepsAreNotIngredients() = runTest {
+        val e = TestEnv(device = device).apply {
+            settings = AssistantSettings(useAI = false)
+            store.notes.create(NoteKind.NOTE, "Омлет", "Ингредиенты: яйца, молоко, соль\nВзбить яйца с молоком.\nВылить на сковороду и жарить 5 минут.")
+        }
+        val intro = e.engine.handle("давай приготовим омлет").text
+        assertTrue(intro.contains("Понадобится: яйца, молоко, соль.") && intro.contains("Всего 2 шага"), intro)
+    }
+
+    @Test fun asksForDishAndTakesTheNextPhrase() = runTest {
+        val e = env()
+        assertTrue(e.engine.handle("давай готовить").text.startsWith("Что готовим"))
+        assertTrue(e.engine.handle("борщ").text.contains("Сварить мясо"))
+    }
 }
