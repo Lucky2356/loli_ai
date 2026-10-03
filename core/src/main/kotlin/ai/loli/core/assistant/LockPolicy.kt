@@ -58,14 +58,14 @@ data class LockPolicy(
     fun allows(action: AssistantAction): Boolean = when (action) {
         is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote,
-        is AssistantAction.AddToList, is AssistantAction.AddBirthday, is AssistantAction.CreateSecretNote -> create
+        is AssistantAction.AddToList, is AssistantAction.AddBirthday, is AssistantAction.CreateSecretNote, is AssistantAction.AddSubscription -> create
         is AssistantAction.Clarify -> true
-        is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines -> view
+        is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions -> view
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {
             is DeviceCommand.Timer, is DeviceCommand.Alarm, is DeviceCommand.Flashlight, DeviceCommand.Battery,
-            is DeviceCommand.Media, is DeviceCommand.Volume, is DeviceCommand.DoNotDisturb, is DeviceCommand.Brightness, is DeviceCommand.Relax -> basicDevice
+            is DeviceCommand.Media, is DeviceCommand.Volume, is DeviceCommand.DoNotDisturb, is DeviceCommand.Brightness, is DeviceCommand.Relax, is DeviceCommand.Focus, is DeviceCommand.SleepMode -> basicDevice
             // Заблокировать экран можно всегда; остальные системные кнопки — как открытие приложений.
             is DeviceCommand.Global -> c.action == GlobalAction.LOCK || apps
             is DeviceCommand.Call, is DeviceCommand.Message, is DeviceCommand.Driving -> calls

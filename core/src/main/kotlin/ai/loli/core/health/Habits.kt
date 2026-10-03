@@ -362,7 +362,109 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
     private fun glassesText(x: Double): String =
         if (x % 1.0 == 0.0) RuFormat.count(x.toInt(), "стакан", "стакана", "стаканов") else "${fmt(x)} стакана"
 
+
+    // ------------------------------------------------------------------ Дневник дня
+
+    private var awaitMood = false
+    private var pendingMood: Int? = null
+    private var diaryAskedAt = time.now()
+
+    private fun diaryFresh(): Boolean = Duration.between(diaryAskedAt, time.now()) <= Duration.ofMinutes(3)
+
+    private fun moodScore(t: String): Int? {
+        Regex("""(?<![\d.,])([1-5])(?:\s*(?:из|/)\s*5)?(?![\d.,])""").find(t)?.let { return it.groupValues[1].toInt() }
+        val d = ai.loli.core.assistant.DevicePhrases.digitize(t)
+        Regex("""(?<![\d.,])([1-5])(?![\d.,])""").find(d)?.let { return it.groupValues[1].toInt() }
+        return when {
+            Regex("""ужасн|отвратительн|кошмар""").containsMatchIn(t) -> 1
+            Regex("""плох|грустн|тяжел|тяжёл|устал""").containsMatchIn(t) -> 2
+            Regex("""нормальн|так себе|средн|обычн|неплох""").containsMatchIn(t) -> 3
+            Regex("""хорош|добр|good|спокойн""").containsMatchIn(t) -> 4
+            Regex("""отличн|прекрасн|великолепн|замечательн|супер|отлично""").containsMatchIn(t) -> 5
+            else -> null
+        }
+    }
+
+    private suspend fun saveMood(score: Int, note: String): String {
+        store.log(MOOD, note, score.toDouble(), time.now())
+        return "Записала: настроение $score из 5${if (note.isNotBlank()) " — $note" else ""}."
+    }
+
+    /**
+     * Дневник дня: «как прошёл день» → настроение 1–5 → пара слов; «итоги дня»; «настроение за неделю».
+     * [tasksDone] — сколько задач закрыто сегодня, [spend] — строка про траты за день (если есть).
+     */
+    suspend fun diary(text: String, tasksDone: Int, spend: String?, startsCommand: Boolean): Reply? {
+        val t = ai.loli.core.nlp.RuTokenizer.normalize(text).trim().trimEnd('.', '!', '?')
+        // Ждём пару слов к уже названной оценке.
+        pendingMood?.let { score ->
+            pendingMood = null
+            if (diaryFresh() && !startsCommand) {
+                val note = if (Regex("""^(?:нет|не надо|ничего|пропусти|всё|все|хватит)$""").containsMatchIn(t)) "" else text.trim().replaceFirstChar { it.uppercase() }.take(200)
+                return Reply(saveMood(score, note), changed = true)
+            }
+            val saved = saveMood(score, "")
+            if (!startsCommand) return Reply(saved, changed = true)
+            // Новая команда: оценку сохраняем без слов, а фразу отдаём дальше.
+        }
+        if (awaitMood) {
+            awaitMood = false
+            if (diaryFresh()) {
+                val score = moodScore(t)
+                if (score != null) {
+                    pendingMood = score; diaryAskedAt = time.now()
+                    return Reply("Оценка $score из 5. Добавите пару слов о дне? Скажите их или «нет».", changed = false)
+                }
+                if (Regex("""^(?:нет|не надо|отмена|потом|не хочу)$""").containsMatchIn(t)) return Reply("Хорошо, в другой раз.")
+            }
+        }
+        if (Regex("""^(?:как\s+(?:прош[её]л|был)\s+(?:мой\s+|этот\s+)?день|запиши\s+(?:как\s+прош[её]л\s+день|настроение\s+дня)|дневник(?:\s+дня)?|подведи\s+день)$""").containsMatchIn(t)) {
+            awaitMood = true; diaryAskedAt = time.now()
+            return Reply("Как настроение от 1 до 5?")
+        }
+        Regex("""^(?:моё\s+|мое\s+)?настроение\s+(?:сегодня\s+)?(.+)$""").find(t)?.let { m ->
+            val score = moodScore(m.groupValues[1]) ?: return null
+            return Reply(saveMood(score, ""), changed = true)
+        }
+        if (Regex("""^(?:итоги\s+дня|подведи\s+итоги(?:\s+дня)?|как\s+я\s+провел[аи]?\s+день|что\s+(?:я\s+)?сегодня\s+сделал[аи]?)$""").containsMatchIn(t)) {
+            return Reply(daySummary(tasksDone, spend))
+        }
+        if (Regex("""^(?:как\s+я\s+себя\s+чувствовал[аи]?|какое\s+(?:у\s+меня\s+)?было\s+настроение|настроение|мо[её]\s+настроение)\s*(?:на\s+этой\s+неделе|за\s+неделю|на\s+неделе)$""").containsMatchIn(t)) {
+            return Reply(moodWeek())
+        }
+        return null
+    }
+
+    private suspend fun daySummary(tasksDone: Int, spend: String?): String {
+        val from = time.today().atStartOfDay(time.zone()).toInstant()
+        val today = store.since(from)
+        val mood = today.lastOrNull { it.kind == MOOD }
+        val water = today.filter { it.kind == WATER }.sumOf { it.amount }
+        val habits = today.filter { it.kind == HABIT }.map { it.name }.distinct()
+        val parts = buildList {
+            add(mood?.let { "Настроение: ${it.amount.toInt()} из 5${if (it.name.isNotBlank()) " (${it.name})" else ""}." } ?: "Настроение сегодня не записано — скажите «как прошёл день».")
+            add(if (tasksDone > 0) "Закрыто задач: $tasksDone." else "Закрытых задач сегодня нет.")
+            spend?.let { add(it) }
+            if (water > 0) add("Воды: ${glassesText(water)}.")
+            if (habits.isNotEmpty()) add("Привычки: ${habits.joinToString(", ")}.")
+        }
+        return "Итоги дня. " + parts.joinToString(" ")
+    }
+
+    private suspend fun moodWeek(): String {
+        val from = time.today().minusDays(6).atStartOfDay(time.zone()).toInstant()
+        val moods = store.since(from, MOOD)
+        if (moods.isEmpty()) return "За неделю настроение не записано. Скажите «как прошёл день» вечером."
+        val byDay = moods.groupBy { it.at.atZone(time.zone()).toLocalDate() }.toSortedMap()
+        val avg = moods.map { it.amount }.average()
+        val days = byDay.entries.joinToString(", ") { (d, list) ->
+            "${d.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale("ru"))} ${fmt(list.map { it.amount }.average())}"
+        }
+        return "Среднее настроение за неделю — ${fmt(Math.round(avg * 10) / 10.0)} из 5. По дням: $days."
+    }
+
     companion object {
+        const val MOOD = "mood"
         const val WATER = "water"
         const val PILL = "pill"
         const val HABIT = "habit"

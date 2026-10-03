@@ -18,7 +18,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         val text = input.trim().trimEnd('.', '!', '?').trim()
         if (text.isEmpty()) return null
         val n = RuTokenizer.normalize(text)
-        val action = shopping(text, n) ?: routine(text, n) ?: birthday(text, n, today) ?: secret(text, n) ?: return null
+        val action = shopping(text, n) ?: routine(text, n) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: return null
         return AssistantPlan("", listOf(action))
     }
 
@@ -130,6 +130,37 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
             .replace(Regex("""^(?:у|моей|моего|мой|моя)\s+""", RegexOption.IGNORE_CASE), "")
         if (person.isEmpty() || person.split(' ').size > 4) return null
         return AssistantAction.AddBirthday(person, date.monthValue, date.dayOfMonth)
+    }
+
+    // --- Подписки ---------------------------------------------------------------------
+
+    /** «Музыку» → «музыка»: название подписки в именительном падеже (для одного слова). */
+    private fun subjectName(raw: String): String {
+        val w = raw.trim()
+        return if (' ' in w) w else when {
+            Regex("""[а-я]+[кнтрвсм]у$""").matches(w) -> w.dropLast(1) + "а"
+            w.length > 3 && w.endsWith("ю") -> w.dropLast(1) + "я"
+            else -> w
+        }
+    }
+
+    private fun subscription(n: String, today: LocalDate): AssistantAction? {
+        if (!n.contains("подписк")) return null
+        if (Regex("""^(?:какие|покажи|перечисли|мои|все)\s+(?:у\s+меня\s+|мои\s+)?(?:есть\s+)?подписк\p{L}*$""").containsMatchIn(n)) return AssistantAction.QuerySubscriptions()
+        if (Regex("""^(?:сколько|во сколько)\s+.*(?:уходит|обходятся|обходится|стоят|стоит|плачу|тратится|тратим|тратишь)""").containsMatchIn(n) && n.contains("подписк")) return AssistantAction.QuerySubscriptions(total = true)
+        Regex("""^(?:отмени|удали|убери|отключи|закрой)\s+(?:мою\s+)?подписк\p{L}*\s+(?:на\s+)?(.+)$""").find(n)?.let { return AssistantAction.CancelSubscription(subjectName(it.groupValues[1])) }
+        val d = DevicePhrases.digitize(n)
+        val m = Regex("""^(?:запомни|добавь|запиши|заведи|оформи|оформил|оформила)?[,:]?\s*(?:новую\s+)?подписк\p{L}*\s+(?:на\s+)?(.+?)\s+(\d+(?:[.,]\d+)?)\s*(?:руб\p{L}*|₽|р)(?=\s|$)(.*)$""").find(d) ?: return null
+        val amount = m.groupValues[2].replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 } ?: return null
+        val name = subjectName(m.groupValues[1].trim()).replaceFirstChar { it.uppercase() }
+        if (name.isEmpty() || name.split(' ').size > 4) return null
+        val rest = m.groupValues[3]
+        val yearly = Regex("""год|ежегодно""").containsMatchIn(rest) && !Regex("""месяц""").containsMatchIn(rest)
+        val dayText = Regex("""(\d{1,2})\s*(?:числа|число)""").find(rest)?.groupValues?.get(1)?.toIntOrNull()
+        val date = if (yearly) dates.parse(rest, today).spec.date else null
+        val day = (date?.dayOfMonth ?: dayText ?: today.dayOfMonth).coerceIn(1, 31)
+        val month = date?.monthValue ?: today.monthValue
+        return AssistantAction.AddSubscription(name, amount, yearly, day, month)
     }
 
     // --- Секретные заметки ----------------------------------------------------------

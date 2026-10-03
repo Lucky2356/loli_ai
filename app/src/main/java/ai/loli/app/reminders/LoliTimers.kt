@@ -154,7 +154,9 @@ class TimerReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getStringExtra(LoliTimers.EXTRA_ID) ?: return
         val t = LoliTimers(context).finished(id)
-        val title = if (t?.label.isNullOrBlank()) "Время вышло!" else "Время вышло: ${t!!.label}"
+        // Таймер из цепочки помодоро: сигнал «перерыв» / «за работу» и запуск следующего отрезка.
+        val focus = FocusSession.onFinished(context, id)
+        val title = focus ?: if (t?.label.isNullOrBlank()) "Время вышло!" else "Время вышло: ${t!!.label}"
         RingService.start(context, title, "Таймер Лоли. Коснитесь, чтобы остановить.", loud = false)
     }
 }

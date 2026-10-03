@@ -254,6 +254,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".reminders.SleepReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".reminders.GeoReceiver"
             android:exported="false" />
 

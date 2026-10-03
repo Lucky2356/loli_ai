@@ -140,6 +140,33 @@ class ActionExecutor(
         RecordType.MEMORY -> "запись в памяти"
     }
 
+
+    private class Sub(val name: String, val price: Double, val yearly: Boolean)
+
+    private suspend fun subscriptions(): List<Sub> = memories.all().filter { it.category == SUBSCRIPTIONS }.mapNotNull { m ->
+        val r = Regex("""^Подписка (.+?): (\d+(?:,\d+)?) ₽ (в месяц|в год)""").find(m.content) ?: return@mapNotNull null
+        Sub(r.groupValues[1], r.groupValues[2].replace(',', '.').toDouble(), r.groupValues[3] == "в год")
+    }
+
+    private fun sameSub(a: String, b: String): Boolean {
+        val x = a.lowercase().replace('ё', 'е'); val y = b.lowercase().replace('ё', 'е')
+        return x == y || (x.length >= 4 && y.length >= 4 && x.take(4) == y.take(4))
+    }
+
+    /** Удаляет запись в памяти и напоминания о подписке; возвращает, сколько записей убрано. */
+    private suspend fun removeSubscription(name: String): Int {
+        var n = 0
+        memories.all().filter { it.category == SUBSCRIPTIONS }.forEach { m ->
+            val title = Regex("""^Подписка (.+?):""").find(m.content)?.groupValues?.get(1) ?: return@forEach
+            if (sameSub(title, name)) { memories.delete(m.id); n++ }
+        }
+        reminders.all().forEach { r ->
+            val title = Regex("""^Подписка (.+?): сегодня спишется""").find(r.text)?.groupValues?.get(1) ?: return@forEach
+            if (sameSub(title, name)) { reminders.delete(r.id); scheduler.cancel(r.id); n++ }
+        }
+        return n
+    }
+
     private fun changed(text: String, record: RecordRef? = null) = Step(listOf(Outcome(text, Outcome.Kind.CHANGED, record)), record)
     private fun query(text: String) = Step(listOf(Outcome(text, Outcome.Kind.QUERY)))
     private fun error(text: String) = Step(listOf(Outcome(text, Outcome.Kind.ERROR)))
@@ -465,6 +492,37 @@ class ActionExecutor(
                 changed("Удалила сценарий ${RuFormat.quote(r.trigger)}.")
             }
 
+            is AssistantAction.AddSubscription -> {
+                val name = action.name
+                removeSubscription(name)
+                val freq = if (action.yearly) ai.loli.core.model.Recurrence.Frequency.YEARLY else ai.loli.core.model.Recurrence.Frequency.MONTHLY
+                val rule = ai.loli.core.model.Recurrence(freq, time = java.time.LocalTime.of(9, 0), dayOfMonth = action.day, month = if (action.yearly) action.month else null)
+                val price = "${ai.loli.core.nlp.Calculator.format(action.amount)} ₽"
+                val r = reminders.create("Подписка $name: сегодня спишется $price", rule.nextAfter(now, zone, now), rule, zone.id)
+                scheduler.schedule(r)
+                val when_ = if (action.yearly) "раз в год, ${action.day} ${MONTHS_GEN[action.month - 1]}" else "раз в месяц, ${action.day} числа"
+                memories.create("Подписка $name: $price ${if (action.yearly) "в год" else "в месяц"} ($when_)", SUBSCRIPTIONS)
+                changed("Запомнила: подписка $name — $price, $when_. Напомню утром в день списания.")
+            }
+
+            is AssistantAction.QuerySubscriptions -> {
+                val list = subscriptions()
+                if (list.isEmpty()) return query("Подписок пока нет. Скажите, например: «подписка на музыку 299 рублей раз в месяц 5 числа».")
+                val month = list.sumOf { if (it.yearly) it.price / 12 else it.price }
+                val year = list.sumOf { if (it.yearly) it.price else it.price * 12 }
+                val sum = "На подписки уходит примерно ${ai.loli.core.nlp.Calculator.format(Math.round(month * 100) / 100.0)} ₽ в месяц, ${ai.loli.core.nlp.Calculator.format(Math.round(year * 100) / 100.0)} ₽ в год."
+                query(
+                    if (action.total) sum
+                    else "Подписки:\n" + list.joinToString("\n") { "• ${it.name} — ${ai.loli.core.nlp.Calculator.format(it.price)} ₽ ${if (it.yearly) "в год" else "в месяц"}" } + "\n" + sum,
+                )
+            }
+
+            is AssistantAction.CancelSubscription -> {
+                val removed = removeSubscription(action.name)
+                if (removed == 0) error("Не нашла подписку ${RuFormat.quote(action.name)}.")
+                else changed("Убрала подписку ${action.name} и напоминания о ней. Саму подписку нужно отменить в сервисе.")
+            }
+
             is AssistantAction.AddBirthday -> {
                 val person = action.person.trim()
                 val date = runCatching { java.time.LocalDate.of(2000, action.month, action.day) }.getOrNull() ?: return error("Такой даты нет.")
@@ -681,4 +739,5 @@ internal object SqlBullet {
     fun item(text: String) = ai.loli.core.data.SqlNoteRepository.appendLine("", text)
 }
 
+private const val SUBSCRIPTIONS = "Подписки"
 private val MONTHS_GEN = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
