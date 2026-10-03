@@ -175,6 +175,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             ai.loli.app.ui.components.CrashCard(settings.assistantName)
+            ai.loli.app.ui.components.BackupNudgeCard(vm.c, settings.assistantName) { openSettings(SettingsPage.BACKUP.route) }
             UpdateCard(vm.c)
             SetupCard(vm.c, settings.assistantName, onVisible = { setupShown = it })
             Box(
@@ -290,6 +291,8 @@ fun ChatScreen(vm: HomeViewModel, onMic: () -> Unit, onBack: () -> Unit, keyboar
     val settings by vm.settings.collectAsStateWithLifecycle()
     val ui = voiceUi(voice, settings.assistantName)
     var input by rememberSaveable { mutableStateOf("") }
+    // Ярлык с значка («Расход», «Задача», «Заметка») подставляет начало фразы.
+    LaunchedEffect(Unit) { vm.c.quickDraft.value?.let { input = it; vm.c.quickDraft.value = null } }
     val listState = rememberLazyListState()
     // Разговоры по дням: над каждым днём — «Сегодня», «Вчера» или дата.
     val zone = remember { java.time.ZoneId.systemDefault() }

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -121,6 +122,7 @@ enum class SettingsPage(val route: String, val title: String, val subtitle: Stri
     AI("settings/ai", "AI", "Необязательно: ответы на любые вопросы, пересказ, сказки", Icons.Rounded.AutoAwesome),
     ACCESS("settings/access", "Безопасность и разрешения", "Экран блокировки, вход по отпечатку, доступы", Icons.Rounded.Shield),
     ACCOUNT("settings/account", "Аккаунт", "Синхронизация между устройствами", Icons.Rounded.Cloud),
+    BACKUP("settings/backup", "Резервная копия", "Сохранить записи в файл и перенести на другой телефон", Icons.Rounded.Backup),
     CAPABILITIES("settings/capabilities", "Что умеет Лоли", "Команды и примеры", Icons.Rounded.Lightbulb, main = false),
     APPEARANCE("settings/appearance", "Оформление", "Тема и цвет", Icons.Rounded.Palette, main = false),
     ABOUT("settings/about", "О приложении", "Версия и обновления", Icons.Rounded.Info, main = false),
@@ -142,6 +144,7 @@ fun SettingsScreen(
         SettingsPage.APPEARANCE -> AppearancePage(c, onBack)
         SettingsPage.ACCESS -> AccessPage(c, onBack)
         SettingsPage.ACCOUNT -> AccountPage(c, onBack, onOpenAuth)
+        SettingsPage.BACKUP -> BackupPage(c, onBack)
         SettingsPage.ABOUT -> AboutPage(c, onBack)
         SettingsPage.CAPABILITIES -> CapabilitiesPage(c, onBack, openAi = { open(SettingsPage.AI) })
     }

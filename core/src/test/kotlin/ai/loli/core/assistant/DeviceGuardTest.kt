@@ -49,4 +49,19 @@ class DeviceGuardTest {
         assertTrue(ok(DeviceCommand.Timer(300), "поставь таймер на 5 минут"))
         assertTrue(ok(DeviceCommand.Battery, "сколько заряда"))
     }
+
+    @Test fun backupPhrasesOpenBackupScreen() {
+        val parser = LocalCommandParser()
+        val now = java.time.Instant.parse("2026-09-25T09:00:00Z")
+        val zone = java.time.ZoneId.of("Europe/Moscow")
+        for (phrase in listOf("сделай резервную копию", "создай бэкап", "сохрани копию данных", "восстанови данные из копии", "как перенести данные на новый телефон", "резервная копия")) {
+            val cmd = (parser.parse(phrase, now, zone)?.actions?.singleOrNull() as? AssistantAction.Device)?.command
+            kotlin.test.assertEquals(DeviceCommand.OpenBackup, cmd, phrase)
+        }
+        assertTrue(ok(DeviceCommand.OpenBackup, "сделай резервную копию"))
+        assertFalse(ok(DeviceCommand.OpenBackup, "какая погода"))
+        // Копия — не «копировать текст» и не заметка про копию.
+        val note = parser.parse("запиши заметку про копию ключей", now, zone)?.actions?.singleOrNull()
+        assertTrue(note !is AssistantAction.Device)
+    }
 }

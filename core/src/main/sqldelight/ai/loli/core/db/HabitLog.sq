@@ -13,6 +13,10 @@ CREATE INDEX habit_log_kind_idx ON habit_log(kind, at);
 insert:
 INSERT INTO habit_log VALUES ?;
 
+-- Для восстановления из копии: запись с тем же id заменяется.
+restore:
+INSERT OR REPLACE INTO habit_log VALUES ?;
+
 selectSince:
 SELECT * FROM habit_log WHERE at >= ? ORDER BY at ASC;
 

@@ -19,7 +19,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "2.3.0"
+val APP_VERSION = "2.4.0"
 
 // Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
 // и проверяются по sha256 — в репозиторий они не попадают.
@@ -220,6 +220,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.rules)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
 }

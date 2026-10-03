@@ -539,7 +539,12 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 original.substring(0, mid.range.first) + " " + original.substring(minOf(mid.range.last + 1, original.length))
             }
         }
-        val parsedRaw = dates.parse(body, today)
+        // «…настойчиво», «…пока не отмечу», «…не отстану»: напоминание повторяется, пока его не отметят.
+        val nag = NAG.containsMatchIn(body)
+        val cleanBody = if (nag) NAG.replace(body, " ").replace(Regex("""\s{2,}"""), " ").trim() else body
+        var parsedRaw = dates.parse(cleanBody, today)
+        // «Напомни позже позвонить» — без точного времени это через 2 часа.
+        if (parsedRaw.spec.isEmpty && LATER.containsMatchIn(cleanBody)) parsedRaw = dates.parse(LATER.replace(cleanBody, " через 2 часа "), today)
         val rawText = parsedRaw.remainder.trim().trim(',', '.').trim()
         val isReference = Regex("""^(об этом|про это|это|о ней|о нем|о нём|про неё|про нее|про него)$""").matches(RuTokenizer.normalize(rawText))
         var text = if (isReference) "" else rawText
@@ -570,7 +575,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (!trigger.isAfter(now.minusSeconds(60))) {
             return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Это время уже прошло. Когда напомнить ${RuFormat.quote(text)}?"))
         }
-        return AssistantPlan("", listOf(AssistantAction.CreateReminder(text, trigger, dates.effectiveRecurrence(parsed.spec))))
+        val recurrence = dates.effectiveRecurrence(parsed.spec)
+        return AssistantPlan("", listOf(AssistantAction.CreateReminder(text, trigger, recurrence, persistent = nag && recurrence == null)))
     }
 
     // --- Задачи -----------------------------------------------------------
@@ -1257,6 +1263,8 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         private val SEGMENT_SEP = Regex("""(?:(?<!\d),|,(?!\d))\s*(?:(?:а|и|но)\s+)?(?:(?:ещё|еще|потом|затем|также|кроме того|после этого|после)\s+)?|\s+(?:и|а|но)\s+(?:(?:ещё|еще|потом|затем|также)\s+)?|\s+(?:а потом|потом|затем|после этого|а ещё|а еще|кроме того)\s+""", RegexOption.IGNORE_CASE)
         private const val TIME_AT = """(?:в|к|на)\s+\d{1,2}(?::\d{2})?(?:\s+(?:утра|дня|вечера|ночи))?"""
         private val TWO_TIMES = Regex("""^(напомни(?:те)?(?:\s+мне)?)\s+($TIME_AT)\s+и\s+($TIME_AT)\s+(.+)$""", RegexOption.IGNORE_CASE)
+        private val NAG = Regex("""[,\s]*(?:(?:каждые\s+\d+\s+минут\w*\s+)?(?:пока|до тех пор,?\s+пока)\s+(?:я\s+)?не\s+(?:отмечу|отвечу|подтвержу|нажму|скажу|сделаю|выключу)|настойчиво|не\s+отстан\w+(?:\s+от\s+меня)?)""", RegexOption.IGNORE_CASE)
+        private val LATER = Regex("""(?:^|\s)(?:попозже|позже)(?=\s|$)""", RegexOption.IGNORE_CASE)
         private val SUBORDINATE = Regex("""^\s*(?:что|чтобы|о том|об этом|будто|который|которая|которое|которые)(?=[\s,]|$)""", RegexOption.IGNORE_CASE)
         private val TRAILING_BARE = Regex("""^(.+?)[,.]\s*(?:запиши|добавь|запомни|сохрани)(?:\s+это)?$""", RegexOption.IGNORE_CASE)
         private val TRAILING_TASK = Regex("""^(.+?)[,.]?\s+(?:запиши|добавь|поставь|заведи|создай|сделай)\s+(?:это\s+)?(?:как\s+|в\s+)?(?:задачу|задачи|задачку|дела)$""", RegexOption.IGNORE_CASE)

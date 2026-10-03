@@ -69,6 +69,8 @@ data class LockPolicy(
             // Заблокировать экран можно всегда; остальные системные кнопки — как открытие приложений.
             is DeviceCommand.Global -> c.action == GlobalAction.LOCK || apps
             is DeviceCommand.Call, is DeviceCommand.Message, is DeviceCommand.Driving -> calls
+            // Экран копии показывает все данные: на экране блокировки закрыт.
+            is DeviceCommand.OpenBackup -> view && edit
             else -> apps
         }
         else -> edit

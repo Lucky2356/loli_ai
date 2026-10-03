@@ -16,9 +16,17 @@
     <string name="reminder_title">Напоминание</string>
     <string name="reminder_done">Готово</string>
     <string name="reminder_snooze">Через 10 минут</string>
+    <string name="reminder_hour">Через час</string>
+    <string name="reminder_tomorrow">Завтра</string>
     <string name="tile_label">Спросить Лоли</string>
     <string name="shortcut_listen_short">Говорить</string>
     <string name="shortcut_listen_long">Спросить Лоли голосом</string>
+    <string name="shortcut_expense_short">Расход</string>
+    <string name="shortcut_expense_long">Записать расход</string>
+    <string name="shortcut_task_short">Задача</string>
+    <string name="shortcut_task_long">Добавить задачу</string>
+    <string name="shortcut_note_short">Заметка</string>
+    <string name="shortcut_note_long">Записать заметку</string>
     <string name="assist_label">Лоли — ассистент</string>
     <string name="recognition_label">Лоли — офлайн-распознавание речи</string>
     <string name="update_ready">Обновление Лоли готово</string>

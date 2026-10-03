@@ -37,6 +37,9 @@ class HabitStore(private val db: LoliDatabase, private val dispatcher: Coroutine
 
     suspend fun delete(id: String) = withContext(dispatcher) { q.deleteById(id); Unit }
 
+    /** Восстановление записи из резервной копии (тот же id заменяется). */
+    suspend fun restore(e: HabitEntry) = withContext(dispatcher) { q.restore(HabitRow(e.id, e.kind, e.name, e.amount, e.at.toEpochMilli())); Unit }
+
     suspend fun wipe() = withContext(dispatcher) { q.deleteAll(); Unit }
 }
 

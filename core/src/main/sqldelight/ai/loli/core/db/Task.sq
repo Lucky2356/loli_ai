@@ -28,6 +28,10 @@ INSERT OR REPLACE INTO task VALUES ?;
 selectDirty:
 SELECT * FROM task WHERE dirty = 1;
 
+-- Все строки, включая удалённые: для резервной копии.
+selectEvery:
+SELECT * FROM task;
+
 markSynced:
 UPDATE task SET dirty = 0, synced_updated_at = :updatedAt WHERE id = :id AND updated_at = :updatedAt;
 

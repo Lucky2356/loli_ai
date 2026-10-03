@@ -288,6 +288,11 @@ class AndroidDeviceController(
                 if (c.kind == ai.loli.core.assistant.RelaxKind.STOP) DeviceResult(if (r.stop()) "Остановила." else "Упражнение и так не идёт.")
                 else { r.start(c.kind, c.minutes); DeviceResult("") }
             }
+            DeviceCommand.OpenBackup -> open(
+                Intent(context, ai.loli.app.ui.MainActivity::class.java).setAction(ai.loli.app.ui.MainActivity.ACTION_BACKUP)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                "Открываю резервную копию. Пароль для файла введите на экране.", "Резервная копия",
+            )
             is DeviceCommand.Driving -> {
                 val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
                 if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }

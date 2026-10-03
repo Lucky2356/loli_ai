@@ -83,6 +83,11 @@ class AppContainer(private val context: Context) {
         time = time,
     )
 
+    /** Резервная копия в зашифрованный файл и восстановление из него. */
+    val backup: ai.loli.core.backup.BackupService by lazy {
+        ai.loli.core.backup.BackupService(store, ai.loli.app.backup.AppBackupExtras(geo, settings), BuildConfig.VERSION_NAME)
+    }
+
     val syncScheduler = SyncScheduler(context)
     val syncEngine: SyncEngine by lazy { SyncEngine(
         local = store,
@@ -139,6 +144,8 @@ class AppContainer(private val context: Context) {
 
     // --- Ассистент ---
     val reminderScheduler = AlarmReminderScheduler(context)
+    /** Какие напоминания «настойчивые» (повторяются, пока не нажато «Готово»). */
+    val nags = ai.loli.app.reminders.NagStore(context)
     val search: SearchService by lazy { SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddingProvider() } }
     private val resolver by lazy { TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories) }
     /** Команды телефону (таймер, будильник, приложения, звонки…); запасной таймер — напоминание Лоли. */
@@ -194,6 +201,7 @@ class AppContainer(private val context: Context) {
             lockPolicy = { lockPolicy() }, shopping = store.shopping, routines = store.routines, secrets = store.secrets,
             agendaExtras = { date -> skills.agendaExtras(date, assistantSettings()) },
             contactBirthdays = { if (assistantSettings().locked) emptyList() else skillHost.contactBirthdays() },
+            onPersistentReminder = { nags.mark(it) },
         )
     }
 
@@ -271,6 +279,9 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /** Заготовка начала фразы из ярлыка («Запиши расход »): чат подставит её в поле ввода и сбросит. */
+    val quickDraft = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
     /** Хранилище ключей Android временно недоступно: база не тронута, интерфейс предлагает «Повторить». */
     private val _storeProblem = kotlinx.coroutines.flow.MutableStateFlow(false)
     val storeProblem: kotlinx.coroutines.flow.StateFlow<Boolean> = _storeProblem
@@ -320,6 +331,7 @@ class AppContainer(private val context: Context) {
             updates.schedulePeriodic()
             ai.loli.app.reminders.MorningBrief.schedule(context, settings.current().morningBrief)
             ai.loli.app.reminders.ReminderWatchdog.schedule(context)
+            ai.loli.app.quick.QuickInput.sync(context, settings.current().quickInput)
             if (auth.state.value is AuthState.SignedIn) {
                 syncScheduler.schedulePeriodic()
                 syncScheduler.requestSoon(1)

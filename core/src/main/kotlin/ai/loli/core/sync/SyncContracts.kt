@@ -23,6 +23,8 @@ interface SyncableTable {
     val optionalRemote: Boolean get() = false
     suspend fun dirtyRows(): List<SyncRow>
     suspend fun row(id: String): SyncRow?
+    /** Все строки, включая удалённые (надгробия): для резервной копии. */
+    suspend fun allRows(): List<SyncRow>
     /**
      * Записать строку из серверного формата. [dirty] — нужно ли её потом отправить.
      * Если [guard] — запись выполняется, только если локальная версия не изменилась с момента чтения

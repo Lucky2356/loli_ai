@@ -371,13 +371,15 @@ class CorpusTest {
     /** 2.2: разговорные формы, живой диалог, привычки, календарь, игры, поздравления и то, что не должно срабатывать. */
     private val v22: List<Pair<String, String>> = CorpusV22.phrases
 
+    private val v24: List<Pair<String, String>> = CorpusV24.phrases
+
     @Test fun corpus() = runTest {
         val failures = ArrayList<String>()
-        for ((phrase, expected) in corpus + spoken + v22) {
+        for ((phrase, expected) in corpus + spoken + v22 + v24) {
             val got = runCatching { classify(phrase) }.getOrElse { "ошибка ${it::class.simpleName}: ${it.message}" }
             if (got != expected) failures += "«$phrase» → $got (ожидалось $expected)"
         }
-        val all = corpus + spoken + v22
+        val all = corpus + spoken + v22 + v24
         println("Корпус: ${all.map { it.first }.distinct().size} фраз, ошибок ${failures.size}")
         if (failures.isNotEmpty()) fail("Ошибок ${failures.size} из ${all.size}:\n" + failures.joinToString("\n"))
     }
