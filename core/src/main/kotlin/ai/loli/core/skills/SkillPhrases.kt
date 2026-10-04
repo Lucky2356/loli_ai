@@ -1,6 +1,7 @@
 package ai.loli.core.skills
 
 import ai.loli.core.assistant.DevicePhrases
+import ai.loli.core.finance.FinanceAsk
 import ai.loli.core.nlp.RuNumbers
 import ai.loli.core.nlp.RuTokenizer
 import ai.loli.core.nlp.Rx
@@ -41,6 +42,8 @@ sealed interface SkillCommand {
     data class FactOfDay(val ofDay: Boolean) : SkillCommand
     /** «Поздравь Машу с днём рождения» — готовое поздравление и сообщение ей. */
     data class Greet(val person: String, val occasion: String) : SkillCommand
+    /** «Сколько можно тратить сегодня?», «хватит ли до зарплаты?» — по сводке Финансового помощника. */
+    data class Finance(val ask: FinanceAsk, val subject: String? = null) : SkillCommand
 }
 
 enum class AlmanacKind { HOLIDAY, NEXT_HOLIDAY, WHEN_HOLIDAY, NAME_DAY, NAME_DAY_OF, OMEN }
@@ -56,12 +59,14 @@ object SkillPhrases {
     /** Фраза — это запись/напоминание/задача, а не вопрос («напомни взять зонт»). */
     private val RECORD_VERB = rx("""^(?:напомни|запиши|записать|добавь|создай|поставь задачу|поставь напоминание|заметка|заметку|купи|список|сохрани заметку|потратил|потратила|заплатил|заплатила)\b""")
 
-    fun parse(text: String, today: LocalDate, assistantName: String = "Лоли"): SkillCommand? {
+    /** [money] = false — без вопросов о деньгах: помощник на них не ответил, пусть фразу возьмёт другой навык. */
+    fun parse(text: String, today: LocalDate, assistantName: String = "Лоли", money: Boolean = true): SkillCommand? {
         val t = norm(text)
         if (t.isEmpty()) return null
         profile(t, text)?.let { return it }
         places(t, text)?.let { return it }
         if (RECORD_VERB.containsMatchIn(t)) return null
+        if (money) finance(t)?.let { return it }
         // Явный поиск в интернете — это команда телефону, а не вопрос навыку.
         if (rx("""^(?:найди|поищи|посмотри)\s+в\s+(?:интернете|гугле|яндексе|сети)|^(?:загугли|погугли)\b""").containsMatchIn(t)) return null
         almanac(t, today)?.let { return it }
@@ -81,6 +86,48 @@ object SkillPhrases {
         Tales.parse(t)?.let { return SkillCommand.Tale(it) }
         factOfDay(t)?.let { return it }
         fact(t, assistantName)?.let { return SkillCommand.Fact(it) }
+        return null
+    }
+
+    // ------------------------------------------------------------------ Деньги (Финансовый помощник)
+
+    /** «Сколько осталось на таймере», «сколько на часах» — не про деньги. */
+    private const val NOT_MONEY = "таймер|будильник|часах|часы|батаре|заряд|телефон|улице|дворе|градуснике|термометре"
+
+    private const val TODAY_WORDS = """(?:\s+(?:сегодня|на сегодня|за сегодня|в день|на день|сегодня ещё|сегодня еще))?"""
+
+    /**
+     * Вопросы, на которые отвечает сводка помощника. «Сколько я потратил…» сюда не входит —
+     * это отчёт по тратам самой Лоли. Если сводки нет, навык промолчит, и фразу разберёт Лоли.
+     */
+    fun finance(t: String): SkillCommand.Finance? {
+        val q = t.removePrefix("а ").removePrefix("скажи ").removePrefix("подскажи ").trim()
+        if (rx("""^сколько\s+(?:мне\s+|я\s+)?(?:ещё\s+|еще\s+)?(?:можно|могу|осталось|остается|остаётся)\s+(?:по)?(?:тратить|потратить)$TODAY_WORDS$|^сколько\s+(?:мне\s+)?(?:ещё\s+|еще\s+)?осталось\s+на\s+(?:сегодня|день)$|^(?:можно|могу)\s+ли\s+(?:я\s+)?(?:ещё\s+|еще\s+)?(?:сегодня\s+)?(?:по)?тратить(?:\s+сегодня)?$|^(?:какой\s+)?(?:мой\s+|у меня\s+)?(?:дневной\s+)?лимит\s+на\s+(?:сегодня|день)$|^(?:мой\s+)?дневной\s+лимит$""").containsMatchIn(q)) {
+            return SkillCommand.Finance(FinanceAsk.TODAY)
+        }
+        if (rx("""(?:хватит|хватает|доживу|дотяну)\s+(?:ли\s+)?(?:мне\s+|я\s+)?(?:денег\s+)?до\s+(?:зарплаты|зп|получки|аванса)|^сколько\s+(?:дней\s+)?(?:осталось\s+)?до\s+(?:зарплаты|зп|получки|аванса)$|^когда\s+(?:у меня\s+)?(?:будет\s+|следующая\s+)?(?:зарплата|зп|получка|аванс)$""").containsMatchIn(q)) {
+            return SkillCommand.Finance(FinanceAsk.PAYDAY)
+        }
+        if (rx("""^(?:как\s+)?(?:у меня\s+)?(?:дела\s+)?(?:с|со)\s+(?:деньгами|финансами|бюджетом)$|^как\s+(?:там\s+)?(?:мои\s+)?(?:деньги|финансы|бюджет)$|^(?:финансовая\s+сводка|сводка\s+по\s+(?:деньгам|финансам|бюджету))$""").containsMatchIn(q)) {
+            return SkillCommand.Finance(FinanceAsk.OVERVIEW)
+        }
+        if (rx("""^сколько\s+(?:у меня\s+)?(?:сейчас\s+)?(?:всего\s+)?денег(?:\s+(?:у меня|всего|сейчас|на счетах|на всех счетах|на картах|осталось))*$|^(?:какой\s+)?(?:у меня\s+)?(?:сейчас\s+)?(?:мой\s+)?(?:общий\s+)?(?:баланс|остаток\s+на\s+счетах)$|^сколько\s+(?:у меня\s+)?(?:всего\s+)?на\s+(?:счетах|всех счетах|картах)$""").containsMatchIn(q)) {
+            return SkillCommand.Finance(FinanceAsk.BALANCE)
+        }
+        // «Сколько денег на Т-Банке», «сколько на карте Сбера», «баланс Тинькофф» — счёт по имени.
+        rx("""^(?:сколько\s+(?:у меня\s+)?(?:денег\s+(?:на|в)|на)\s+(?:карте\s+|счете\s+|счету\s+)?|(?:какой\s+)?(?:баланс|остаток)\s+(?:на\s+|по\s+)?(?:карте\s+|счете\s+|карты\s+|счета\s+)?)(.{2,40})$""").find(q)?.let { m ->
+            val subject = m.groupValues[1].trim()
+            if (!rx("""^(?:сегодня|день|неделю|месяц|этот месяц|зарплат|${NOT_MONEY})""").containsMatchIn(subject)) {
+                return SkillCommand.Finance(FinanceAsk.BALANCE, subject)
+            }
+        }
+        // «Сколько осталось на продукты», «сколько ещё можно потратить на кафе», «какой лимит на такси».
+        rx("""^(?:сколько\s+(?:мне\s+|у меня\s+)?(?:ещё\s+|еще\s+)?(?:осталось|остается|остаётся|можно\s+потратить|могу\s+потратить|можно\s+тратить)\s+(?:на|по)\s+|(?:какой\s+)?(?:у меня\s+)?(?:лимит|бюджет)\s+(?:на|по)\s+)(.{2,40}?)(?:\s+(?:в этом месяце|до конца месяца|на этот месяц|в месяц|на месяц))?$""").find(q)?.let { m ->
+            val subject = m.groupValues[1].trim()
+            if (!rx("""^(?:сегодня$|день$|неделю$|месяц$|этот месяц$|жизнь$|${NOT_MONEY})""").containsMatchIn(subject)) {
+                return SkillCommand.Finance(FinanceAsk.CATEGORY, subject)
+            }
+        }
         return null
     }
 

@@ -49,6 +49,8 @@
             <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
         </intent>
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Финансовый помощник: туда уходят траты, оттуда — сводка для ответов о деньгах. -->
+        <package android:name="ru.lucky2356.financeapps" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>

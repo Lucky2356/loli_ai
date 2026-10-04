@@ -5,6 +5,7 @@ import android.util.Log
 import ai.loli.app.reminders.Notifications
 import ai.loli.core.util.LogSink
 import ai.loli.core.util.Logger
+import kotlinx.coroutines.launch
 
 class LoliApp : Application() {
     lateinit var container: AppContainer
@@ -29,5 +30,7 @@ class LoliApp : Application() {
         }
         Notifications.createChannels(this)
         container = AppContainer(this)
+        // Траты, которые не дошли до Финансового помощника в прошлый раз.
+        container.appScope.launch { container.finance.flush() }
     }
 }

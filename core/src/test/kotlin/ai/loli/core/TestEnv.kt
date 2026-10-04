@@ -28,6 +28,8 @@ class TestEnv(
     lockPolicy: () -> ai.loli.core.assistant.LockPolicy? = { null },
     skillsFactory: ((FixedTimeSource) -> ai.loli.core.skills.Skills)? = null,
     localChat: ai.loli.core.ai.LocalChat? = null,
+    /** Обёртка над тратами (например, передача в Финансовый помощник). */
+    wrapExpenses: (ai.loli.core.domain.ExpenseRepository) -> ai.loli.core.domain.ExpenseRepository = { it },
 ) {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { LoliDatabase.Schema.create(it) }
     val store = LocalStore(driver, time, Dispatchers.Unconfined)
@@ -37,8 +39,9 @@ class TestEnv(
     var embeddings: EmbeddingProvider? = null
     val search = SearchService(store.notes, store.tasks, store.reminders, store.memories, store.embeddings) { embeddings }
     val resolver = TargetResolver(search, store.notes, store.tasks, store.reminders, store.memories)
+    val expenses = wrapExpenses(store.expenses)
     val executor = ActionExecutor(
-        store.notes, store.expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
+        store.notes, expenses, store.tasks, store.reminders, store.memories, search, resolver, scheduler, time, device, lockPolicy,
         shopping = store.shopping, routines = store.routines, secrets = store.secrets,
         onPersistentReminder = { persistent += it },
     )
