@@ -24,7 +24,7 @@ class LoliSession(context: Context) : VoiceInteractionSession(context) {
     override fun onPrepareShow(args: Bundle?, showFlags: Int) {
         super.onPrepareShow(args, showFlags)
         // Собственный интерфейс — окно AssistActivity; окно сессии не показываем.
-        setUiEnabled(false)
+        if (android.os.Build.VERSION.SDK_INT >= 26) setUiEnabled(false)
     }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
