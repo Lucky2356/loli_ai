@@ -94,6 +94,26 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
         }
     }
 
+    var autoOn by remember { mutableStateOf(ai.loli.app.backup.AutoBackup.enabled(context)) }
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree: Uri? ->
+        if (tree == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            busy = true
+            try {
+                withContext(Dispatchers.IO) {
+                    ai.loli.app.backup.AutoBackup.enable(context, tree, password.toCharArray())
+                    ai.loli.app.backup.AutoBackup.runNow(context)
+                }
+                autoOn = true
+                done("Автокопия включена: первая копия уже в папке, дальше — раз в неделю. Хранятся 4 последние.", false)
+            } catch (e: Exception) {
+                ai.loli.app.backup.AutoBackup.disable(context)
+                autoOn = false
+                done("Не удалось включить автокопию: ${e.message ?: e::class.simpleName}", true)
+            }
+        }
+    }
+
     val validNew = password.length >= BackupCodec.MIN_PASSWORD && password == repeat
     LoliScreen(title = "Резервная копия", subtitle = "Перенос на новый телефон", onBack = onBack) {
         item(key = "intro") {
@@ -120,6 +140,43 @@ fun BackupPage(c: AppContainer, onBack: () -> Unit) {
                         else "Переписка с ${s.assistantName} в копию не входит. API-ключи и вход в аккаунт — тоже никогда.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+        item(key = "auto") {
+            SectionLabel("Автокопия раз в неделю")
+            Group {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (!autoOn) {
+                        Text(
+                            "Введите пароль выше дважды и выберите папку — например, папку облака (Google Диск, Яндекс Диск) или SD-карту. " +
+                                "Для фоновой копии пароль хранится в защищённом хранилище телефона; запомните его — на новом телефоне без него файл не открыть.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SecondaryButton(if (busy) "Подождите…" else "Выбрать папку и включить", { message = null; pickFolder.launch(null) },
+                            enabled = validNew && !busy)
+                    } else {
+                        Text(
+                            "Включена: раз в неделю новая копия в выбранной папке, хранятся 4 последние.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SecondaryButton(if (busy) "Подождите…" else "Сделать копию сейчас", {
+                            message = null
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val name = withContext(Dispatchers.IO) { ai.loli.app.backup.AutoBackup.runNow(context) }
+                                    done("Сохранено: $name.", false)
+                                } catch (e: Exception) {
+                                    done("Не удалось: ${e.message ?: e::class.simpleName}. Выключите автокопию и выберите папку заново.", true)
+                                }
+                            }
+                        }, enabled = !busy)
+                        SecondaryButton("Выключить автокопию", {
+                            ai.loli.app.backup.AutoBackup.disable(context); autoOn = false
+                            done("Автокопия выключена. Сохранённые файлы остались в папке.", false)
+                        }, enabled = !busy)
+                    }
                 }
             }
         }
