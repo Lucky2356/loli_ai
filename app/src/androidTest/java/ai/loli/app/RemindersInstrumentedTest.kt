@@ -41,7 +41,7 @@ class RemindersInstrumentedTest {
         c.awaitReady()
         val r = c.store.reminders.create("проверка эмулятора", Instant.now().minusSeconds(30), null, ZoneId.systemDefault().id)
         ReminderReceiver.fire(context, c, r.id)
-        assertTrue("уведомление должно появиться", shown(r.id))
+        waitUntil { shown(r.id) } // показ тоже асинхронный
         assertFalse("разовое напоминание больше не активно", c.store.reminders.get(r.id)!!.active)
         context.getSystemService(NotificationManager::class.java).cancel(ReminderReceiver.notificationId(r.id))
         // Система убирает уведомление не мгновенно: ждём, пока оно исчезнет, иначе проверка ниже увидит старое.
