@@ -29,6 +29,12 @@ class RemindersInstrumentedTest {
     private fun shown(id: String) =
         context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == ReminderReceiver.notificationId(id) }
 
+    private fun waitUntil(timeoutMs: Long = 3000, condition: () -> Boolean) {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < end) Thread.sleep(50)
+        assertTrue("не дождались за $timeoutMs мс", condition())
+    }
+
     @Test
     fun overdueReminderFiresOnceAndDeactivates() = runBlocking {
         val c = container
@@ -38,8 +44,11 @@ class RemindersInstrumentedTest {
         assertTrue("уведомление должно появиться", shown(r.id))
         assertFalse("разовое напоминание больше не активно", c.store.reminders.get(r.id)!!.active)
         context.getSystemService(NotificationManager::class.java).cancel(ReminderReceiver.notificationId(r.id))
+        // Система убирает уведомление не мгновенно: ждём, пока оно исчезнет, иначе проверка ниже увидит старое.
+        waitUntil { !shown(r.id) }
         // Повторный вызов (страховка рядом с будильником) не должен показать его снова.
         ReminderReceiver.fire(context, c, r.id)
+        Thread.sleep(500)
         assertFalse("второй раз уведомления быть не должно", shown(r.id))
         c.store.reminders.delete(r.id)
         assertEquals(null, c.store.reminders.get(r.id)?.takeIf { it.active })
