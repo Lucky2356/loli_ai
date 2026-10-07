@@ -41,23 +41,39 @@ class RadioService : Service() {
     private var resumeOnGain = false
     private val attrs: AudioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
 
-    /** Один запрос фокуса на всё время работы: новый на каждую станцию отнимал фокус у самого себя. */
-    private fun focusRequest(): AudioFocusRequest = focus ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attrs)
-        .setOnAudioFocusChangeListener { change ->
-            when (change) {
-                AudioManager.AUDIOFOCUS_LOSS -> { resumeOnGain = false; pause() }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (player?.isPlaying == true) { resumeOnGain = true; pause() }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.let { runCatching { it.setVolume(0.3f, 0.3f) } }
-                AudioManager.AUDIOFOCUS_GAIN -> {
-                    player?.let { runCatching { it.setVolume(1f, 1f) } }
-                    if (resumeOnGain) {
-                        resumeOnGain = false
-                        player?.let { p -> runCatching { p.start() }.onSuccess { holdWifi(); state(PlaybackState.STATE_PLAYING); station?.let { foreground(it, playing = true) } } }
-                    }
+    /** Что делать при потере и возврате звука (звонок, навигатор). */
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> { resumeOnGain = false; pause() }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (player?.isPlaying == true) { resumeOnGain = true; pause() }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.let { runCatching { it.setVolume(0.3f, 0.3f) } }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                player?.let { runCatching { it.setVolume(1f, 1f) } }
+                if (resumeOnGain) {
+                    resumeOnGain = false
+                    player?.let { p -> runCatching { p.start() }.onSuccess { holdWifi(); state(PlaybackState.STATE_PLAYING); station?.let { foreground(it, playing = true) } } }
                 }
             }
         }
+    }
+
+    /** Один запрос фокуса на всё время работы: новый на каждую станцию отнимал фокус у самого себя. */
+    @androidx.annotation.RequiresApi(26)
+    private fun focusRequest(): AudioFocusRequest = focus ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attrs)
+        .setOnAudioFocusChangeListener(focusListener)
         .build().also { focus = it }
+
+    private fun requestFocus() {
+        val am = getSystemService(AudioManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= 26) am.requestAudioFocus(focusRequest())
+        else @Suppress("DEPRECATION") am.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+    }
+
+    private fun abandonFocus() {
+        val am = getSystemService(AudioManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= 26) focus?.let { am.abandonAudioFocusRequest(it) }
+        else @Suppress("DEPRECATION") am.abandonAudioFocus(focusListener)
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -93,7 +109,7 @@ class RadioService : Service() {
         foreground(s, playing = true)
         player?.release()
         resumeOnGain = false
-        getSystemService(AudioManager::class.java)?.requestAudioFocus(focusRequest())
+        requestFocus()
         holdWifi()
         player = MediaPlayer().apply {
             setAudioAttributes(attrs)
@@ -178,7 +194,7 @@ class RadioService : Service() {
         player?.let { runCatching { it.stop() }; it.release() }
         player = null
         current = null
-        focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
+        abandonFocus()
         resumeOnGain = false
         state(PlaybackState.STATE_STOPPED)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -188,7 +204,7 @@ class RadioService : Service() {
     override fun onDestroy() {
         releaseWifi()
         playing = false
-        focus?.let { f -> getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(f) }
+        abandonFocus()
         player?.release()
         player = null
         current = null

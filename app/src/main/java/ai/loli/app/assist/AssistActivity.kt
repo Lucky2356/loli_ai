@@ -121,6 +121,8 @@ class AssistActivity : ComponentActivity() {
     private fun unlockThen(then: () -> Unit) {
         val km = getSystemService(KeyguardManager::class.java)
         if (km == null || !km.isKeyguardLocked) { then(); return }
+        // Android 7 не умеет показывать экран разблокировки по запросу: открываем приложение, система сама попросит разблокировать.
+        if (Build.VERSION.SDK_INT < 26) { then(); return }
         km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
             override fun onDismissSucceeded() = then()
         })

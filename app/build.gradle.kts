@@ -19,7 +19,7 @@ fun String.asBuildConfigString(): String =
     "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** Текущая версия приложения (релиз может передать свою через LOLI_VERSION_NAME). */
-val APP_VERSION = "2.6.0"
+val APP_VERSION = "2.7.0"
 
 // Офлайн-модель для разговора: llama.cpp (MIT), фиксированная версия. Исходники скачиваются при сборке
 // и проверяются по sha256 — в репозиторий они не попадают.
@@ -58,7 +58,7 @@ android {
 
     defaultConfig {
         applicationId = "ai.loli.app"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 35
         // Код версии выводится из номера (1.3.0 → 10300): новые релизы всегда ставятся поверх старых.
         versionName = config("LOLI_VERSION_NAME").ifEmpty { APP_VERSION }
@@ -122,6 +122,8 @@ android {
     }
 
     compileOptions {
+        // java.time и другие API Java 8+ на Android 7 (24–25) — через desugaring.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -217,6 +219,7 @@ dependencies {
     implementation(libs.shizuku.provider)
     implementation(libs.jna) { artifact { type = "aar" } }
 
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)

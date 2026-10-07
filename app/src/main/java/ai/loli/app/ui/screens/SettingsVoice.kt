@@ -129,6 +129,10 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                     scope.launch { c.settings.setMorningBrief(v); ai.loli.app.reminders.MorningBrief.schedule(appContext, v) }
                 }
                 GroupDivider()
+                SwitchItem("Вечерняя сводка", "В 21:00 — итоги дня: настроение, задачи, траты, вода и привычки", s.eveningBrief) { v ->
+                    scope.launch { c.settings.setEveningBrief(v); ai.loli.app.reminders.EveningBrief.schedule(appContext, v) }
+                }
+                GroupDivider()
                 SwitchItem("Быстрый ввод из шторки", "Постоянное уведомление с полем: напишите «кофе 250» или «купить хлеб» — запишу, не открывая приложение", s.quickInput) { v ->
                     scope.launch { c.settings.setQuickInput(v); ai.loli.app.quick.QuickInput.sync(appContext, v) }
                 }

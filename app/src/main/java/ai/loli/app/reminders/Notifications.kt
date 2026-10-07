@@ -26,6 +26,8 @@ object Notifications {
     /** Утренняя сводка. Раньше делила id 1010 с сигналом таймера: сигнал затирал сводку и убирал её при остановке. */
     const val BRIEF_ID = 1012
     const val QUICK_ID = 1013
+    const val EVENING_ID = 1014
+    const val AUTO_BACKUP_ID = 1015
     const val RADIO_ID = 1011
     const val TIMER_BASE_ID = 200_000
     const val GEO_BASE_ID = 1200

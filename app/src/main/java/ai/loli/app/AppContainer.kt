@@ -222,11 +222,21 @@ class AppContainer(private val context: Context) {
         onNotUnderstood = { ai.loli.app.diagnostics.Diagnostics.rememberUnknown(context, it) },
         localChat = offlineLlm,
         habits = ai.loli.core.health.Habits(store.habits, time),
-        daySpend = { day ->
-            store.expenses.between(day, day).filter { it.category != ai.loli.core.nlp.ExpenseCategories.INCOME }.takeIf { it.isNotEmpty() }
-                ?.let { list -> "Потрачено: " + list.groupBy { it.currency }.entries.joinToString(", ") { (cur, items) -> ai.loli.core.nlp.Money.format(items.sumOf { it.amountMinor }, cur) } + "." }
-        },
+        daySpend = ::daySpend,
     ) }
+
+    /** «Потрачено: …» за день (без доходов) — для итогов дня и вечерней сводки. */
+    private suspend fun daySpend(day: java.time.LocalDate): String? =
+        store.expenses.between(day, day).filter { it.category != ai.loli.core.nlp.ExpenseCategories.INCOME }.takeIf { it.isNotEmpty() }
+            ?.let { list -> "Потрачено: " + list.groupBy { it.currency }.entries.joinToString(", ") { (cur, items) -> ai.loli.core.nlp.Money.format(items.sumOf { it.amountMinor }, cur) } + "." }
+
+    /** Текст вечерней сводки: те же «итоги дня», что и по голосовой команде. */
+    suspend fun eveningSummary(): String {
+        val zone = time.zone()
+        val today = time.today()
+        val done = store.tasks.all().count { it.completedAt?.atZone(zone)?.toLocalDate() == today }
+        return ai.loli.core.health.Habits(store.habits, time).daySummaryText(done, daySpend(today))
+    }
 
     fun assistantSettings(): AssistantSettings = settings.settings.value.let {
         AssistantSettings(
@@ -340,6 +350,8 @@ class AppContainer(private val context: Context) {
             _started.value = true
             updates.schedulePeriodic()
             ai.loli.app.reminders.MorningBrief.schedule(context, settings.current().morningBrief)
+            ai.loli.app.reminders.EveningBrief.schedule(context, settings.current().eveningBrief)
+            ai.loli.app.backup.AutoBackup.schedule(context)
             ai.loli.app.reminders.ReminderWatchdog.schedule(context)
             ai.loli.app.quick.QuickInput.sync(context, settings.current().quickInput)
             if (auth.state.value is AuthState.SignedIn) {

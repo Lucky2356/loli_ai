@@ -435,6 +435,9 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
         return null
     }
 
+    /** «Итоги дня» для вечерней сводки — тот же текст, что и по голосовой команде. */
+    suspend fun daySummaryText(tasksDone: Int, spend: String?): String = daySummary(tasksDone, spend)
+
     private suspend fun daySummary(tasksDone: Int, spend: String?): String {
         val from = time.today().atStartOfDay(time.zone()).toInstant()
         val today = store.since(from)

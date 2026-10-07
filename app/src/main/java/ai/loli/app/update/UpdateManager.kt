@@ -75,7 +75,9 @@ class UpdateManager(private val context: Context) {
         private set(v) = prefs.edit().putLong("last_check", v).apply()
 
     /** Разрешено ли Лоли устанавливать приложения (Android 8+ спрашивает один раз). */
-    fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
+    fun canInstall(): Boolean =
+        // До Android 8 отдельного разрешения нет: установщик сам спросит про «Неизвестные источники».
+        android.os.Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()
 
     fun installPermissionIntent(): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
