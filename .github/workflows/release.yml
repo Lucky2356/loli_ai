@@ -119,3 +119,37 @@ jobs:
           prerelease: ${{ steps.v.outputs.type == 'debug' || inputs.beta == true || contains(steps.v.outputs.version, '-') }}
           make_latest: ${{ (steps.v.outputs.type == 'debug' || inputs.beta == true || contains(steps.v.outputs.version, '-')) && 'false' || 'true' }}
           generate_release_notes: true
+
+  windows:
+    name: Windows installer
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: WiX 3
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) { choco install wixtoolset --no-progress -y }
+          Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="${{ inputs.version }}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Build installer
+        shell: bash
+        run: |
+          ./gradlew --no-daemon "-Ploli.skipAndroid=true" "-Ploli.desktopVersion=${{ steps.v.outputs.version }}" :desktop:packageMsi
+          mkdir -p dist
+          cp desktop/build/compose/binaries/main/msi/*.msi "dist/loli-${{ steps.v.outputs.version }}-windows.msi"
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          files: dist/*.msi

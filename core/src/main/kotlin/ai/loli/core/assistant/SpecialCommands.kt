@@ -18,7 +18,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         val text = input.trim().trimEnd('.', '!', '?').trim()
         if (text.isEmpty()) return null
         val n = RuTokenizer.normalize(text)
-        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n) ?: return null
+        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n, today) ?: return null
         return AssistantPlan("", listOf(action))
     }
 
@@ -237,7 +237,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
                 .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
                 .filter { it.isNotEmpty() && it.length <= 80 }
 
-        private val DICTATION_START = Regex("""^(?:давай\s+)?(?:я\s+)?(?:надиктую|продиктую|хочу\s+надиктовать|надиктовать)(?:\s+(?:тебе\s+)?(?:заметку|текст|запись))?$|^(?:запиши|записывай|прими)\s+(?:под\s+диктовку|длинную\s+заметку|голосовую\s+заметку)$|^(?:режим\s+)?диктовк[аи]$|^(?:начни|включи)\s+диктовку$|^(?:запиши|создай|новая)\s+(?:мне\s+)?заметку$""")
+        private val DICTATION_START = Regex("""^(?:давай\s+)?(?:я\s+)?(?:надиктую|продиктую|хочу\s+надиктовать|надиктовать)(?:\s+(?:тебе\s+)?(?:заметку|текст|запись))?$|^(?:запиши|записывай|прими)\s+(?:под\s+диктовку|длинную\s+заметку)$|^(?:режим\s+)?диктовк[аи]$|^(?:начни|включи)\s+диктовку$|^(?:запиши|создай|новая)\s+(?:мне\s+)?заметку$""")
         private val DICTATION_END = Regex("""[\s,.]*(?:готово|всё|все|конец|закончил[а]?|закончили|стоп|хватит|сохрани|конец заметки)[.!]?$""", RegexOption.IGNORE_CASE)
 
         /** «Надиктую заметку», «запиши под диктовку», «запиши заметку» без текста. */

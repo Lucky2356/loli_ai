@@ -29,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -106,7 +107,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
             return@LoliScreen
         }
         item(key = "segments") {
-            Segmented(listOf("Заметки", "Идеи", "Память"), segment, onSegment, Modifier.padding(top = 16.dp, bottom = 8.dp))
+            Segmented(listOf("Заметки", "Идеи", "Память", "Здоровье"), segment, onSegment, Modifier.padding(top = 16.dp, bottom = 8.dp))
         }
         when (segment) {
             0, 1 -> {
@@ -121,6 +122,7 @@ fun RecordsScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit, openH
                 }
                 items(list, key = { it.id }) { n -> Box(Modifier.animateItem()) { NoteCard(n) { editNote = n } } }
             }
+            3 -> item(key = "health") { HealthPane(c, name) }
             else -> {
                 if (memories.isEmpty()) item(key = "empty") {
                     EmptyState(Icons.Rounded.Psychology, "Пока ничего не запомнила", "Скажите: «$name, запомни, что я люблю зелёный чай»")
@@ -189,6 +191,13 @@ private fun NoteEditor(initial: Note?, kind: NoteKind, onDismiss: () -> Unit, on
     EditorSheet(if (initial == null) (if (idea) "Новая идея" else "Новая заметка") else (if (idea) "Идея" else "Заметка"), onDismiss) {
         LoliField(title, { title = it }, "Название")
         LoliField(content, { content = it }, "Текст", singleLine = false, minLines = 5)
+        // Голосовая заметка: запись хранится только на этом телефоне.
+        val audio = ai.loli.app.voice.VoiceMemoRecorder.audioName(content)
+        val app = LocalContext.current.applicationContext as ai.loli.app.LoliApp
+        if (audio != null && java.io.File(app.container.voiceMemo.dir, audio).exists()) {
+            var playing by remember { mutableStateOf(false) }
+            SecondaryButton(if (playing) "Остановить" else "Прослушать запись", { playing = app.container.voiceMemo.toggle(java.io.File(app.container.voiceMemo.dir, audio)) })
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             if (initial != null) SecondaryButton("Удалить", { askDelete = true }, danger = true)
             Spacer(Modifier.weight(1f))

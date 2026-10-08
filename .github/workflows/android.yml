@@ -37,6 +37,35 @@ jobs:
           path: core/build/reports/tests/test
           retention-days: 7
 
+  desktop:
+    name: Windows client (MSI)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      # jpackage собирает MSI через WiX 3: он уже есть на образе, ставим только если вдруг нет.
+      - name: WiX 3
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) { choco install wixtoolset --no-progress -y }
+          Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+      - name: Build Windows installer
+        run: ./gradlew --no-daemon "-Ploli.skipAndroid=true" :desktop:packageMsi
+      - name: Installer logs
+        if: failure()
+        shell: bash
+        run: cat desktop/build/compose/logs/packageMsi/*.txt || true
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: loli-windows-msi
+          path: desktop/build/compose/binaries/main/msi/*.msi
+          retention-days: 14
+
   supabase:
     name: Supabase schema + RLS tests
     runs-on: ubuntu-latest

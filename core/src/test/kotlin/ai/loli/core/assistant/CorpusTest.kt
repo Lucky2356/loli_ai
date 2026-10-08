@@ -371,7 +371,7 @@ class CorpusTest {
     /** 2.2: разговорные формы, живой диалог, привычки, календарь, игры, поздравления и то, что не должно срабатывать. */
     private val v22: List<Pair<String, String>> = CorpusV22.phrases
 
-    private val v24: List<Pair<String, String>> = CorpusV24.phrases + CorpusV28.phrases
+    private val v24: List<Pair<String, String>> = CorpusV24.phrases + CorpusV28.phrases + CorpusV29.phrases
 
     @Test fun corpus() = runTest {
         val failures = ArrayList<String>()

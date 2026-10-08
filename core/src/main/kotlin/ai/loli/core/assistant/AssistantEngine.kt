@@ -294,6 +294,69 @@ class AssistantEngine(
         return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
     }
 
+    /** Давление, вес, сон, показания счётчиков. Запись — как создание записей, просмотр — личное. */
+    private suspend fun vitalsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val v = habits?.vitals ?: return null
+        // Сначала только разбор: на заблокированном экране не записываем и не показываем лишнего.
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        val r = v.handle(text) ?: return null
+        r.monthlyMeterReminder?.let { day ->
+            val rule = ai.loli.core.model.Recurrence(ai.loli.core.model.Recurrence.Frequency.MONTHLY, time = java.time.LocalTime.of(10, 0), dayOfMonth = day)
+            val at = rule.nextAfter(time.now(), time.zone(), time.now())
+            return execute(AssistantPlan("", listOf(AssistantAction.CreateReminder("Передать показания счётчиков", at, rule))), usedAI = false, offline = false, name = cfg.assistantName)
+        }
+        if (!r.write && policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
+        return AssistantReply(r.text, changedData = r.changed, sensitive = !r.write)
+    }
+
+    /** Цели накоплений: «коплю на отпуск 100 тысяч», «отложила 5000», «сколько осталось до отпуска». */
+    private suspend fun goalsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val cmd = PersonalCommands.goal(text) ?: return null
+        val book = ai.loli.core.personal.GoalBook(memories)
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        val writes = cmd is PersonalCommands.GoalCmd.Create || cmd is PersonalCommands.GoalCmd.Deposit
+        if (policy != null && !(if (writes) policy.create else policy.view)) return AssistantReply("Разблокируйте телефон — накопления личные.")
+        val g = ai.loli.core.personal.GoalBook
+        return when (cmd) {
+            is PersonalCommands.GoalCmd.Create -> {
+                val goal = book.create(cmd.name, cmd.target)
+                AssistantReply("Завела цель ${RuFormat.quote(goal.name)}: ${g.money(goal.target)}. Когда отложите, скажите: «отложила 5000 на ${goal.name.lowercase()}».", changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Deposit -> {
+                val all = book.all()
+                val goal = cmd.name?.let { book.find(it) } ?: all.singleOrNull()
+                    ?: return if (all.isEmpty()) null else AssistantReply(
+                        if (cmd.name != null) "Цели ${RuFormat.quote(cmd.name)} нет. Есть: ${all.joinToString(", ") { it.name }}."
+                        else "На какую цель? Скажите, например: «отложила ${ai.loli.core.nlp.Calculator.format(cmd.amount)} на ${all.first().name.lowercase()}».",
+                    )
+                val updated = book.add(goal, cmd.amount)
+                AssistantReply("Отложила ${g.money(cmd.amount)}. " + g.describe(updated), changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Withdraw -> {
+                val goal = book.find(cmd.name) ?: return null
+                val updated = book.add(goal, -cmd.amount)
+                AssistantReply("Сняла ${g.money(cmd.amount)}. " + g.describe(updated), changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Remove -> {
+                val goal = book.find(cmd.name) ?: return AssistantReply("Цели ${RuFormat.quote(cmd.name)} нет.")
+                book.remove(goal)
+                AssistantReply("Убрала цель ${RuFormat.quote(goal.name)}.", changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Query -> {
+                val all = book.all()
+                if (cmd.name != null) {
+                    // «Сколько осталось до нового года» — не цель: отдаём фразу дальше.
+                    val goal = book.find(cmd.name) ?: return null
+                    AssistantReply(g.describe(goal), sensitive = true)
+                } else AssistantReply(
+                    if (all.isEmpty()) "Целей пока нет. Скажите, например: «коплю на отпуск 100 тысяч»."
+                    else "Накопления:\n" + all.joinToString("\n") { "• " + g.describe(it) },
+                    sensitive = true,
+                )
+            }
+        }
+    }
+
     /** «Где паспорт?» — по записям «положила паспорт в…». Неизвестную вещь отдаём дальше, если вопрос мог быть не о вещи. */
     private suspend fun whereTurn(text: String, cfg: AssistantSettings): AssistantReply? {
         val ask = PersonalCommands.where(text) ?: return null
@@ -329,6 +392,67 @@ class AssistantEngine(
             is ai.loli.core.review.Review.Ask.Day -> review.day(ask.date)
         }
         return AssistantReply(out, sensitive = true)
+    }
+
+    /** «Что я говорила про ремонт» — поиск по истории разговора. Личное. */
+    private suspend fun chatSearchTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = ai.loli.core.review.ChatSearch.parse(text, time.today()) ?: return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — разговоры личные.")
+        return AssistantReply(ai.loli.core.review.ChatSearch(conversations, time).search(ask), sensitive = true)
+    }
+
+    private val cards = ai.loli.core.skills.Flashcards(memories)
+    private var quiz: ai.loli.core.skills.QuizSession? = null
+    private var quizAt = time.now()
+
+    /** Карточки: добавить, сколько, проверка с повторением по Лейтнеру. */
+    private suspend fun cardsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (quiz != null && java.time.Duration.between(quizAt, time.now()) > java.time.Duration.ofMinutes(20)) quiz = null
+        quiz?.let { q ->
+            val card = q.current ?: run { quiz = null; return null }
+            val n = RuTokenizer.normalize(text).trim().trimEnd('.', '!', '?')
+            if (Regex("""^(?:хватит|стоп|закончим|закончили|достаточно|всё|все)$""").matches(n)) {
+                quiz = null
+                return AssistantReply("Закончили. " + q.score(), endsDialog = true)
+            }
+            // Новая команда посреди проверки — проверку оставляем, фразу отдаём дальше.
+            val skip = Regex("""^(?:не\s+знаю|не\s+помню|сдаюсь|пропусти|подскажи|забыл[аи]?|дальше)$""").matches(n)
+            if (!skip && (localParser.startsWithCommand(text) && text.trim().split(Regex("\\s+")).size > 3)) return null
+            val ok = !skip && ai.loli.core.skills.Flashcards.correct(text, card.back)
+            cards.grade(card, ok, time.today())
+            q.answer(ok)
+            quizAt = time.now()
+            val verdict = if (ok) listOf("Верно!", "Правильно!", "Точно!")[q.index % 3] else "Правильно: ${RuFormat.quote(card.back)}."
+            if (q.finished) { quiz = null; return AssistantReply("$verdict ${q.score()}", changedData = true, endsDialog = true) }
+            return AssistantReply("$verdict ${q.question()}", changedData = true, expectFollowUp = true, awaitingAnswer = true)
+        }
+        val cmd = ai.loli.core.skills.Flashcards.parse(text) ?: return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !(if (cmd is ai.loli.core.skills.Flashcards.Command.Add) policy.create else policy.view)) return AssistantReply("Разблокируйте телефон, чтобы заниматься с карточками.")
+        return when (cmd) {
+            is ai.loli.core.skills.Flashcards.Command.Add -> {
+                val replaced = cards.add(cmd.front, cmd.back, time.today())
+                AssistantReply("${if (replaced) "Обновила" else "Добавила"} карточку: ${cmd.front} — ${cmd.back}. Проверить — «проверь меня по словам».", changedData = true)
+            }
+            ai.loli.core.skills.Flashcards.Command.Count -> {
+                val all = cards.all()
+                val due = all.count { !it.due.isAfter(time.today()) }
+                val learned = all.count { it.box >= 4 }
+                AssistantReply(if (all.isEmpty()) "Карточек пока нет. Скажите, например: «запомни слово apple — яблоко»." else "Карточек: ${all.size}, на сегодня к повторению: $due, выучено: $learned.")
+            }
+            is ai.loli.core.skills.Flashcards.Command.Remove -> {
+                val n = cards.remove(cmd.front)
+                AssistantReply(if (n == 0) "Не нашла карточку ${RuFormat.quote(cmd.front)}." else "Убрала карточку ${RuFormat.quote(cmd.front)}.", changedData = n > 0)
+            }
+            ai.loli.core.skills.Flashcards.Command.Quiz -> {
+                val list = cards.dueToday(time.today())
+                if (list.isEmpty()) return AssistantReply("Карточек пока нет. Скажите, например: «запомни слово apple — яблоко».")
+                val q = ai.loli.core.skills.QuizSession(list)
+                quiz = q; quizAt = time.now(); workout = null; cook = null
+                AssistantReply("Поехали! Отвечайте; «не знаю» — подскажу, «хватит» — закончим. ${q.question()}", expectFollowUp = true, awaitingAnswer = true)
+            }
+        }
     }
 
     private var workout: ai.loli.core.skills.WorkoutSession? = null
@@ -503,9 +627,11 @@ class AssistantEngine(
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
         // 0.4. Тренировка и режим готовки: «дальше», «повтори», «назад», «таймер».
+        cardsTurn(text, cfg)?.let { return it }
         workoutTurn(text, cfg)?.let { return it }
         cookingTurn(text, cfg)?.let { return it }
         reviewTurn(text, cfg)?.let { return it }
+        chatSearchTurn(text, cfg)?.let { return it }
         diaryTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }
@@ -574,6 +700,8 @@ class AssistantEngine(
         special.translation(text)?.let { return translate(it, cfg) }
         personaTurn(text, cfg)?.let { return it }
         whereTurn(text, cfg)?.let { return it }
+        vitalsTurn(text, cfg)?.let { return it }
+        goalsTurn(text, cfg)?.let { return it }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
         habitReply(text, cfg)?.let { return it }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
@@ -868,7 +996,10 @@ class AssistantEngine(
         }
         // В диалоге продолжаем слушать, пока пользователь не скажет «хватит» (или не замолчит).
         val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
+        // Запись голосовой заметки займёт микрофон: разговор на этом заканчиваем.
+        val recording = plan.actions.any { (it as? AssistantAction.Device)?.command == DeviceCommand.VoiceMemo }
         return AssistantReply(
+            endsDialog = recording,
             text = parts.filter { it.isNotBlank() }.joinToString("\n").trim().replace("{name}", name),
             outcomes = result.outcomes,
             awaitingConfirmation = result.pendingConfirmation != null,

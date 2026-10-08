@@ -50,6 +50,10 @@ sealed interface DeviceCommand {
     data class Focus(val on: Boolean, val workMinutes: Int = 25, val restMinutes: Int = 5) : DeviceCommand
     /** Режим сна: каждый вечер в [from] включается «Не беспокоить», утром в [to] выключается; on = false отменяет. */
     data class SleepMode(val on: Boolean, val from: LocalTime? = null, val to: LocalTime? = null) : DeviceCommand
+    /** Отдать файл (выгрузка в таблицу): приложение сохраняет его и открывает «Поделиться». */
+    data class ShareFile(val name: String, val mime: String, val content: String) : DeviceCommand
+    /** Голосовая заметка со звуком: запись голоса и текст. */
+    data object VoiceMemo : DeviceCommand
     /** Парковка: [save] — запомнить место машины (и [note]: «третий уровень, место 45»), иначе — показать на карте. */
     data class Parking(val save: Boolean, val note: String = "") : DeviceCommand
 }
@@ -285,6 +289,8 @@ object DevicePhrases {
         // Фокус (помодоро) и режим сна.
         focus(t)?.let { return cmd(it) }
         parking(t)?.let { return cmd(it) }
+        // Голосовая заметка со звуком (не диктовка текстом): «запиши голосовую заметку», «включи диктофон».
+        if (re("""^(?:запиши|записать|сделай|создай|новая|включи|запусти|открой)?\s*(?:мне\s+)?(?:голосов\w+\s+(?:заметк\w*|запис\w*|сообщени\w*)|аудио\s*(?:заметк\w*|запис\w*)|аудиозаметк\w*|аудиозапис\w*|диктофон|запись\s+голоса)$|^запиши\s+(?:мой\s+)?голос$""").containsMatchIn(t)) return cmd(DeviceCommand.VoiceMemo)
 
         // «Я за рулём» — сообщения вслух.
         if (re("""^(?:я\s+)?(?:сейчас\s+)?(?:за рул[её]м|веду машину|еду на машине|в машине|сажусь за руль|поехала|поехал)$|^(?:включи\s+)?режим\s+(?:вождения|за рул[её]м|водителя|автомобиля)$|^(?:включи\s+)?автомобильный режим$""").containsMatchIn(t)) {

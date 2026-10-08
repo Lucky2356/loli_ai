@@ -199,6 +199,9 @@ object HabitPhrases {
 
 /** Навык «Привычки и здоровье». */
 class Habits(private val store: HabitStore, private val time: TimeSource) {
+    /** Давление, вес, сон, счётчики — в том же журнале. */
+    val vitals: Vitals by lazy { Vitals(store, time) }
+
     data class Reply(val text: String, val device: DeviceCommand? = null, val changed: Boolean = false, val private: Boolean = true)
 
     private var lastLogged: HabitEntry? = null

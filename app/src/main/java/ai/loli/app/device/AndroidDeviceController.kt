@@ -315,6 +315,12 @@ class AndroidDeviceController(
                 DeviceResult("Режим сна включён: «Не беспокоить» каждый день с ${RuFormat.time(from)} до ${RuFormat.time(to)}. Выключить — «выключи режим сна».")
             }
             is DeviceCommand.Parking -> parking(c)
+            DeviceCommand.VoiceMemo -> open(
+                Intent(context, ai.loli.app.ui.MainActivity::class.java).setAction(ai.loli.app.ui.MainActivity.ACTION_VOICE_MEMO)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                "Говорите — записываю. Закончу, когда замолчите, или нажмите «Готово».", "Голосовая заметка",
+            )
+            is DeviceCommand.ShareFile -> shareFile(c)
             is DeviceCommand.Driving -> {
                 val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
                 if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }
@@ -384,6 +390,21 @@ class AndroidDeviceController(
     // ------------------------------------------------------------------ Вспомогательное
 
     private fun resolves(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
+
+    /** Файл (таблица) — во временную папку и в системное «Поделиться»: почта, мессенджер, Диск, Excel. */
+    private suspend fun shareFile(c: DeviceCommand.ShareFile): DeviceResult {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        // Старые выгрузки не копим.
+        dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 24 * 3600_000L }?.forEach { it.delete() }
+        val safeName = c.name.replace(Regex("""[^\w.\-]"""), "_")
+        val file = java.io.File(dir, safeName)
+        withContext(Dispatchers.IO) { file.writeText(c.content, Charsets.UTF_8) }
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
+        val send = Intent(Intent.ACTION_SEND).setType(c.mime).putExtra(Intent.EXTRA_STREAM, uri)
+            .putExtra(Intent.EXTRA_SUBJECT, safeName).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val chooser = Intent.createChooser(send, "Куда отправить таблицу").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return open(chooser, "Выберите, куда сохранить или отправить: почта, мессенджер, Диск.", "Таблица готова")
+    }
 
     /** Где машина: точка по GPS хранится только на телефоне, показывается в любом приложении карт. */
     private suspend fun parking(c: DeviceCommand.Parking): DeviceResult {
