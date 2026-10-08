@@ -69,6 +69,17 @@ class ActionExecutor(
 
     private val things = ai.loli.core.personal.ThingsBook(memories)
     private val debts = ai.loli.core.personal.DebtBook(memories)
+    private val deadlines = ai.loli.core.personal.DeadlineBook(memories)
+
+    private fun longDate(d: java.time.LocalDate): String = "${d.dayOfMonth} ${MONTHS_GEN[d.monthValue - 1]}" + if (d.year != time.today().year) " ${d.year}" else ""
+
+    private fun daysLeft(d: java.time.LocalDate): String = when (val n = java.time.temporal.ChronoUnit.DAYS.between(time.today(), d)) {
+        0L -> "сегодня"
+        1L -> "завтра"
+        in 2L..60L -> "через ${RuFormat.count(n.toInt(), "день", "дня", "дней")}"
+        in Long.MIN_VALUE..-1L -> "истёк"
+        else -> "через ${RuFormat.count((n / 30).toInt(), "месяц", "месяца", "месяцев")}"
+    }
 
     /** Список с похожим названием уже есть («Фильмы» и «фильмов») — пишем в него, а не заводим второй. */
     private suspend fun listNamed(name: String): String {
@@ -650,6 +661,65 @@ class ActionExecutor(
                         "• $name — " + if (left == 0) "всё отмечено" else RuFormat.count(left, "пункт", "пункта", "пунктов")
                     },
                 )
+            }
+
+            is AssistantAction.AddDeadline -> {
+                val left = java.time.temporal.ChronoUnit.DAYS.between(today, action.date)
+                if (left < 0) return error("Эта дата уже прошла: ${longDate(action.date)}.")
+                deadlines.put(action.title, action.date)
+                val mark = ai.loli.core.personal.DeadlineBook.REMINDER_MARK + action.title
+                reminders.all().filter { it.text.startsWith(mark) }.forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
+                // Заранее — тем раньше, чем дальше срок; в сам день — утром.
+                val before = when { left >= 45 -> 30L; left >= 8 -> 7L; left >= 2 -> 1L; else -> 0L }
+                val at = java.time.LocalTime.of(10, 0)
+                val planned = listOfNotNull(
+                    if (before > 0) action.date.minusDays(before) to "$mark — истекает ${longDate(action.date)}" else null,
+                    action.date to "$mark — истекает сегодня",
+                ).mapNotNull { (d, text) ->
+                    val instant = d.atTime(at).atZone(zone).toInstant()
+                    if (!instant.isAfter(now)) null else reminders.create(text, instant, null, zone.id).also { scheduler.schedule(it) }
+                }
+                val whenText = when (before) { 30L -> "за месяц и в сам день"; 7L -> "за неделю и в сам день"; 1L -> "накануне и в сам день"; else -> "в сам день" }
+                changed("Запомнила: ${action.title.replaceFirstChar { it.lowercase() }} — до ${longDate(action.date)}." + if (planned.isNotEmpty()) " Напомню $whenText." else "")
+            }
+
+            is AssistantAction.QueryDeadlines -> {
+                val list = if (action.query != null) deadlines.find(action.query) else deadlines.all()
+                val shown = if (action.soon) list.filter { !it.date.isAfter(today.plusDays(60)) } else list
+                query(
+                    when {
+                        list.isEmpty() && action.query != null -> "Про ${RuFormat.quote(action.query)} сроков не записано. Скажите, например: «гарантия на телевизор до мая 2027»."
+                        list.isEmpty() -> "Сроков пока нет. Скажите, например: «гарантия на телевизор до мая 2027» или «молоко до пятницы»."
+                        shown.isEmpty() -> "В ближайшие два месяца ничего не истекает. Ближайшее: ${list.first().title} — ${longDate(list.first().date)}."
+                        shown.size == 1 -> "${shown[0].title} — до ${longDate(shown[0].date)} (${daysLeft(shown[0].date)})."
+                        else -> (if (action.soon) "Скоро истекает:\n" else "Сроки:\n") + shown.joinToString("\n") { "• ${it.title} — до ${longDate(it.date)} (${daysLeft(it.date)})" }
+                    },
+                )
+            }
+
+            is AssistantAction.RemoveDeadline -> {
+                val removed = deadlines.remove(action.query)
+                if (removed.isEmpty()) return error("Не нашла срок ${RuFormat.quote(action.query)}.")
+                removed.forEach { d ->
+                    val mark = ai.loli.core.personal.DeadlineBook.REMINDER_MARK + d.title
+                    reminders.all().filter { it.text.startsWith(mark) }.forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
+                }
+                changed("Убрала: ${removed.joinToString(", ") { it.title }} и напоминания о сроке.")
+            }
+
+            is AssistantAction.SendList -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val listName = listNamed(action.listName)
+                val left = repo.all().filter { it.listName.equals(listName, true) && !it.done }
+                if (left.isEmpty()) return error("Список ${RuFormat.quote(listName)} пуст — отправлять нечего.")
+                val head = if (listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "Купить" else listName
+                val text = "$head: " + left.joinToString(", ") { it.text.lowercase() }
+                val cmd = when {
+                    action.who != null -> DeviceCommand.Message(action.who, text)
+                    else -> DeviceCommand.Share(action.app.orEmpty(), text)
+                }
+                val r = device.perform(cmd)
+                if (r.ok) query(r.text) else error(r.text)
             }
 
             is AssistantAction.PutThing -> {

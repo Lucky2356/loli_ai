@@ -294,6 +294,69 @@ class AssistantEngine(
         return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
     }
 
+    /** Давление, вес, сон, показания счётчиков. Запись — как создание записей, просмотр — личное. */
+    private suspend fun vitalsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val v = habits?.vitals ?: return null
+        // Сначала только разбор: на заблокированном экране не записываем и не показываем лишнего.
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        val r = v.handle(text) ?: return null
+        r.monthlyMeterReminder?.let { day ->
+            val rule = ai.loli.core.model.Recurrence(ai.loli.core.model.Recurrence.Frequency.MONTHLY, time = java.time.LocalTime.of(10, 0), dayOfMonth = day)
+            val at = rule.nextAfter(time.now(), time.zone(), time.now())
+            return execute(AssistantPlan("", listOf(AssistantAction.CreateReminder("Передать показания счётчиков", at, rule))), usedAI = false, offline = false, name = cfg.assistantName)
+        }
+        if (!r.write && policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
+        return AssistantReply(r.text, changedData = r.changed, sensitive = !r.write)
+    }
+
+    /** Цели накоплений: «коплю на отпуск 100 тысяч», «отложила 5000», «сколько осталось до отпуска». */
+    private suspend fun goalsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val cmd = PersonalCommands.goal(text) ?: return null
+        val book = ai.loli.core.personal.GoalBook(memories)
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        val writes = cmd is PersonalCommands.GoalCmd.Create || cmd is PersonalCommands.GoalCmd.Deposit
+        if (policy != null && !(if (writes) policy.create else policy.view)) return AssistantReply("Разблокируйте телефон — накопления личные.")
+        val g = ai.loli.core.personal.GoalBook
+        return when (cmd) {
+            is PersonalCommands.GoalCmd.Create -> {
+                val goal = book.create(cmd.name, cmd.target)
+                AssistantReply("Завела цель ${RuFormat.quote(goal.name)}: ${g.money(goal.target)}. Когда отложите, скажите: «отложила 5000 на ${goal.name.lowercase()}».", changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Deposit -> {
+                val all = book.all()
+                val goal = cmd.name?.let { book.find(it) } ?: all.singleOrNull()
+                    ?: return if (all.isEmpty()) null else AssistantReply(
+                        if (cmd.name != null) "Цели ${RuFormat.quote(cmd.name)} нет. Есть: ${all.joinToString(", ") { it.name }}."
+                        else "На какую цель? Скажите, например: «отложила ${ai.loli.core.nlp.Calculator.format(cmd.amount)} на ${all.first().name.lowercase()}».",
+                    )
+                val updated = book.add(goal, cmd.amount)
+                AssistantReply("Отложила ${g.money(cmd.amount)}. " + g.describe(updated), changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Withdraw -> {
+                val goal = book.find(cmd.name) ?: return null
+                val updated = book.add(goal, -cmd.amount)
+                AssistantReply("Сняла ${g.money(cmd.amount)}. " + g.describe(updated), changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Remove -> {
+                val goal = book.find(cmd.name) ?: return AssistantReply("Цели ${RuFormat.quote(cmd.name)} нет.")
+                book.remove(goal)
+                AssistantReply("Убрала цель ${RuFormat.quote(goal.name)}.", changedData = true)
+            }
+            is PersonalCommands.GoalCmd.Query -> {
+                val all = book.all()
+                if (cmd.name != null) {
+                    // «Сколько осталось до нового года» — не цель: отдаём фразу дальше.
+                    val goal = book.find(cmd.name) ?: return null
+                    AssistantReply(g.describe(goal), sensitive = true)
+                } else AssistantReply(
+                    if (all.isEmpty()) "Целей пока нет. Скажите, например: «коплю на отпуск 100 тысяч»."
+                    else "Накопления:\n" + all.joinToString("\n") { "• " + g.describe(it) },
+                    sensitive = true,
+                )
+            }
+        }
+    }
+
     /** «Где паспорт?» — по записям «положила паспорт в…». Неизвестную вещь отдаём дальше, если вопрос мог быть не о вещи. */
     private suspend fun whereTurn(text: String, cfg: AssistantSettings): AssistantReply? {
         val ask = PersonalCommands.where(text) ?: return null
@@ -574,6 +637,8 @@ class AssistantEngine(
         special.translation(text)?.let { return translate(it, cfg) }
         personaTurn(text, cfg)?.let { return it }
         whereTurn(text, cfg)?.let { return it }
+        vitalsTurn(text, cfg)?.let { return it }
+        goalsTurn(text, cfg)?.let { return it }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
         habitReply(text, cfg)?.let { return it }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…

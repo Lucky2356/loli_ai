@@ -18,7 +18,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         val text = input.trim().trimEnd('.', '!', '?').trim()
         if (text.isEmpty()) return null
         val n = RuTokenizer.normalize(text)
-        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n) ?: return null
+        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n, today) ?: return null
         return AssistantPlan("", listOf(action))
     }
 

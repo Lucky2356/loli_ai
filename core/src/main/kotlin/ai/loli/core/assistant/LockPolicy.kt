@@ -59,10 +59,12 @@ data class LockPolicy(
         is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote,
         is AssistantAction.AddToList, is AssistantAction.AddBirthday, is AssistantAction.CreateSecretNote, is AssistantAction.AddSubscription,
-        is AssistantAction.PutThing, is AssistantAction.AddDebt, is AssistantAction.CreateList -> create
+        is AssistantAction.PutThing, is AssistantAction.AddDebt, is AssistantAction.CreateList, is AssistantAction.AddDeadline -> create
         is AssistantAction.Clarify -> true
         is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions,
-        is AssistantAction.QueryDebts, AssistantAction.QueryLists -> view
+        is AssistantAction.QueryDebts, AssistantAction.QueryLists, is AssistantAction.QueryDeadlines -> view
+        // Список уходит другому человеку: нужно и смотреть записи, и писать сообщения.
+        is AssistantAction.SendList -> view && calls
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {

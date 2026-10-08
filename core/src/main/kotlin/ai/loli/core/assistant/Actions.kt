@@ -154,6 +154,14 @@ sealed interface AssistantAction {
     data class CreateList(val name: String, val items: List<String>) : AssistantAction
     /** «Какие у меня списки». */
     data object QueryLists : AssistantAction
+    // --- 2.9: сроки, отправка списка, карточки ---
+    /** «Гарантия на телевизор до мая 2027»: запись и напоминания заранее и в сам день. */
+    data class AddDeadline(val title: String, val date: LocalDate) : AssistantAction
+    /** «Что скоро истекает» ([soon]), «когда кончается гарантия на телевизор» ([query]). */
+    data class QueryDeadlines(val query: String?, val soon: Boolean = false) : AssistantAction
+    data class RemoveDeadline(val query: String) : AssistantAction
+    /** «Отправь список покупок Маше» — текстом в мессенджер или СМС. [app] — «в телеграм». */
+    data class SendList(val listName: String, val who: String?, val app: String? = null) : AssistantAction
     /** Секретная заметка: только на устройстве, открывается по отпечатку. */
     data class CreateSecretNote(val title: String, val content: String) : AssistantAction
 }
