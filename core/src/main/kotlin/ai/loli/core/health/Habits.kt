@@ -387,7 +387,20 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
 
     private suspend fun saveMood(score: Int, note: String): String {
         store.log(MOOD, note, score.toDouble(), time.now())
-        return "Записала: настроение $score из 5${if (note.isNotBlank()) " — $note" else ""}."
+        val saved = "Записала: настроение $score из 5${if (note.isNotBlank()) " — $note" else ""}."
+        return when {
+            score <= 2 && moodLow() -> "$saved Уже не первый трудный день. Берегите себя: может, отдых пораньше или прогулка? Если захотите — подышим вместе: «давай подышим»."
+            score <= 2 -> "$saved Жаль, что день не задался. Завтра будет лучше — а я помогу с делами."
+            score >= 5 -> "$saved Отличный день — так держать!"
+            else -> saved
+        }
+    }
+
+    /** Настроение последних дней низкое: хотя бы две оценки за 3 дня, в среднем не выше 2,5. */
+    suspend fun moodLow(): Boolean {
+        val from = time.today().minusDays(2).atStartOfDay(time.zone()).toInstant()
+        val moods = store.since(from, MOOD)
+        return moods.size >= 2 && moods.map { it.amount }.average() <= 2.5
     }
 
     /**
