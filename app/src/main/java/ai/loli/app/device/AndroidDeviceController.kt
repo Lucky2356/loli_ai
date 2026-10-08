@@ -314,6 +314,7 @@ class AndroidDeviceController(
                 ai.loli.app.reminders.SleepMode.enable(context, from, to)
                 DeviceResult("Режим сна включён: «Не беспокоить» каждый день с ${RuFormat.time(from)} до ${RuFormat.time(to)}. Выключить — «выключи режим сна».")
             }
+            is DeviceCommand.Parking -> parking(c)
             is DeviceCommand.Driving -> {
                 val d = driving ?: return DeviceResult("Здесь так не умею.", ok = false)
                 if (!c.on) { d.set(false); return DeviceResult("Режим «за рулём» выключен.") }
@@ -383,6 +384,40 @@ class AndroidDeviceController(
     // ------------------------------------------------------------------ Вспомогательное
 
     private fun resolves(intent: Intent): Boolean = intent.resolveActivity(context.packageManager) != null
+
+    /** Где машина: точка по GPS хранится только на телефоне, показывается в любом приложении карт. */
+    private suspend fun parking(c: DeviceCommand.Parking): DeviceResult {
+        val prefs = context.getSharedPreferences(PARKING_PREFS, Context.MODE_PRIVATE)
+        if (c.save) {
+            // «Я припарковалась» — заодно конец поездки: сообщения больше не читаем вслух.
+            driving?.set(false)
+            if (!permissions.ensure(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) && !locator.hasCoarse()) {
+                return DeviceResult("Чтобы запомнить место машины, разрешите Лоли доступ к местоположению — и повторите.", ok = false)
+            }
+            val loc = withContext(Dispatchers.IO) { locator.current(maxAgeMs = 2 * 60_000L, precise = true) }
+                ?: return DeviceResult("Не получилось определить место: включите геолокацию и повторите «запомни, где я припарковалась».", ok = false)
+            prefs.edit().putString("lat", loc.latitude.toString()).putString("lon", loc.longitude.toString())
+                .putLong("at", System.currentTimeMillis()).putString("note", c.note).apply()
+            val accuracy = if (loc.accuracy > 100) " Точность около ${loc.accuracy.toInt()} м — на подземной парковке GPS часто ошибается." else ""
+            val note = if (c.note.isNotBlank()) " Заметка: ${c.note}." else ""
+            return DeviceResult("Запомнила, где машина.$note$accuracy Спросите «где моя машина» — покажу на карте.")
+        }
+        val lat = prefs.getString("lat", null)?.toDoubleOrNull()
+        val lon = prefs.getString("lon", null)?.toDoubleOrNull()
+        if (lat == null || lon == null) return DeviceResult("Я не знаю, где машина. Когда припаркуетесь, скажите: «запомни, где я припарковалась».", ok = false)
+        val at = Instant.ofEpochMilli(prefs.getLong("at", 0))
+        val zone = java.time.ZoneId.systemDefault()
+        val note = prefs.getString("note", "").orEmpty().let { if (it.isNotBlank()) " Вы говорили: $it." else "" }
+        val point = String.format(java.util.Locale.US, "%.6f,%.6f", lat, lon)
+        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$point?q=$point(" + Uri.encode("Машина") + ")"))
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://yandex.ru/maps/?pt=${String.format(java.util.Locale.US, "%.6f,%.6f", lon, lat)}&z=17"))
+        return open(
+            if (resolves(geo)) geo else web,
+            "Машина там, где вы её оставили ${RuFormat.dateTime(at, zone, Instant.now())}.$note Открываю карту.", "Где машина",
+        )
+    }
+
+    private val locator by lazy { Locator(context) }
 
     /**
      * Открывает экран — и при свёрнутом приложении (с разрешением «Поверх других приложений»).
@@ -464,6 +499,7 @@ class AndroidDeviceController(
         }
 
     companion object {
+        private const val PARKING_PREFS = "loli_parking"
         private const val TAG = "Device"
         private const val YOUTUBE = "com.google.android.youtube"
         private val SHARE_APPS = mapOf(

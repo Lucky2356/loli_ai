@@ -156,6 +156,10 @@ data class AppSettings(
     val morningBrief: Boolean = true,
     /** В 21:00 — итоги дня (по умолчанию выключено). */
     val eveningBrief: Boolean = false,
+    /** По воскресеньям в 19:00 — итоги недели (по умолчанию выключено). */
+    val weeklyReview: Boolean = false,
+    /** Характер Лоли: caring / business / playful. */
+    val persona: String = "caring",
     /** Постоянное уведомление с полем быстрого ввода («кофе 250»). */
     val quickInput: Boolean = false,
     val supabaseUrlOverride: String = "",
@@ -202,6 +206,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
         val secureScreen = booleanPreferencesKey("secure_screen")
         val morningBrief = booleanPreferencesKey("morning_brief")
         val eveningBrief = booleanPreferencesKey("evening_brief")
+        val weeklyReview = booleanPreferencesKey("weekly_review")
+        val persona = stringPreferencesKey("persona")
         val quickInput = booleanPreferencesKey("quick_input")
         val pitch = floatPreferencesKey("speech_pitch")
         val voice = stringPreferencesKey("voice_name")
@@ -295,6 +301,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
             secureScreen = p[K.secureScreen] ?: false,
             morningBrief = p[K.morningBrief] ?: true,
             eveningBrief = p[K.eveningBrief] ?: false,
+            weeklyReview = p[K.weeklyReview] ?: false,
+            persona = p[K.persona] ?: "caring",
             quickInput = p[K.quickInput] ?: false,
             autoUpdate = p[K.autoUpdate] ?: true,
             betaUpdates = p[K.betaUpdates] ?: false,
@@ -385,6 +393,8 @@ class SettingsRepository(context: Context, scope: CoroutineScope) : ProfileSync 
     suspend fun setAccent(v: AccentColor) = store.edit { it[K.accent] = v.id; it[K.dynamicColor] = false }
     suspend fun setMorningBrief(v: Boolean) = store.edit { it[K.morningBrief] = v }
     suspend fun setEveningBrief(v: Boolean) = store.edit { it[K.eveningBrief] = v }
+    suspend fun setWeeklyReview(v: Boolean) = store.edit { it[K.weeklyReview] = v }
+    suspend fun setPersona(v: String) = store.edit { it[K.persona] = v }
     suspend fun setQuickInput(v: Boolean) = store.edit { it[K.quickInput] = v }
     suspend fun setSecureScreen(v: Boolean) = store.edit { it[K.secureScreen] = v }
     suspend fun setSpeechPause(v: SpeechPause) = store.edit { it[K.speechPause] = v.id }

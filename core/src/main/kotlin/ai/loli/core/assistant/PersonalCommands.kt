@@ -35,7 +35,8 @@ object PersonalCommands {
         val cleanItem = item.trim().removePrefix("мой ").removePrefix("моя ").removePrefix("мои ").removePrefix("мою ").trim()
         if (cleanItem.isEmpty() || NOT_THING.matches(cleanItem) || cleanItem.split(' ').size > 4 || place.length > 80) return null
         // «Положила 500 рублей на карту» — это деньги, а не вещь; «поставила будильник на 7» — не вещь.
-        if (Regex("""\d""").containsMatchIn(cleanItem) || rx("""\b(?:будильник|таймер|напоминани|задач|встреч)""").containsMatchIn(cleanItem)) return null
+        // Машину запоминает «парковка» (по GPS), а не запись о вещи.
+        if (Regex("""\d""").containsMatchIn(cleanItem) || rx("""\b(?:будильник|таймер|напоминани|задач|встреч|машин|авто|тачк)""").containsMatchIn(cleanItem)) return null
         return AssistantAction.PutThing(original(text, cleanItem), original(text, place.trim()))
     }
 
@@ -160,6 +161,9 @@ object PersonalCommands {
     private fun lists(text: String, n: String): AssistantAction? {
         // Готовые чек-листы: «собери список в отпуск», «что взять в поход»
         rx("""^(?:собери|составь|сделай|создай|подготовь|дай|нужен)\s+(?:мне\s+)?(?:список|чек-?лист|чеклист)\s+(?:вещей\s+|что\s+взять\s+)?(?:в|на|для|к)\s+(.+)$""").find(n)?.let { m ->
+            ListTemplates.find(m.groupValues[1])?.let { return AssistantAction.CreateList(it.name, it.items) }
+        }
+        rx("""^(?:чек-?лист|чеклист|список\s+вещей)\s+(?:в|на|для|к)\s+(.+)$""").find(n)?.let { m ->
             ListTemplates.find(m.groupValues[1])?.let { return AssistantAction.CreateList(it.name, it.items) }
         }
         rx("""^что\s+(?:мне\s+|нам\s+)?(?:нужно\s+|надо\s+)?(?:взять|брать|собрать|положить)\s+(?:с\s+собой\s+)?(?:в|на)\s+(.+)$""").find(n)?.let { m ->

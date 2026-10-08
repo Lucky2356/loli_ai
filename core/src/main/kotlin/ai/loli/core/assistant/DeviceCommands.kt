@@ -50,6 +50,8 @@ sealed interface DeviceCommand {
     data class Focus(val on: Boolean, val workMinutes: Int = 25, val restMinutes: Int = 5) : DeviceCommand
     /** Режим сна: каждый вечер в [from] включается «Не беспокоить», утром в [to] выключается; on = false отменяет. */
     data class SleepMode(val on: Boolean, val from: LocalTime? = null, val to: LocalTime? = null) : DeviceCommand
+    /** Парковка: [save] — запомнить место машины (и [note]: «третий уровень, место 45»), иначе — показать на карте. */
+    data class Parking(val save: Boolean, val note: String = "") : DeviceCommand
 }
 
 enum class RelaxKind { BREATHING, MEDITATION, STOP }
@@ -107,6 +109,20 @@ object DevicePhrases {
         // «работаем» без числа и без слов про фокус — слишком общая фраза.
         if (!d.contains("помодоро") && !d.contains("фокус") && m.groupValues[1].isEmpty() && m.groupValues[2].isEmpty()) return null
         return DeviceCommand.Focus(true, work, rest)
+    }
+
+    /** «Запомни, где я припарковалась», «я припарковался на третьем уровне», «где моя машина». */
+    internal fun parking(t: String): DeviceCommand.Parking? {
+        if (re("""^(?:а\s+)?(?:где\s+(?:же\s+)?(?:моя\s+|наша\s+)?(?:машина|машинка|тачка|авто|автомобиль)|где\s+я\s+(?:оставил|оставила|поставил|поставила|бросил|бросила)\s+(?:свою\s+)?(?:машину|тачку|авто|автомобиль)|где\s+я\s+(?:припарковал\w*|встал[аи]?\s+на\s+парковке)|(?:найди|покажи)\s+(?:мою\s+|где\s+)?(?:машину|тачку|парковку|где\s+машина)|(?:веди|проведи|отведи)\s+(?:меня\s+)?к\s+машине|как\s+(?:дойти|пройти|вернуться)\s+(?:до|к)\s+машин\w*)$""").containsMatchIn(t)) {
+            return DeviceCommand.Parking(save = false)
+        }
+        val m = re("""^(?:запомни\s*,?\s*(?:где|что)\s+)?(?:я\s+)?(?:припарковал(?:ся|ась|ись|а|и)?|запарковал(?:ся|ась|ись|а|и)?|оставил\s+машину|оставила\s+машину|поставил\s+машину|поставила\s+машину)(.*)$""").find(t)
+            ?: re("""^(?:запомни|сохрани|отметь)\s+(?:парковку|место\s+(?:парковки|машины)|где\s+(?:стоит\s+)?(?:моя\s+)?машина|где\s+машина)(.*)$""").find(t)
+            ?: return null
+        val note = m.groupValues[1].trim().trim(',', ':', '.', ' ')
+        // «Я поставила машину на ремонт / в сервис» — не парковка.
+        if (re("""ремонт|сервис|продаж|учет|учёт""").containsMatchIn(note)) return null
+        return DeviceCommand.Parking(save = true, note = note)
     }
 
     private fun sleepRange(m: MatchResult): DeviceCommand.SleepMode? {
@@ -268,6 +284,7 @@ object DevicePhrases {
 
         // Фокус (помодоро) и режим сна.
         focus(t)?.let { return cmd(it) }
+        parking(t)?.let { return cmd(it) }
 
         // «Я за рулём» — сообщения вслух.
         if (re("""^(?:я\s+)?(?:сейчас\s+)?(?:за рул[её]м|веду машину|еду на машине|в машине|сажусь за руль|поехала|поехал)$|^(?:включи\s+)?режим\s+(?:вождения|за рул[её]м|водителя|автомобиля)$|^(?:включи\s+)?автомобильный режим$""").containsMatchIn(t)) {

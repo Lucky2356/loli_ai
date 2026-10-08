@@ -625,8 +625,9 @@ class AssistantEngine(
         }
         // «Посоветуй, чем заняться в выходные» — просьба, а не задача на выходные.
         if (ai.loli.core.ai.LocalChat.isStrongChat(text)) localAnswer(text, cfg)?.let { return it }
+        // «Мой размер обуви 38» — факт о себе, а не расход на 38 ₽: спрашиваем раньше разбора команд.
+        offerFact(text)?.let { return it }
         val parsed = localParser.parse(text, time.now(), time.zone())
-        if (parsed == null) offerFact(text)?.let { return it }
         // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
         if (parsed == null && ai.loli.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
         val local = parsed ?: localFallback(text, cfg)
@@ -680,6 +681,29 @@ class AssistantEngine(
         val key = ai.loli.core.model.Routine.normalize(text)
             .replace(Regex("""^(?:запусти|включи|выполни)\s+(?:сценарий\s+)?"""), "")
         val routine = list.firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key } ?: return null
+        return runCommands(routine, cfg)
+    }
+
+    /**
+     * Сработало напоминание «Сценарий: по будням в 7:30» — выполняем сценарий сами. Телефон в это время обычно
+     * заблокирован, но сценарий создан владельцем на разблокированном телефоне, поэтому выполняется без ограничений блокировки.
+     * null — такого сценария уже нет.
+     */
+    suspend fun runScheduledRoutine(reminderText: String): AssistantReply? = mutex.withLock {
+        if (!reminderText.startsWith(ai.loli.core.model.Routine.SCHEDULE_PREFIX)) return@withLock null
+        val key = ai.loli.core.model.Routine.normalize(reminderText.removePrefix(ai.loli.core.model.Routine.SCHEDULE_PREFIX))
+        val routine = runCatching { routines() }.getOrDefault(emptyList()).firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key }
+            ?: return@withLock null
+        val cfg = settings().copy(locked = false, lockPolicy = null)
+        executor.trusted = true
+        try {
+            runCommands(routine, cfg).also { context.dialogMode = false; context.appendMode = false }
+        } finally {
+            executor.trusted = false
+        }
+    }
+
+    private suspend fun runCommands(routine: ai.loli.core.model.Routine, cfg: AssistantSettings): AssistantReply {
         val replies = ArrayList<String>()
         var changed = false
         for (cmd in routine.commands.take(10)) {

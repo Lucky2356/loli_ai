@@ -61,6 +61,12 @@ class ActionExecutor(
     /** Напоминание «настойчиво, пока не отмечу» создано: приложение запоминает его id и повторяет срабатывание. */
     private val onPersistentReminder: (String) -> Unit = {},
 ) {
+    /**
+     * Сценарий по расписанию выполняется сам, когда телефон обычно заблокирован. Его создал владелец на разблокированном
+     * телефоне (создание сценариев на блокировке запрещено), поэтому на время запуска правила блокировки не действуют.
+     */
+    @Volatile var trusted: Boolean = false
+
     private val things = ai.loli.core.personal.ThingsBook(memories)
     private val debts = ai.loli.core.personal.DebtBook(memories)
 
@@ -187,7 +193,7 @@ class ActionExecutor(
     }
 
     private suspend fun runAction(action: AssistantAction, ctx: ConversationContext): Step {
-        lockPolicy()?.let { policy ->
+        (if (trusted) null else lockPolicy())?.let { policy ->
             if (!policy.allows(action)) {
                 return error("Разблокируйте — ${lockedReason(action)} без разблокировки не разрешено (это меняется в настройках Лоли).")
             }
@@ -487,6 +493,14 @@ class ActionExecutor(
                 val repo = routines ?: return error("Сценарии пока недоступны.")
                 if (action.commands.isEmpty()) return error("Не поняла, что делать по этой фразе.")
                 val r = repo.save(action.trigger, action.commands)
+                val rule = action.schedule
+                if (rule != null) {
+                    val text = ai.loli.core.model.Routine.SCHEDULE_PREFIX + r.trigger
+                    reminders.all().filter { it.text.equals(text, true) }.forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
+                    val rem = reminders.create(text, rule.nextAfter(now, zone, now), rule, zone.id)
+                    scheduler.schedule(rem)
+                    return changed("Готово! ${r.trigger} выполню сама: ${r.commands.joinToString("; ")}. Результат покажу уведомлением и скажу вслух, если включены ответы голосом.")
+                }
                 changed("Готово! Когда скажете ${RuFormat.quote(r.trigger)}, я выполню: ${r.commands.joinToString("; ")}.")
             }
 
@@ -494,7 +508,15 @@ class ActionExecutor(
                 val list = routines?.all().orEmpty()
                 query(
                     if (list.isEmpty()) "Сценариев пока нет. Скажите, например: «когда я говорю спокойной ночи — поставь будильник на 7 и включи не беспокоить»."
-                    else "Сценарии:\n" + list.joinToString("\n") { "• «${it.trigger}» → ${it.commands.joinToString("; ")}" },
+                    else {
+                        // По расписанию — те, у кого есть напоминание «Сценарий: …».
+                        val timed = reminders.active().map { it.text }.filter { it.startsWith(ai.loli.core.model.Routine.SCHEDULE_PREFIX) }
+                            .map { ai.loli.core.model.Routine.normalize(it.removePrefix(ai.loli.core.model.Routine.SCHEDULE_PREFIX)) }.toSet()
+                        "Сценарии:\n" + list.joinToString("\n") { r ->
+                            if (ai.loli.core.model.Routine.normalize(r.trigger) in timed) "• ${r.trigger} (сам) → ${r.commands.joinToString("; ")}"
+                            else "• «${r.trigger}» → ${r.commands.joinToString("; ")}"
+                        }
+                    },
                 )
             }
 
@@ -505,6 +527,8 @@ class ActionExecutor(
                     ?: repo.all().firstOrNull { key in ai.loli.core.model.Routine.normalize(it.trigger) }
                     ?: return error("Не нашла сценарий ${RuFormat.quote(action.trigger)}.")
                 repo.delete(r.id)
+                val scheduled = ai.loli.core.model.Routine.SCHEDULE_PREFIX + r.trigger
+                reminders.all().filter { it.text.equals(scheduled, true) }.forEach { reminders.delete(it.id); scheduler.cancel(it.id) }
                 changed("Удалила сценарий ${RuFormat.quote(r.trigger)}.")
             }
 

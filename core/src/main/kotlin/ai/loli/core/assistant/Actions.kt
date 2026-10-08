@@ -128,7 +128,8 @@ sealed interface AssistantAction {
     /** «Очисти список покупок» / «убери купленное». */
     data class ClearList(val listName: String, val onlyDone: Boolean) : AssistantAction
     /** «Когда я говорю „спокойной ночи“ — поставь будильник на 7 и включи не беспокоить». */
-    data class CreateRoutine(val trigger: String, val commands: List<String>) : AssistantAction
+    /** [schedule] — сценарий по расписанию («по будням в 7:30»): срабатывает сам, а не по фразе. */
+    data class CreateRoutine(val trigger: String, val commands: List<String>, val schedule: ai.loli.core.model.Recurrence? = null) : AssistantAction
     data object QueryRoutines : AssistantAction
     data class DeleteRoutine(val trigger: String) : AssistantAction
     /** «День рождения мамы 5 мая». */
