@@ -160,6 +160,8 @@ sealed interface AssistantAction {
     /** «Что скоро истекает» ([soon]), «когда кончается гарантия на телевизор» ([query]). */
     data class QueryDeadlines(val query: String?, val soon: Boolean = false) : AssistantAction
     data class RemoveDeadline(val query: String) : AssistantAction
+    /** «Выгрузи расходы за месяц в таблицу»: [kind] — expenses / tasks / debts; период null — всё время. */
+    data class Export(val kind: String, val from: LocalDate?, val to: LocalDate?) : AssistantAction
     /** «Отправь список покупок Маше» — текстом в мессенджер или СМС. [app] — «в телеграм». */
     data class SendList(val listName: String, val who: String?, val app: String? = null) : AssistantAction
     /** Секретная заметка: только на устройстве, открывается по отпечатку. */

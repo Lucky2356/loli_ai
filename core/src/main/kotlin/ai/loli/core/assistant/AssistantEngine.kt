@@ -394,6 +394,67 @@ class AssistantEngine(
         return AssistantReply(out, sensitive = true)
     }
 
+    /** «Что я говорила про ремонт» — поиск по истории разговора. Личное. */
+    private suspend fun chatSearchTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = ai.loli.core.review.ChatSearch.parse(text, time.today()) ?: return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — разговоры личные.")
+        return AssistantReply(ai.loli.core.review.ChatSearch(conversations, time).search(ask), sensitive = true)
+    }
+
+    private val cards = ai.loli.core.skills.Flashcards(memories)
+    private var quiz: ai.loli.core.skills.QuizSession? = null
+    private var quizAt = time.now()
+
+    /** Карточки: добавить, сколько, проверка с повторением по Лейтнеру. */
+    private suspend fun cardsTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (quiz != null && java.time.Duration.between(quizAt, time.now()) > java.time.Duration.ofMinutes(20)) quiz = null
+        quiz?.let { q ->
+            val card = q.current ?: run { quiz = null; return null }
+            val n = RuTokenizer.normalize(text).trim().trimEnd('.', '!', '?')
+            if (Regex("""^(?:хватит|стоп|закончим|закончили|достаточно|всё|все)$""").matches(n)) {
+                quiz = null
+                return AssistantReply("Закончили. " + q.score(), endsDialog = true)
+            }
+            // Новая команда посреди проверки — проверку оставляем, фразу отдаём дальше.
+            val skip = Regex("""^(?:не\s+знаю|не\s+помню|сдаюсь|пропусти|подскажи|забыл[аи]?|дальше)$""").matches(n)
+            if (!skip && (localParser.startsWithCommand(text) && text.trim().split(Regex("\\s+")).size > 3)) return null
+            val ok = !skip && ai.loli.core.skills.Flashcards.correct(text, card.back)
+            cards.grade(card, ok, time.today())
+            q.answer(ok)
+            quizAt = time.now()
+            val verdict = if (ok) listOf("Верно!", "Правильно!", "Точно!")[q.index % 3] else "Правильно: ${RuFormat.quote(card.back)}."
+            if (q.finished) { quiz = null; return AssistantReply("$verdict ${q.score()}", changedData = true, endsDialog = true) }
+            return AssistantReply("$verdict ${q.question()}", changedData = true, expectFollowUp = true, awaitingAnswer = true)
+        }
+        val cmd = ai.loli.core.skills.Flashcards.parse(text) ?: return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !(if (cmd is ai.loli.core.skills.Flashcards.Command.Add) policy.create else policy.view)) return AssistantReply("Разблокируйте телефон, чтобы заниматься с карточками.")
+        return when (cmd) {
+            is ai.loli.core.skills.Flashcards.Command.Add -> {
+                val replaced = cards.add(cmd.front, cmd.back, time.today())
+                AssistantReply("${if (replaced) "Обновила" else "Добавила"} карточку: ${cmd.front} — ${cmd.back}. Проверить — «проверь меня по словам».", changedData = true)
+            }
+            ai.loli.core.skills.Flashcards.Command.Count -> {
+                val all = cards.all()
+                val due = all.count { !it.due.isAfter(time.today()) }
+                val learned = all.count { it.box >= 4 }
+                AssistantReply(if (all.isEmpty()) "Карточек пока нет. Скажите, например: «запомни слово apple — яблоко»." else "Карточек: ${all.size}, на сегодня к повторению: $due, выучено: $learned.")
+            }
+            is ai.loli.core.skills.Flashcards.Command.Remove -> {
+                val n = cards.remove(cmd.front)
+                AssistantReply(if (n == 0) "Не нашла карточку ${RuFormat.quote(cmd.front)}." else "Убрала карточку ${RuFormat.quote(cmd.front)}.", changedData = n > 0)
+            }
+            ai.loli.core.skills.Flashcards.Command.Quiz -> {
+                val list = cards.dueToday(time.today())
+                if (list.isEmpty()) return AssistantReply("Карточек пока нет. Скажите, например: «запомни слово apple — яблоко».")
+                val q = ai.loli.core.skills.QuizSession(list)
+                quiz = q; quizAt = time.now(); workout = null; cook = null
+                AssistantReply("Поехали! Отвечайте; «не знаю» — подскажу, «хватит» — закончим. ${q.question()}", expectFollowUp = true, awaitingAnswer = true)
+            }
+        }
+    }
+
     private var workout: ai.loli.core.skills.WorkoutSession? = null
     private var workoutAt = time.now()
 
@@ -566,9 +627,11 @@ class AssistantEngine(
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
         // 0.4. Тренировка и режим готовки: «дальше», «повтори», «назад», «таймер».
+        cardsTurn(text, cfg)?.let { return it }
         workoutTurn(text, cfg)?.let { return it }
         cookingTurn(text, cfg)?.let { return it }
         reviewTurn(text, cfg)?.let { return it }
+        chatSearchTurn(text, cfg)?.let { return it }
         diaryTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }

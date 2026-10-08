@@ -11,7 +11,30 @@ object PersonalCommands {
     private fun rx(p: String) = Rx.of(p)
 
     fun parse(text: String, n: String, today: java.time.LocalDate = java.time.LocalDate.now()): AssistantAction? =
-        deadline(text, n, today) ?: thing(text, n) ?: debt(n) ?: lists(text, n)
+        export(n, today) ?: deadline(text, n, today) ?: thing(text, n) ?: debt(n) ?: lists(text, n)
+
+    // --- Выгрузка в таблицу -----------------------------------------------------------
+
+    private fun export(n: String, today: java.time.LocalDate): AssistantAction? {
+        val m = rx("""^(?:выгрузи|экспортируй|экспорт|сохрани|скинь|сделай\s+(?:мне\s+)?таблицу|таблица|отправь)\s+(?:мне\s+)?(?:все\s+|всё\s+|мои\s+)?(расход\p{L}*|трат\p{L}*|задач\p{L}*|дел[аи]?|долг\p{L}*)(?:\s+(за\s+(?:этот\s+|прошлый\s+)?(?:месяц|неделю|год)|за\s+вс[её]\s+время|в\s+этом\s+месяце|в\s+прошлом\s+месяце))?(?:\s+(?:в|как)\s+(?:таблицу|excel|эксель|ексель|csv|файл))?$""").find(n.trimEnd('.', '!')) ?: return null
+        // «Отправь расходы» без слова «таблица/файл» — неясно что; «сохрани задачи» — тоже. Нужен явный глагол выгрузки или «в таблицу».
+        if (!rx("""^(?:выгрузи|экспорт|сделай\s+(?:мне\s+)?таблицу|таблица)""").containsMatchIn(n) && !rx("""(?:таблицу|excel|эксель|ексель|csv|файл)$""").containsMatchIn(n.trimEnd('.', '!'))) return null
+        val kind = when {
+            m.groupValues[1].startsWith("задач") || m.groupValues[1].startsWith("дел") -> "tasks"
+            m.groupValues[1].startsWith("долг") -> "debts"
+            else -> "expenses"
+        }
+        val p = m.groupValues[2]
+        val (from, to) = when {
+            p.isEmpty() || p.contains("всё") || p.contains("все") -> null to null
+            p.contains("прошл") && p.contains("месяц") -> today.minusMonths(1).withDayOfMonth(1).let { it to it.plusMonths(1).minusDays(1) }
+            p.contains("месяц") -> today.withDayOfMonth(1) to today
+            p.contains("недел") -> today.minusDays(6) to today
+            p.contains("год") -> today.withDayOfYear(1) to today
+            else -> null to null
+        }
+        return AssistantAction.Export(kind, from, to)
+    }
 
     // --- Сроки и гарантии -------------------------------------------------------------
 

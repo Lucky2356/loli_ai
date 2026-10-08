@@ -707,6 +707,20 @@ class ActionExecutor(
                 changed("Убрала: ${removed.joinToString(", ") { it.title }} и напоминания о сроке.")
             }
 
+            is AssistantAction.Export -> {
+                val zone = time.zone()
+                val (csv, count, what) = when (action.kind) {
+                    "tasks" -> tasks.all().let { Triple(ai.loli.core.export.CsvExport.tasks(it, zone), it.size, "задач") }
+                    "debts" -> debts.all().let { l -> Triple(ai.loli.core.export.CsvExport.debts(l.map { it.person to it.amount }), l.size, "долгов") }
+                    else -> (if (action.from != null && action.to != null) expenses.between(action.from, action.to) else expenses.all())
+                        .let { Triple(ai.loli.core.export.CsvExport.expenses(it), it.size, "расходов") }
+                }
+                if (count == 0) return query("Выгружать нечего: $what ${if (action.from != null) "за этот период " else ""}нет.")
+                val name = ai.loli.core.export.CsvExport.fileName(action.kind, action.from, action.to)
+                val r = device.perform(DeviceCommand.ShareFile(name, "text/csv", csv))
+                if (r.ok) query("Готова таблица: ${RuFormat.count(count, "строка", "строки", "строк")}. ${r.text}") else error(r.text)
+            }
+
             is AssistantAction.SendList -> {
                 val repo = shopping ?: return error("Списки пока недоступны.")
                 val listName = listNamed(action.listName)

@@ -63,6 +63,8 @@ data class LockPolicy(
         is AssistantAction.Clarify -> true
         is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions,
         is AssistantAction.QueryDebts, AssistantAction.QueryLists, is AssistantAction.QueryDeadlines -> view
+        // Файл с тратами уходит из приложения: только на разблокированном.
+        is AssistantAction.Export -> view && apps
         // Список уходит другому человеку: нужно и смотреть записи, и писать сообщения.
         is AssistantAction.SendList -> view && calls
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
@@ -75,6 +77,7 @@ data class LockPolicy(
             is DeviceCommand.Call, is DeviceCommand.Message, is DeviceCommand.Driving -> calls
             // Где машина — личное место: запомнить можно как запись, посмотреть — как просмотр записей.
             is DeviceCommand.Parking -> if (c.save) create else view
+            is DeviceCommand.VoiceMemo -> create
             // Экран копии показывает все данные: на экране блокировки закрыт.
             is DeviceCommand.OpenBackup -> view && edit
             else -> apps
