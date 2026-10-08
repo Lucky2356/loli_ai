@@ -48,10 +48,10 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      # jpackage собирает MSI через WiX 3 — на свежих образах Windows его может не быть.
-      - name: Install WiX 3
+      # jpackage собирает MSI через WiX 3: он уже есть на образе, ставим только если вдруг нет.
+      - name: WiX 3
         run: |
-          choco install wixtoolset --version 3.14.1 --no-progress -y
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) { choco install wixtoolset --no-progress -y }
           Add-Content $env:GITHUB_PATH "C:\Program Files (x86)\WiX Toolset v3.14\bin"
       - name: Build Windows installer
         run: ./gradlew --no-daemon "-Ploli.skipAndroid=true" :desktop:packageMsi
