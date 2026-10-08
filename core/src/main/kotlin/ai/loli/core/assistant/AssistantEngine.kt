@@ -40,6 +40,8 @@ data class AssistantSettings(
     val city: String? = null,
     /** Правила экрана блокировки (null — телефон разблокирован или правила не заданы). */
     val lockPolicy: LockPolicy? = null,
+    /** Характер: заботливая, деловая, шутливая. */
+    val persona: Persona = Persona.CARING,
 )
 
 /** Ответ ассистента для UI и голоса. */
@@ -107,7 +109,20 @@ class AssistantEngine(
     private val habits: ai.loli.core.health.Habits? = null,
     /** Строка про траты за день для «итогов дня» (null — не показывать). */
     private val daySpend: suspend (java.time.LocalDate) -> String? = { null },
+    /** «Будь деловой» — приложение сохраняет новый характер. */
+    private val onPersona: (Persona) -> Unit = {},
+    /** Траты за период — для итогов недели и ленты дня. */
+    private val expensesBetween: suspend (java.time.LocalDate, java.time.LocalDate) -> List<ai.loli.core.model.Expense> = { _, _ -> emptyList() },
 ) {
+    private val review = ai.loli.core.review.Review(
+        notes, tasks, reminders,
+        habitLog = { a, b -> habits?.log(a, b).orEmpty() },
+        expenses = expensesBetween, time = time,
+    )
+
+    /** Итоги недели для воскресной сводки — тот же текст, что и по голосовой команде. */
+    suspend fun weeklySummary(): String = review.week()
+
     val context = ConversationContext(time)
     private val mutex = Mutex()
 
@@ -134,7 +149,7 @@ class AssistantEngine(
 
         repeating = false
         val reply = try {
-            process(text, cfg)
+            decorate(process(text, cfg), cfg)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -170,6 +185,44 @@ class AssistantEngine(
             context.appendMode = false
         }
         return reply.copy(expectFollowUp = cfg.dialogMode || waiting)
+    }
+
+    /** Характер в ответе: шутливая иногда добавляет фразу к сделанному, деловая обходится без восклицаний. */
+    private fun decorate(reply: AssistantReply, cfg: AssistantSettings): AssistantReply = when (cfg.persona) {
+        Persona.PLAYFUL -> {
+            val extra = if (reply.changedData && !reply.awaitingAnswer && !reply.awaitingConfirmation && !reply.sensitive) cfg.persona.flourish(time.now().epochSecond) else null
+            if (extra != null) reply.copy(text = reply.text.trimEnd() + " " + extra) else reply
+        }
+        Persona.BUSINESS -> if (reply.speakLanguage == null) reply.copy(text = reply.text.replace("!", ".").replace("..", ".")) else reply
+        Persona.CARING -> reply
+    }
+
+    /** «Будь деловой», «какой у тебя характер», а также приветствие и «как дела» в своём характере. */
+    private suspend fun personaTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        Persona.switch(text)?.let { p ->
+            runCatching { onPersona(p) }
+            return AssistantReply(Persona.switched(p))
+        }
+        if (Persona.isAsk(text)) {
+            return AssistantReply(
+                "Сейчас я ${cfg.persona.title.lowercase()}: ${cfg.persona.hint}. Можно сменить: «будь заботливой», «будь деловой» или «будь шутливой».",
+            )
+        }
+        return null
+    }
+
+    private suspend fun smallTalk(text: String, cfg: AssistantSettings): AssistantReply? {
+        val low = runCatching { habits?.moodLow() == true && !cfg.locked }.getOrDefault(false)
+        return cfg.persona.smallTalk(text, time.zonedNow().hour, cfg.userName, low)?.let { AssistantReply(it) }
+    }
+
+    /** «У меня кот Барсик» — предлагаем запомнить, если такого в памяти ещё нет. */
+    private suspend fun offerFact(text: String): AssistantReply? {
+        val slot = FactOffer.offer(text) ?: return null
+        val key = RuTokenizer.normalize(slot.content).trim()
+        if (memories.all().any { RuTokenizer.normalize(it.content).trim() == key }) return null
+        context.pendingSlot = slot
+        return AssistantReply(slot.question, awaitingAnswer = true, expectFollowUp = true)
     }
 
     /** Голосовой разговор закончился (тишина, лимит, кнопка «стоп») — выходим из диалогового режима. */
@@ -214,7 +267,7 @@ class AssistantEngine(
         val lc = localChat?.takeIf { it.available } ?: return null
         val history = (if (cfg.locked) emptyList() else context.messages.takeLast(6)) + ChatMessage(ChatMessage.Role.USER, text)
         val out = try {
-            lc.reply(ai.loli.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName), history)
+            lc.reply(ai.loli.core.ai.LocalChat.systemPrompt(cfg.assistantName, cfg.userName, cfg.persona.tone), history)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -239,6 +292,92 @@ class AssistantEngine(
         val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
         if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — дневник личный, без разблокировки не открываю.")
         return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
+    }
+
+    /** «Где паспорт?» — по записям «положила паспорт в…». Неизвестную вещь отдаём дальше, если вопрос мог быть не о вещи. */
+    private suspend fun whereTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = PersonalCommands.where(text) ?: return null
+        // Машину ищет «парковка» (по месту на карте), телефон — громкий сигнал, а не записи о вещах.
+        if (Regex("""машин|авто|тачк|парковк|припарков|телефон|смартфон|мобильн|трубк""").containsMatchIn(RuTokenizer.normalize(text))) return null
+        val hits = ai.loli.core.personal.ThingsBook(memories).find(ask.item)
+        if (hits.isEmpty() && !ask.strong) return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.view) return AssistantReply("Разблокируйте телефон — где лежат вещи, без разблокировки не говорю.")
+        // Раньше могли сказать «запомни, что паспорт в сейфе» — ищем и в памяти.
+        val said = if (hits.isNotEmpty()) null else runCatching { search.search(ask.item, setOf(RecordType.MEMORY), limit = 1, minScore = 0.4) }
+            .getOrDefault(emptyList()).firstOrNull()?.doc?.title
+        return AssistantReply(
+            when {
+                said != null -> "Вы говорили: ${RuFormat.quote(said)}."
+                hits.isEmpty() -> "Не знаю, где ${ask.item}. Когда положите, скажите: «положила ${ask.item} в …» — запомню."
+                hits.size == 1 -> "${hits[0].item} — ${hits[0].place}."
+                else -> hits.joinToString("\n") { "• ${it.item} — ${it.place}" }
+            },
+            sensitive = true,
+        )
+    }
+
+    /** «Итоги недели», «что я делала 5 октября». Личное — на заблокированном экране не показываем. */
+    private suspend fun reviewTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = ai.loli.core.review.Review.parse(text, time.today()) ?: return null
+        // «Что было завтра» не бывает: про будущее — план на день.
+        if (ask is ai.loli.core.review.Review.Ask.Day && ask.date.isAfter(time.today())) return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
+        val out = when (ask) {
+            ai.loli.core.review.Review.Ask.Week -> review.week()
+            is ai.loli.core.review.Review.Ask.Day -> review.day(ask.date)
+        }
+        return AssistantReply(out, sensitive = true)
+    }
+
+    private var workout: ai.loli.core.skills.WorkoutSession? = null
+    private var workoutAt = time.now()
+
+    /** Тренировка: упражнения по очереди с таймером. Забывается через полчаса тишины. */
+    private suspend fun workoutTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (workout != null && java.time.Duration.between(workoutAt, time.now()) > java.time.Duration.ofMinutes(30)) workout = null
+        val session = workout
+        if (session == null) {
+            if (ai.loli.core.skills.Workout.isList(text)) return AssistantReply(ai.loli.core.skills.Workout.listText())
+            val program = ai.loli.core.skills.Workout.start(text) ?: return null
+            val s = ai.loli.core.skills.WorkoutSession(program)
+            workout = s; workoutAt = time.now(); cook = null
+            return exerciseReply(s.intro(), s, cfg)
+        }
+        val cmd = ai.loli.core.skills.Workout.command(text) ?: return null
+        workoutAt = time.now()
+        return when (cmd) {
+            ai.loli.core.skills.Workout.Command.Stop -> {
+                workout = null
+                AssistantReply(finishWorkout(session, early = true), endsDialog = true, changedData = session.done > 0)
+            }
+            ai.loli.core.skills.Workout.Command.Repeat -> exerciseReply(session.step(), session, cfg)
+            ai.loli.core.skills.Workout.Command.Next, ai.loli.core.skills.Workout.Command.Skip -> {
+                session.advance(skipped = cmd == ai.loli.core.skills.Workout.Command.Skip)
+                if (session.finished) {
+                    workout = null
+                    AssistantReply(finishWorkout(session, early = false), endsDialog = true, changedData = session.done > 0)
+                } else exerciseReply(session.step(), session, cfg)
+            }
+        }
+    }
+
+    /** Текст упражнения + таймер на него (сигнал скажет, когда пора дальше). */
+    private suspend fun exerciseReply(text: String, s: ai.loli.core.skills.WorkoutSession, cfg: AssistantSettings): AssistantReply {
+        val e = s.current ?: return AssistantReply(text, expectFollowUp = true)
+        val timer = AssistantAction.Device(DeviceCommand.Timer(e.seconds, "${s.program.name}: ${e.name.lowercase()}"))
+        val r = execute(AssistantPlan("", listOf(timer), preface = text), usedAI = false, offline = false, name = cfg.assistantName)
+        // Таймер не поставился (нет разрешения) — ведём без него.
+        return r.copy(text = if (r.outcomes.any { it.kind == Outcome.Kind.ERROR }) text + " Засеките время сами, потом скажите «дальше»." else text, expectFollowUp = true)
+    }
+
+    /** Конец тренировки: отмечаем привычку («зарядка»), чтобы считались дни подряд. */
+    private suspend fun finishWorkout(s: ai.loli.core.skills.WorkoutSession, early: Boolean): String {
+        if (s.done == 0) return "Хорошо, без тренировки. В другой раз!"
+        val streak = runCatching { habits?.run(ai.loli.core.health.HabitCommand.Mark(s.program.habit))?.text }.getOrNull()
+        val head = if (early) "Закончили: ${RuFormat.count(s.done, "упражнение", "упражнения", "упражнений")} из ${s.program.exercises.size}." else "Тренировка окончена: ${s.program.name.lowercase()}, ${RuFormat.count(s.done, "упражнение", "упражнения", "упражнений")}. Молодец!"
+        return head + (streak?.let { " $it" } ?: "")
     }
 
     private var cook: ai.loli.core.skills.CookingSession? = null
@@ -363,8 +502,10 @@ class AssistantEngine(
             if (skills.interruptedBy(text, cfg, ::isCommand)) skills.reset()
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
-        // 0.4. Режим готовки: «дальше», «повтори», «назад», «таймер».
+        // 0.4. Тренировка и режим готовки: «дальше», «повтори», «назад», «таймер».
+        workoutTurn(text, cfg)?.let { return it }
         cookingTurn(text, cfg)?.let { return it }
+        reviewTurn(text, cfg)?.let { return it }
         diaryTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }
@@ -410,7 +551,7 @@ class AssistantEngine(
         // 3. Дозаполнение недостающих данных («Сколько потратили?» → «500»).
         context.pendingSlot?.let { slot ->
             context.pendingSlot = null
-            if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote) return AssistantReply("Хорошо, отменила.")
+            if (LocalCommandParser.isNo(text) && slot !is SlotRequest.SaveAsNote && slot !is SlotRequest.RememberFact) return AssistantReply("Хорошо, отменила.")
             localParser.fillSlot(slot, text, time.now(), time.zone())?.let { filled ->
                 return execute(filled, usedAI = false, offline = false, name = cfg.assistantName)
             }
@@ -431,6 +572,8 @@ class AssistantEngine(
             return AssistantReply("Диктуйте — я записываю. Можно делать паузы. Когда закончите, скажите «готово».", dictation = true, expectFollowUp = false)
         }
         special.translation(text)?.let { return translate(it, cfg) }
+        personaTurn(text, cfg)?.let { return it }
+        whereTurn(text, cfg)?.let { return it }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
         habitReply(text, cfg)?.let { return it }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
@@ -451,6 +594,8 @@ class AssistantEngine(
                 return execute(AssistantPlan("", actions), usedAI = false, offline = false, name = cfg.assistantName)
             }
         }
+        // Приветствие, «как дела», «спасибо» — в своём характере.
+        smallTalk(text, cfg)?.let { return it }
         // 5. Облачный AI → при недоступности офлайн-парсер.
         var aiError: AIException? = null
         if (cfg.useAI) {
@@ -480,6 +625,8 @@ class AssistantEngine(
         }
         // «Посоветуй, чем заняться в выходные» — просьба, а не задача на выходные.
         if (ai.loli.core.ai.LocalChat.isStrongChat(text)) localAnswer(text, cfg)?.let { return it }
+        // «Мой размер обуви 38» — факт о себе, а не расход на 38 ₽: спрашиваем раньше разбора команд.
+        offerFact(text)?.let { return it }
         val parsed = localParser.parse(text, time.now(), time.zone())
         // Вопрос или просьба, которую не понял разбор команд, — отвечает офлайн-модель, а не «сохранить заметкой?».
         if (parsed == null && ai.loli.core.ai.LocalChat.looksLikeChat(text)) localAnswer(text, cfg)?.let { return it }
@@ -534,6 +681,29 @@ class AssistantEngine(
         val key = ai.loli.core.model.Routine.normalize(text)
             .replace(Regex("""^(?:запусти|включи|выполни)\s+(?:сценарий\s+)?"""), "")
         val routine = list.firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key } ?: return null
+        return runCommands(routine, cfg)
+    }
+
+    /**
+     * Сработало напоминание «Сценарий: по будням в 7:30» — выполняем сценарий сами. Телефон в это время обычно
+     * заблокирован, но сценарий создан владельцем на разблокированном телефоне, поэтому выполняется без ограничений блокировки.
+     * null — такого сценария уже нет.
+     */
+    suspend fun runScheduledRoutine(reminderText: String): AssistantReply? = mutex.withLock {
+        if (!reminderText.startsWith(ai.loli.core.model.Routine.SCHEDULE_PREFIX)) return@withLock null
+        val key = ai.loli.core.model.Routine.normalize(reminderText.removePrefix(ai.loli.core.model.Routine.SCHEDULE_PREFIX))
+        val routine = runCatching { routines() }.getOrDefault(emptyList()).firstOrNull { ai.loli.core.model.Routine.normalize(it.trigger) == key }
+            ?: return@withLock null
+        val cfg = settings().copy(locked = false, lockPolicy = null)
+        executor.trusted = true
+        try {
+            runCommands(routine, cfg).also { context.dialogMode = false; context.appendMode = false }
+        } finally {
+            executor.trusted = false
+        }
+    }
+
+    private suspend fun runCommands(routine: ai.loli.core.model.Routine, cfg: AssistantSettings): AssistantReply {
         val replies = ArrayList<String>()
         var changed = false
         for (cmd in routine.commands.take(10)) {
@@ -618,7 +788,7 @@ class AssistantEngine(
         val memoryItems = if (cfg.locked) emptyList() else memories.all().take(25)
         val system = PromptBuilder.build(
             cfg.assistantName, time.now(), time.zone(), memoryItems, candidates, context.focus, context.topic, context.dialogMode,
-            userName = cfg.userName,
+            userName = cfg.userName, persona = cfg.persona,
         )
         // На блокировке прошлый разговор модели не показываем: в нём могли быть личные данные.
         val history = if (cfg.locked) emptyList() else context.messages

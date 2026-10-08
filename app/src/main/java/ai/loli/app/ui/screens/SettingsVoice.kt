@@ -118,6 +118,17 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 }
             }
         }
+        item(key = "persona") {
+            SectionLabel("Характер Лоли")
+            Group {
+                ai.loli.core.assistant.Persona.entries.forEachIndexed { i, p ->
+                    if (i > 0) GroupDivider(inset = 52.dp)
+                    RadioRow(p.title, p.hint.replaceFirstChar { it.uppercase() }, s.persona == p.wire) {
+                        scope.launch { c.settings.setPersona(p.wire) }
+                    }
+                }
+            }
+        }
         item(key = "dialog") {
             SectionLabel("Разговор")
             Group {
@@ -131,6 +142,10 @@ internal fun VoiceSpeechPage(c: AppContainer, onBack: () -> Unit) {
                 GroupDivider()
                 SwitchItem("Вечерняя сводка", "В 21:00 — итоги дня: настроение, задачи, траты, вода и привычки", s.eveningBrief) { v ->
                     scope.launch { c.settings.setEveningBrief(v); ai.loli.app.reminders.EveningBrief.schedule(appContext, v) }
+                }
+                GroupDivider()
+                SwitchItem("Итоги недели", "По воскресеньям в 19:00 — траты, задачи, настроение и привычки за неделю в сравнении с прошлой", s.weeklyReview) { v ->
+                    scope.launch { c.settings.setWeeklyReview(v); ai.loli.app.reminders.WeeklyReview.schedule(appContext, v) }
                 }
                 GroupDivider()
                 SwitchItem("Быстрый ввод из шторки", "Постоянное уведомление с полем: напишите «кофе 250» или «купить хлеб» — запишу, не открывая приложение", s.quickInput) { v ->

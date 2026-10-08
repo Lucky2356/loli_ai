@@ -11,11 +11,14 @@ import ai.loli.app.LoliApp
 import ai.loli.app.R
 import ai.loli.app.ui.MainActivity
 import ai.loli.core.assistant.RuFormat
+import ai.loli.core.model.Routine
+import ai.loli.core.voice.SpeechText
 import ai.loli.core.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -81,6 +84,10 @@ class ReminderReceiver : BroadcastReceiver() {
         /** Опоздание меньше этого порога не показываем: будильники системы и так плавают на минуту. */
         private val LATE_NOTE_AFTER = Duration.ofMinutes(2)
         private const val EARLY_TOLERANCE_SECONDS = 5L
+        private val ROUTINE_LATE_LIMIT: Duration = Duration.ofHours(1)
+        /** Приёмник живёт около минуты: команды и озвучка должны уложиться. */
+        private const val ROUTINE_TIMEOUT_MS = 25_000L
+        private const val SPEAK_TIMEOUT_MS = 30_000L
         fun notificationId(id: String) = 5000 + (id.hashCode() and 0x0fffffff) % 100000
 
         /** Будильник и страховка ([ReminderWatchdog]) могут прийти одновременно: срабатывание одно за другим, не вместе. */
@@ -91,12 +98,19 @@ class ReminderReceiver : BroadcastReceiver() {
          * что бы ни сработало первым, второй раз уведомление не покажется (напоминание уже неактивно или перенесено вперёд).
          */
         suspend fun fire(context: Context, c: AppContainer, id: String) {
-            fireLock.withLock {
+            val routine = fireLock.withLock {
                 val reminder = c.store.reminders.get(id) ?: return
                 val now = Instant.now()
                 // Уже сработавшее соседом: разовое неактивно, повторяющееся перенесено на следующий раз (часы и дни вперёд).
                 if (!reminder.active || reminder.triggerAt.isAfter(now.plusSeconds(EARLY_TOLERANCE_SECONDS))) return
                 val late = reminder.lateBy(now)
+                // Сценарий по расписанию: не уведомление, а выполнение команд (вне блокировки — он может идти долго).
+                if (reminder.text.startsWith(Routine.SCHEDULE_PREFIX)) {
+                    c.store.reminders.markFired(id, now)?.let { if (it.active) c.reminderScheduler.schedule(it) }
+                    // Телефон был выключен и проснулся через час — утреннее радио в полдень не нужно.
+                    if (late > ROUTINE_LATE_LIMIT) return
+                    return@withLock reminder.text
+                }
                 val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
                 var text = if (late > LATE_NOTE_AFTER) {
                     reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())
@@ -114,6 +128,37 @@ class ReminderReceiver : BroadcastReceiver() {
                         c.reminderScheduler.schedule(again)
                     } else c.nags.clear(id)
                 }
+                null
+            } ?: return
+            runRoutine(context, c, id, routine)
+        }
+
+        /** Выполняет сценарий: результат — уведомлением (личное скрыто на экране блокировки) и вслух, если ответы голосом включены. */
+        private suspend fun runRoutine(context: Context, c: AppContainer, id: String, text: String) {
+            c.awaitReady()
+            val reply = withTimeoutOrNull(ROUTINE_TIMEOUT_MS) { c.engine.runScheduledRoutine(text) } ?: return
+            val title = text.removePrefix(Routine.SCHEDULE_PREFIX)
+            val open = PendingIntent.getActivity(
+                context, notificationId(id), Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val body = reply.text.substringAfter('\n', reply.text)
+            val n = NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
+                .setSmallIcon(R.drawable.ic_stat_loli)
+                .setContentTitle("Сценарий: $title")
+                .setContentText(body.lineSequence().first())
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(
+                    NotificationCompat.Builder(context, Notifications.CHANNEL_REMINDERS)
+                        .setSmallIcon(R.drawable.ic_stat_loli).setContentTitle("Сценарий выполнен").build(),
+                )
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            Notifications.notifySafely(context, notificationId(id), n)
+            if (c.settings.current().ttsEnabled) {
+                withTimeoutOrNull(SPEAK_TIMEOUT_MS) { runCatching { c.speech.speak(SpeechText.forSpeech(body)) } }
             }
         }
 

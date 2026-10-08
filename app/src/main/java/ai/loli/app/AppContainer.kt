@@ -223,6 +223,8 @@ class AppContainer(private val context: Context) {
         localChat = offlineLlm,
         habits = ai.loli.core.health.Habits(store.habits, time),
         daySpend = ::daySpend,
+        onPersona = { p -> appScope.launch { settings.setPersona(p.wire) } },
+        expensesBetween = { a, b -> store.expenses.between(a, b) },
     ) }
 
     /** «Потрачено: …» за день (без доходов) — для итогов дня и вечерней сводки. */
@@ -243,6 +245,7 @@ class AppContainer(private val context: Context) {
             it.assistantName, it.useAI || cloudActive(), it.dialogModeEnabled, locked = isLocked() || appLocked(),
             userName = it.userName.takeIf { n -> n.isNotBlank() }, city = it.city.takeIf { c -> c.isNotBlank() },
             lockPolicy = lockPolicy(),
+            persona = ai.loli.core.assistant.Persona.of(it.persona),
         )
     }
 
@@ -351,6 +354,7 @@ class AppContainer(private val context: Context) {
             updates.schedulePeriodic()
             ai.loli.app.reminders.MorningBrief.schedule(context, settings.current().morningBrief)
             ai.loli.app.reminders.EveningBrief.schedule(context, settings.current().eveningBrief)
+            ai.loli.app.reminders.WeeklyReview.schedule(context, settings.current().weeklyReview)
             ai.loli.app.backup.AutoBackup.schedule(context)
             ai.loli.app.reminders.ReminderWatchdog.schedule(context)
             ai.loli.app.quick.QuickInput.sync(context, settings.current().quickInput)

@@ -48,6 +48,8 @@ class TestEnv(
     var settings = AssistantSettings(useAI = true)
     var ai: AIProvider? = null
 
+    /** Новый характер, выбранный голосом («будь деловой»). */
+    var onPersona: (ai.loli.core.assistant.Persona) -> Unit = {}
     val engine = AssistantEngine(
         store.notes, store.tasks, store.reminders, store.memories, store.conversations, search, executor, time,
         settings = { settings }, aiProvider = { ai },
@@ -56,6 +58,8 @@ class TestEnv(
         localChat = localChat,
         habits = Habits(store.habits, time),
         daySpend = { d -> store.expenses.between(d, d).takeIf { it.isNotEmpty() }?.let { "Потрачено: ${it.sumOf { e -> e.amountMinor } / 100} ₽." } },
+        onPersona = { onPersona(it) },
+        expensesBetween = { a, b -> store.expenses.between(a, b) },
     )
 }
 

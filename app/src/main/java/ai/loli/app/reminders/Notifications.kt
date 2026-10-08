@@ -28,6 +28,7 @@ object Notifications {
     const val QUICK_ID = 1013
     const val EVENING_ID = 1014
     const val AUTO_BACKUP_ID = 1015
+    const val WEEKLY_ID = 1016
     const val RADIO_ID = 1011
     const val TIMER_BASE_ID = 200_000
     const val GEO_BASE_ID = 1200

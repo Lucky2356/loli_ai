@@ -139,6 +139,18 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 isNo(text) -> AssistantPlan("Хорошо, не сохраняю.", emptyList())
                 else -> null
             }
+            is SlotRequest.ListItems -> {
+                // Ответ — это новая команда («поставь таймер»), а не пункты списка.
+                if (startsWithCommand(text) && !Regex("""^(?:добавь|запиши|внеси)\b""").containsMatchIn(RuTokenizer.normalize(text))) return null
+                val raw = text.replace(Regex("""^(?:добавь|запиши|внеси)\s+(?:туда\s+|в него\s+)?""", RegexOption.IGNORE_CASE), "")
+                val items = SpecialCommands.splitItems(raw)
+                if (items.isEmpty()) null else plan(AssistantAction.AddToList(slot.listName, items))
+            }
+            is SlotRequest.RememberFact -> when {
+                isYes(text) -> plan(AssistantAction.Remember(slot.content, slot.category))
+                isNo(text) -> AssistantPlan("Хорошо, не запоминаю.", emptyList())
+                else -> null
+            }
         }
     }
 
@@ -1215,6 +1227,9 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             • «Сделай селфи», «включи песню Queen», «найди на ютубе…», «добавь в календарь встречу завтра в 15», «включи не беспокоить»
             • «Сделай скриншот», «заблокируй экран», «домой», «назад», «открой уведомления», «время в Токио»
             • «Сколько будет 15% от 2000», «сколько дней до нового года», «переведи 5 миль в километры», «подбрось монетку»
+            • «Положила паспорт в ящик» → «где паспорт?», «Саша должен мне 500» → «кто мне должен», «собери список в отпуск»
+            • «Начни зарядку», «итоги недели», «что я делала вчера», «запомни, где я припарковалась», «будь шутливой»
+            • «По будням в 7:30 читай сводку и включай радио» — сценарий, который выполняется сам
         """.trimIndent()
 
         private val JOKES = listOf(

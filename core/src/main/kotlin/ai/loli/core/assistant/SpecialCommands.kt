@@ -18,7 +18,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         val text = input.trim().trimEnd('.', '!', '?').trim()
         if (text.isEmpty()) return null
         val n = RuTokenizer.normalize(text)
-        val action = shopping(text, n) ?: routine(text, n) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: return null
+        val action = shopping(text, n) ?: routine(text, n, today) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n) ?: return null
         return AssistantPlan("", listOf(action))
     }
 
@@ -78,15 +78,42 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         return items(m.groupValues[1]).takeIf { it.isNotEmpty() }
     }
 
-    private fun items(raw: String): List<String> =
-        raw.split(Regex(""",|;|\s+и\s+|\s+а\s+также\s+|\s+ещё\s+|\s+еще\s+"""))
-            .map { it.trim().trim('.', '«', '»', '"').trim() }
-            .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
-            .filter { it.isNotEmpty() && it.length <= 80 }
+    private fun items(raw: String): List<String> = splitItems(raw)
 
     // --- Сценарии ---------------------------------------------------------------
 
-    private fun routine(text: String, n: String): AssistantAction? {
+    /** Повелительное «по привычке» → обычная команда: «читай сводку» → «что у меня на сегодня», «включай радио» → «включи радио». */
+    private fun commandForm(cmd: String): String {
+        var c = cmd.trim()
+        val first = RuTokenizer.normalize(c.substringBefore(' '))
+        IMPERFECTIVE[first]?.let { c = it + c.substring(first.length) }
+        val n = RuTokenizer.normalize(c)
+        return when {
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:утреннюю\s+|мою\s+)?(?:сводку|план(?:\s+на\s+день)?|планы|дела)$""").matches(n) -> "что у меня на сегодня"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:прогноз\s+)?погод\p{L}*$""").matches(n) -> "какая погода"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?(?:итоги\s+дня|вечернюю\s+сводку)$""").matches(n) -> "итоги дня"
+            Regex("""^(?:прочитай|скажи|расскажи|покажи|озвучь)\s+(?:мне\s+)?итоги\s+недели$""").matches(n) -> "итоги недели"
+            else -> c
+        }
+    }
+
+    /** «Каждый будний день в 7:30 читай сводку и включай радио» — сценарий по расписанию. */
+    private fun scheduledRoutine(text: String, n: String, today: LocalDate): AssistantAction? {
+        if (!ai.loli.core.nlp.Rx.of("""^(?:каждый|каждое|каждую|каждые|ежедневно|по\s+будням|по\s+выходным|по\s+(?:понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям))\b""").containsMatchIn(n)) return null
+        val parsed = dates.parse(text, today)
+        val rule = dates.effectiveRecurrence(parsed.spec) ?: return null
+        if (parsed.spec.time == null || rule.frequency == ai.loli.core.model.Recurrence.Frequency.HOURLY) return null
+        val rest = parsed.remainder.trim().trim(',', ':', '—', '-', ' ')
+        val first = RuTokenizer.normalize(rest.substringBefore(' '))
+        // «Каждый день в 9 напоминай пить воду» — это напоминание, а не сценарий.
+        if (first !in IMPERFECTIVE && first !in PERFECTIVE) return null
+        val cmds = commands(rest).map(::commandForm)
+        if (cmds.isEmpty()) return null
+        return AssistantAction.CreateRoutine(rule.describeRu().replaceFirstChar { it.uppercase() }, cmds, rule)
+    }
+
+    private fun routine(text: String, n: String, today: LocalDate): AssistantAction? {
+        scheduledRoutine(text, n, today)?.let { return it }
         Regex("""^(?:когда|если)\s+я\s+(?:говорю|скажу|произношу|произнесу)\s+[«"]?(.+?)[»"]?\s*(?:,\s*то|,|—|-|:|\s+то)\s+(.+)$""").find(n)?.let { m ->
             val trigger = sub(text, m.groups[1]!!).trim('«', '»', '"', ' ', ',')
             return AssistantAction.CreateRoutine(trigger.replaceFirstChar { it.uppercase() }, commands(sub(text, m.groups[2]!!)))
@@ -193,6 +220,23 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
     private fun sub(original: String, g: MatchGroup): String = original.substring(g.range.first, minOf(g.range.last + 1, original.length)).trim()
 
     companion object {
+        /** Команды в сценарии по расписанию говорят «по привычке»: «включай», «читай». */
+        private val IMPERFECTIVE = mapOf(
+            "читай" to "прочитай", "включай" to "включи", "выключай" to "выключи", "ставь" to "поставь", "говори" to "скажи",
+            "рассказывай" to "расскажи", "показывай" to "покажи", "запускай" to "запусти", "делай" to "сделай", "открывай" to "открой",
+            "озвучивай" to "озвучь", "присылай" to "покажи", "зачитывай" to "прочитай", "проверяй" to "покажи",
+        )
+        private val PERFECTIVE = setOf(
+            "прочитай", "включи", "выключи", "поставь", "скажи", "расскажи", "покажи", "запусти", "сделай", "открой", "озвучь", "зачитай",
+        )
+
+        /** «Молоко, хлеб и яйца» → три пункта списка. */
+        fun splitItems(raw: String): List<String> =
+            raw.split(Regex(""",|;|\s+и\s+|\s+а\s+также\s+|\s+ещё\s+|\s+еще\s+"""))
+                .map { it.trim().trim('.', '«', '»', '"').trim() }
+                .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
+                .filter { it.isNotEmpty() && it.length <= 80 }
+
         private val DICTATION_START = Regex("""^(?:давай\s+)?(?:я\s+)?(?:надиктую|продиктую|хочу\s+надиктовать|надиктовать)(?:\s+(?:тебе\s+)?(?:заметку|текст|запись))?$|^(?:запиши|записывай|прими)\s+(?:под\s+диктовку|длинную\s+заметку|голосовую\s+заметку)$|^(?:режим\s+)?диктовк[аи]$|^(?:начни|включи)\s+диктовку$|^(?:запиши|создай|новая)\s+(?:мне\s+)?заметку$""")
         private val DICTATION_END = Regex("""[\s,.]*(?:готово|всё|все|конец|закончил[а]?|закончили|стоп|хватит|сохрани|конец заметки)[.!]?$""", RegexOption.IGNORE_CASE)
 

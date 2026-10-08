@@ -134,6 +134,9 @@ data class Routine(
 ) {
     companion object {
         fun normalize(s: String): String = s.lowercase().replace('ё', 'е').replace(Regex("""[^\p{L}\d ]"""), " ").replace(Regex("""\s+"""), " ").trim()
+
+        /** Напоминание с таким началом запускает сценарий по расписанию, а не показывает текст. */
+        const val SCHEDULE_PREFIX = "Сценарий: "
     }
 }
 

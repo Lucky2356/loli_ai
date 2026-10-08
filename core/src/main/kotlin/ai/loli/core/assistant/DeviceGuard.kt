@@ -32,6 +32,7 @@ object DeviceGuard {
             is DeviceCommand.OpenBackup -> has("""копи|бэкап|бекап|перен""")
             is DeviceCommand.Focus -> has("""помодоро|фокус|работа|работать|поработа""")
             is DeviceCommand.SleepMode -> has("""сна|сон|спать|режим""")
+            is DeviceCommand.Parking -> has("""парков|машин|тачк|авто""")
             is DeviceCommand.Driving -> has("""за рулем|за рулём|еду|вожу|приехал|машин|вожден""")
             is DeviceCommand.DoNotDisturb -> has("""беспоко|тихий|тишин|режим""")
             is DeviceCommand.Brightness -> has("""яркост|ярче|темнее|тусклее|светлее""")
