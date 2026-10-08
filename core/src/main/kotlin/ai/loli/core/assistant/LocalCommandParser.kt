@@ -139,6 +139,18 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
                 isNo(text) -> AssistantPlan("Хорошо, не сохраняю.", emptyList())
                 else -> null
             }
+            is SlotRequest.ListItems -> {
+                // Ответ — это новая команда («поставь таймер»), а не пункты списка.
+                if (startsWithCommand(text) && !Regex("""^(?:добавь|запиши|внеси)\b""").containsMatchIn(RuTokenizer.normalize(text))) return null
+                val raw = text.replace(Regex("""^(?:добавь|запиши|внеси)\s+(?:туда\s+|в него\s+)?""", RegexOption.IGNORE_CASE), "")
+                val items = SpecialCommands.splitItems(raw)
+                if (items.isEmpty()) null else plan(AssistantAction.AddToList(slot.listName, items))
+            }
+            is SlotRequest.RememberFact -> when {
+                isYes(text) -> plan(AssistantAction.Remember(slot.content, slot.category))
+                isNo(text) -> AssistantPlan("Хорошо, не запоминаю.", emptyList())
+                else -> null
+            }
         }
     }
 

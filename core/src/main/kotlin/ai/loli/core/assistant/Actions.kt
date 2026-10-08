@@ -140,6 +140,19 @@ sealed interface AssistantAction {
     /** «Мои подписки» / «сколько уходит на подписки» (total = true). */
     data class QuerySubscriptions(val total: Boolean = false) : AssistantAction
     data class CancelSubscription(val name: String) : AssistantAction
+    // --- 2.8: вещи, долги, свои списки ---
+    /** «Положила паспорт в верхний ящик» — [place] вместе с глаголом и предлогом. */
+    data class PutThing(val item: String, val place: String) : AssistantAction
+    /** «Саша должен мне 500» ([theyOwe]) / «я должна Маше 200»; [remindText] — «через неделю» из «…, напомни через неделю». */
+    data class AddDebt(val person: String, val amount: Double, val theyOwe: Boolean, val remindText: String? = null) : AssistantAction
+    /** «Саша вернул 200» ([theyPaid] = true), «я вернула Маше долг» (false), «прости долг Пете» (null — любой). [amount] = null — весь. */
+    data class SettleDebt(val person: String, val amount: Double?, val theyPaid: Boolean?) : AssistantAction
+    /** «Кто мне должен», «сколько мне должен Саша». */
+    data class QueryDebts(val person: String?) : AssistantAction
+    /** «Создай список фильмов» (пустой — спросим, что добавить) или готовый чек-лист «собери список в отпуск». */
+    data class CreateList(val name: String, val items: List<String>) : AssistantAction
+    /** «Какие у меня списки». */
+    data object QueryLists : AssistantAction
     /** Секретная заметка: только на устройстве, открывается по отпечатку. */
     data class CreateSecretNote(val title: String, val content: String) : AssistantAction
 }
@@ -159,6 +172,12 @@ sealed interface SlotRequest {
 
     /** Фраза не распознана — предложить сохранить её заметкой. */
     data class SaveAsNote(val text: String, override val question: String) : SlotRequest
+
+    /** «Создай список фильмов» → «Что добавить?» → пункты списка. */
+    data class ListItems(val listName: String, override val question: String) : SlotRequest
+
+    /** «У меня кот Барсик» → «Запомнить?» → да: в память. */
+    data class RememberFact(val content: String, val category: String, override val question: String) : SlotRequest
 }
 
 enum class TaskFilter(val wire: String) {

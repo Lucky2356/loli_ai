@@ -18,7 +18,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         val text = input.trim().trimEnd('.', '!', '?').trim()
         if (text.isEmpty()) return null
         val n = RuTokenizer.normalize(text)
-        val action = shopping(text, n) ?: routine(text, n) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: return null
+        val action = shopping(text, n) ?: routine(text, n) ?: birthday(text, n, today) ?: subscription(n, today) ?: secret(text, n) ?: PersonalCommands.parse(text, n) ?: return null
         return AssistantPlan("", listOf(action))
     }
 
@@ -78,11 +78,7 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
         return items(m.groupValues[1]).takeIf { it.isNotEmpty() }
     }
 
-    private fun items(raw: String): List<String> =
-        raw.split(Regex(""",|;|\s+и\s+|\s+а\s+также\s+|\s+ещё\s+|\s+еще\s+"""))
-            .map { it.trim().trim('.', '«', '»', '"').trim() }
-            .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
-            .filter { it.isNotEmpty() && it.length <= 80 }
+    private fun items(raw: String): List<String> = splitItems(raw)
 
     // --- Сценарии ---------------------------------------------------------------
 
@@ -193,6 +189,13 @@ class SpecialCommands(private val dates: RuDateTimeParser = RuDateTimeParser()) 
     private fun sub(original: String, g: MatchGroup): String = original.substring(g.range.first, minOf(g.range.last + 1, original.length)).trim()
 
     companion object {
+        /** «Молоко, хлеб и яйца» → три пункта списка. */
+        fun splitItems(raw: String): List<String> =
+            raw.split(Regex(""",|;|\s+и\s+|\s+а\s+также\s+|\s+ещё\s+|\s+еще\s+"""))
+                .map { it.trim().trim('.', '«', '»', '"').trim() }
+                .map { it.replace(Regex("""^(?:ещё|еще|и)\s+""", RegexOption.IGNORE_CASE), "") }
+                .filter { it.isNotEmpty() && it.length <= 80 }
+
         private val DICTATION_START = Regex("""^(?:давай\s+)?(?:я\s+)?(?:надиктую|продиктую|хочу\s+надиктовать|надиктовать)(?:\s+(?:тебе\s+)?(?:заметку|текст|запись))?$|^(?:запиши|записывай|прими)\s+(?:под\s+диктовку|длинную\s+заметку|голосовую\s+заметку)$|^(?:режим\s+)?диктовк[аи]$|^(?:начни|включи)\s+диктовку$|^(?:запиши|создай|новая)\s+(?:мне\s+)?заметку$""")
         private val DICTATION_END = Regex("""[\s,.]*(?:готово|всё|все|конец|закончил[а]?|закончили|стоп|хватит|сохрани|конец заметки)[.!]?$""", RegexOption.IGNORE_CASE)
 

@@ -61,6 +61,15 @@ class ActionExecutor(
     /** Напоминание «настойчиво, пока не отмечу» создано: приложение запоминает его id и повторяет срабатывание. */
     private val onPersistentReminder: (String) -> Unit = {},
 ) {
+    private val things = ai.loli.core.personal.ThingsBook(memories)
+    private val debts = ai.loli.core.personal.DebtBook(memories)
+
+    /** Список с похожим названием уже есть («Фильмы» и «фильмов») — пишем в него, а не заводим второй. */
+    private suspend fun listNamed(name: String): String {
+        val existing = shopping?.all()?.map { it.listName }?.distinct().orEmpty()
+        return existing.firstOrNull { it.equals(name, true) } ?: existing.firstOrNull { ai.loli.core.personal.sameName(it, name) } ?: name
+    }
+
     suspend fun execute(actions: List<AssistantAction>, context: ConversationContext): ExecutionResult {
         val outcomes = ArrayList<Outcome>()
         val confirmOps = ArrayList<DestructiveOp>()
@@ -373,7 +382,9 @@ class ActionExecutor(
 
             is AssistantAction.QueryMemories -> {
                 if (action.query.isNullOrBlank()) {
-                    val items = memories.all().take(10).map { it.content }
+                    // Вещи и долги — не «о вас»: про них спрашивают отдельно («где паспорт», «кто мне должен»).
+                    val items = memories.all().filter { it.category != ai.loli.core.personal.ThingsBook.CATEGORY && it.category != ai.loli.core.personal.DebtBook.CATEGORY }
+                        .take(10).map { it.content }
                     query(if (items.isEmpty()) "Пока ничего не помню о вас. Скажите, например: «запомни, что я люблю зелёный чай»." else "Вот что я помню:\n" + items.joinToString("\n") { "• $it" })
                 } else {
                     val hits = search.search(action.query, setOf(RecordType.MEMORY), limit = 3, minScore = 0.3)
@@ -428,22 +439,25 @@ class ActionExecutor(
 
             is AssistantAction.AddToList -> {
                 val repo = shopping ?: return error("Списки пока недоступны.")
-                val added = repo.add(action.listName, action.items)
+                val listName = listNamed(action.listName)
+                val added = repo.add(listName, action.items)
                 if (added.isEmpty()) return error("Не поняла, что добавить в список.")
                 ctx.lastListAdded = added.map { it.id }; ctx.lastCreated = null
-                val where = if (action.listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "в покупки" else "в список ${RuFormat.quote(action.listName)}"
+                val where = if (listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "в покупки" else "в список ${RuFormat.quote(listName)}"
                 changed("Добавила $where: ${added.joinToString(", ") { it.text.lowercase() }}.")
             }
 
             is AssistantAction.QueryList -> {
                 val repo = shopping ?: return error("Списки пока недоступны.")
-                val items = repo.all().filter { it.listName.equals(action.listName, true) }
+                val listName = listNamed(action.listName)
+                val shop = listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST
+                val items = repo.all().filter { it.listName.equals(listName, true) }
                 val left = items.filter { !it.done }
                 query(
                     when {
-                        items.isEmpty() -> "Список ${RuFormat.quote(action.listName)} пуст."
-                        left.isEmpty() -> "Всё из списка ${RuFormat.quote(action.listName)} уже куплено."
-                        else -> "${if (action.listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) "Купить" else action.listName} (${left.size}):\n" +
+                        items.isEmpty() -> "Список ${RuFormat.quote(listName)} пуст."
+                        left.isEmpty() -> if (shop) "Всё из списка ${RuFormat.quote(listName)} уже куплено." else "В списке ${RuFormat.quote(listName)} всё отмечено."
+                        else -> "${if (shop) "Купить" else listName} (${left.size}):\n" +
                             left.joinToString("\n") { "• ${it.text}" }
                     },
                 )
@@ -452,18 +466,20 @@ class ActionExecutor(
             is AssistantAction.CheckListItem -> {
                 val repo = shopping ?: return error("Списки пока недоступны.")
                 val stem = ai.loli.core.nlp.TextAnalysis.stems(action.item).toSet()
-                val items = repo.all().filter { it.listName.equals(action.listName, true) && it.done != action.done }
+                val listName = listNamed(action.listName)
+                val items = repo.all().filter { it.listName.equals(listName, true) && it.done != action.done }
                 val hit = items.firstOrNull { it.text.equals(action.item, true) }
                     ?: items.firstOrNull { i -> ai.loli.core.nlp.TextAnalysis.stems(i.text).any { it in stem } }
                     ?: return error("В списке нет ${RuFormat.quote(action.item)}.")
                 repo.setDone(hit.id, action.done)
-                val left = repo.all().count { it.listName.equals(action.listName, true) && !it.done }
-                changed(if (action.done) "Вычеркнула ${RuFormat.quote(hit.text)}." + (if (left == 0) " Всё куплено!" else " Осталось: $left.") else "Вернула ${RuFormat.quote(hit.text)} в список.")
+                val left = repo.all().count { it.listName.equals(listName, true) && !it.done }
+                val all = if (listName == ai.loli.core.model.ShoppingItem.DEFAULT_LIST) " Всё куплено!" else " Всё отмечено!"
+                changed(if (action.done) "Вычеркнула ${RuFormat.quote(hit.text)}." + (if (left == 0) all else " Осталось: $left.") else "Вернула ${RuFormat.quote(hit.text)} в список.")
             }
 
             is AssistantAction.ClearList -> {
                 val repo = shopping ?: return error("Списки пока недоступны.")
-                val n = repo.clear(action.listName, action.onlyDone)
+                val n = repo.clear(listNamed(action.listName), action.onlyDone)
                 changed(if (n == 0) "Убирать нечего." else "Убрала из списка ${RuFormat.count(n, "пункт", "пункта", "пунктов")}.")
             }
 
@@ -580,6 +596,95 @@ class ActionExecutor(
                         filtered.isEmpty() -> if (action.thisMonth) "В этом месяце дней рождения нет." else "Дней рождения пока не записано."
                         filtered.size == 1 -> "День рождения ${filtered[0].first} — ${filtered[0].third} ${MONTHS_GEN[filtered[0].second - 1]}."
                         else -> "Дни рождения:\n" + filtered.joinToString("\n") { "• ${it.first} — ${it.third} ${MONTHS_GEN[it.second - 1]}" }
+                    },
+                )
+            }
+
+            is AssistantAction.CreateList -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val name = listNamed(action.name)
+                if (action.items.isEmpty()) {
+                    val q = "Завела список ${RuFormat.quote(name)}. Что в него добавить?"
+                    ctx.pendingSlot = SlotRequest.ListItems(name, q)
+                    return Step(listOf(Outcome(q, Outcome.Kind.QUESTION)))
+                }
+                val added = repo.add(name, action.items)
+                ctx.lastListAdded = added.map { it.id }; ctx.lastCreated = null
+                changed(
+                    "Собрала список ${RuFormat.quote(name)} — ${RuFormat.count(added.size, "пункт", "пункта", "пунктов")}: " +
+                        added.joinToString(", ") { it.text.lowercase() } + ". Что уже собрано, вычёркивайте: «вычеркни паспорт».",
+                )
+            }
+
+            AssistantAction.QueryLists -> {
+                val repo = shopping ?: return error("Списки пока недоступны.")
+                val groups = repo.all().groupBy { it.listName }
+                query(
+                    if (groups.isEmpty()) "Списков пока нет. Скажите, например: «создай список фильмов» или «собери список в отпуск»."
+                    else "Ваши списки:\n" + groups.entries.joinToString("\n") { (name, items) ->
+                        val left = items.count { !it.done }
+                        "• $name — " + if (left == 0) "всё отмечено" else RuFormat.count(left, "пункт", "пункта", "пунктов")
+                    },
+                )
+            }
+
+            is AssistantAction.PutThing -> {
+                val content = things.put(action.item, action.place)
+                changed("Запомнила: $content. Спросите «где ${ai.loli.core.personal.nominative(action.item).lowercase()}?» — подскажу.")
+            }
+
+            is AssistantAction.AddDebt -> {
+                val total = debts.add(action.person, if (action.theyOwe) action.amount else -action.amount)
+                val sum = ai.loli.core.personal.DebtBook.money(action.amount)
+                val head = if (action.theyOwe) "Записала долг: ${action.person}, $sum — вам должны." else "Записала долг: ${action.person}, $sum — должны вы."
+                val tail = when {
+                    total == null -> " Теперь вы в расчёте."
+                    Math.abs(total.amount) - action.amount > 0.005 || total.amount > 0 != action.theyOwe ->
+                        " Всего по ${total.person}: " + ai.loli.core.personal.DebtBook.money(total.amount) + (if (total.amount > 0) " должны вам." else " должны вы.")
+                    else -> ""
+                }
+                var remind = ""
+                action.remindText?.let { raw ->
+                    val parser = ai.loli.core.nlp.RuDateTimeParser()
+                    val at = parser.parse(raw, today).spec.takeUnless { it.isEmpty }?.let { parser.resolveTrigger(it, now, zone) }
+                    remind = if (at != null && at.isAfter(now)) {
+                        val text = if (action.theyOwe) "Напомнить ${action.person} про долг $sum" else "Вернуть долг ${action.person}: $sum"
+                        val r = reminders.create(text, at, null, zone.id)
+                        scheduler.schedule(r)
+                        " Напомню ${RuFormat.dateTime(at, zone, now)}."
+                    } else " Когда напомнить, не поняла — скажите, например: «напомни через неделю про долг»."
+                }
+                changed(head + tail + remind)
+            }
+
+            is AssistantAction.SettleDebt -> {
+                val r = debts.settle(action.person, action.amount, action.theyPaid)
+                    ?: return error(
+                        if (debts.find(action.person) == null) "Долгов с ${action.person} у меня не записано." else "Такого долга у ${action.person} нет — проверьте: «сколько мне должен ${action.person}».",
+                    )
+                val (paid, left) = r
+                changed(
+                    "Отметила возврат: ${ai.loli.core.personal.DebtBook.money(paid)}." +
+                        if (left == null) " Долг закрыт — вы в расчёте." else " Осталось: ${ai.loli.core.personal.DebtBook.money(left.amount)}" + (if (left.amount > 0) " должны вам." else " должны вы."),
+                )
+            }
+
+            is AssistantAction.QueryDebts -> {
+                if (action.person != null) {
+                    val d = debts.find(action.person) ?: return query("По ${action.person} долгов нет — вы в расчёте.")
+                    return query("${d.person}: " + ai.loli.core.personal.DebtBook.money(d.amount) + if (d.amount > 0) " — должны вам." else " — должны вы.")
+                }
+                val all = debts.all()
+                if (all.isEmpty()) return query("Долгов нет. Скажите, например: «Саша должен мне 500» или «я должна Маше 200».")
+                val mine = all.filter { it.amount > 0 }
+                val theirs = all.filter { it.amount < 0 }
+                query(
+                    buildString {
+                        if (mine.isNotEmpty()) append("Вам должны:\n" + mine.joinToString("\n") { "• ${it.person} — ${ai.loli.core.personal.DebtBook.money(it.amount)}" })
+                        if (theirs.isNotEmpty()) {
+                            if (isNotEmpty()) append("\n")
+                            append("Вы должны:\n" + theirs.joinToString("\n") { "• ${it.person} — ${ai.loli.core.personal.DebtBook.money(it.amount)}" })
+                        }
                     },
                 )
             }

@@ -58,9 +58,11 @@ data class LockPolicy(
     fun allows(action: AssistantAction): Boolean = when (action) {
         is AssistantAction.CreateNote, is AssistantAction.CreateExpense, is AssistantAction.CreateTask,
         is AssistantAction.CreateReminder, is AssistantAction.Remember, is AssistantAction.AppendNote,
-        is AssistantAction.AddToList, is AssistantAction.AddBirthday, is AssistantAction.CreateSecretNote, is AssistantAction.AddSubscription -> create
+        is AssistantAction.AddToList, is AssistantAction.AddBirthday, is AssistantAction.CreateSecretNote, is AssistantAction.AddSubscription,
+        is AssistantAction.PutThing, is AssistantAction.AddDebt, is AssistantAction.CreateList -> create
         is AssistantAction.Clarify -> true
-        is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions -> view
+        is AssistantAction.QueryList, is AssistantAction.QueryBirthdays, AssistantAction.QueryRoutines, is AssistantAction.QuerySubscriptions,
+        is AssistantAction.QueryDebts, AssistantAction.QueryLists -> view
         is AssistantAction.QueryExpenses, is AssistantAction.QueryTasks, AssistantAction.QueryReminders,
         is AssistantAction.QueryMemories, is AssistantAction.Search, is AssistantAction.Agenda -> view
         is AssistantAction.Device -> when (val c = action.command) {

@@ -241,6 +241,29 @@ class AssistantEngine(
         return AssistantReply(r.text, changedData = r.changed, sensitive = true, expectFollowUp = r.text.endsWith("?") || r.text.contains("«нет»"))
     }
 
+    /** «Где паспорт?» — по записям «положила паспорт в…». Неизвестную вещь отдаём дальше, если вопрос мог быть не о вещи. */
+    private suspend fun whereTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = PersonalCommands.where(text) ?: return null
+        // Машину ищет «парковка» (по месту на карте), телефон — громкий сигнал, а не записи о вещах.
+        if (Regex("""машин|авто|тачк|парковк|припарков|телефон|смартфон|мобильн|трубк""").containsMatchIn(RuTokenizer.normalize(text))) return null
+        val hits = ai.loli.core.personal.ThingsBook(memories).find(ask.item)
+        if (hits.isEmpty() && !ask.strong) return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.view) return AssistantReply("Разблокируйте телефон — где лежат вещи, без разблокировки не говорю.")
+        // Раньше могли сказать «запомни, что паспорт в сейфе» — ищем и в памяти.
+        val said = if (hits.isNotEmpty()) null else runCatching { search.search(ask.item, setOf(RecordType.MEMORY), limit = 1, minScore = 0.4) }
+            .getOrDefault(emptyList()).firstOrNull()?.doc?.title
+        return AssistantReply(
+            when {
+                said != null -> "Вы говорили: ${RuFormat.quote(said)}."
+                hits.isEmpty() -> "Не знаю, где ${ask.item}. Когда положите, скажите: «положила ${ask.item} в …» — запомню."
+                hits.size == 1 -> "${hits[0].item} — ${hits[0].place}."
+                else -> hits.joinToString("\n") { "• ${it.item} — ${it.place}" }
+            },
+            sensitive = true,
+        )
+    }
+
     private var cook: ai.loli.core.skills.CookingSession? = null
     private var cookAskedAt: java.time.Instant? = null
     private var cookAt = time.now()
@@ -431,6 +454,7 @@ class AssistantEngine(
             return AssistantReply("Диктуйте — я записываю. Можно делать паузы. Когда закончите, скажите «готово».", dictation = true, expectFollowUp = false)
         }
         special.translation(text)?.let { return translate(it, cfg) }
+        whereTurn(text, cfg)?.let { return it }
         special.parse(text, time.today())?.let { return execute(it, usedAI = false, offline = false, name = cfg.assistantName) }
         habitReply(text, cfg)?.let { return it }
         // Погода, курсы, новости, справка, сообщения, радио, игры, сказки…
