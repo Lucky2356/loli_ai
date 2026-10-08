@@ -302,6 +302,15 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /** Голосовые заметки со звуком: запись, расшифровка Vosk, прослушивание. */
+    val voiceMemo: ai.loli.app.voice.VoiceMemoRecorder by lazy {
+        ai.loli.app.voice.VoiceMemoRecorder(
+            context, appScope, notes = { store.notes }, vosk = voskEngine, models = voskModels,
+            // Ждём, пока голосовой разговор закончится (команда выполнена, ответ произнесён).
+            busySpeaking = { voice.state.value.let { it !is ai.loli.app.voice.VoiceState.Idle && it !is ai.loli.app.voice.VoiceState.Error } },
+        )
+    }
+
     /** Заготовка начала фразы из ярлыка («Запиши расход »): чат подставит её в поле ввода и сбросит. */
     val quickDraft = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 

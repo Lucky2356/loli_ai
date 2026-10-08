@@ -996,7 +996,10 @@ class AssistantEngine(
         }
         // В диалоге продолжаем слушать, пока пользователь не скажет «хватит» (или не замолчит).
         val followUp = plan.expectFollowUp || context.dialogMode || awaitingAnswer || result.pendingConfirmation != null
+        // Запись голосовой заметки займёт микрофон: разговор на этом заканчиваем.
+        val recording = plan.actions.any { (it as? AssistantAction.Device)?.command == DeviceCommand.VoiceMemo }
         return AssistantReply(
+            endsDialog = recording,
             text = parts.filter { it.isNotBlank() }.joinToString("\n").trim().replace("{name}", name),
             outcomes = result.outcomes,
             awaitingConfirmation = result.pendingConfirmation != null,

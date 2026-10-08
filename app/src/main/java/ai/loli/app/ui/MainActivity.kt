@@ -125,7 +125,12 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             }
             LoliTheme(settings.themeMode, settings.dynamicColor, settings.accent) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { LoliRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest) }
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                        LoliRoot(container, listenRequest, openSettingsRequest, openBackupRequest, quickRequest)
+                        ai.loli.app.ui.components.VoiceMemoOverlay(container)
+                    }
+                }
             }
         }
     }
@@ -160,6 +165,7 @@ class MainActivity : ComponentActivity() {
             // «Настройки приложения» из системных настроек телефона.
             Intent.ACTION_APPLICATION_PREFERENCES -> openSettingsRequest.value = openSettingsRequest.value + 1
             ACTION_BACKUP -> openBackupRequest.value = openBackupRequest.value + 1
+            ACTION_VOICE_MEMO -> container.voiceMemo.start()
             ACTION_QUICK -> {
                 container.quickDraft.value = when (intent.getStringExtra("kind")) {
                     "expense" -> "Запиши расход "
@@ -177,6 +183,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_UPDATE = "ai.loli.action.UPDATE"
         const val ACTION_BACKUP = "ai.loli.action.BACKUP"
         const val ACTION_QUICK = "ai.loli.action.QUICK"
+        const val ACTION_VOICE_MEMO = "ai.loli.action.VOICE_MEMO"
         const val EXTRA_TOKEN = "ai.loli.token"
 
         /** Случайный секрет этой установки для своих уведомлений. */

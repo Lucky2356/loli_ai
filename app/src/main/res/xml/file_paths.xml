@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Только папка выгрузок: остальные файлы Лоли наружу не отдаются. -->
+<paths>
+    <cache-path name="exports" path="exports/" />
+</paths>
