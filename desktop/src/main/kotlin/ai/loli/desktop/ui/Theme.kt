@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -103,7 +104,7 @@ private fun typography(p: LoliPalette): Typography {
 @Composable
 fun LoliTheme(dark: Boolean, content: @Composable () -> Unit) {
     val p = if (dark) DarkPalette else LightPalette
-    val scheme = if (dark) darkColorScheme(
+    val scheme = remember(dark) { if (dark) darkColorScheme(
         primary = p.accent, onPrimary = p.onAccent, secondary = p.accent2, background = p.background, onBackground = p.text,
         surface = p.surface, onSurface = p.text, surfaceVariant = p.surfaceHigh, onSurfaceVariant = p.muted, outline = p.outline,
         outlineVariant = p.outline, error = p.danger, surfaceContainer = p.surface, surfaceContainerHigh = p.surfaceHigh,
@@ -113,8 +114,9 @@ fun LoliTheme(dark: Boolean, content: @Composable () -> Unit) {
         surface = p.surface, onSurface = p.text, surfaceVariant = p.surfaceHigh, onSurfaceVariant = p.muted, outline = p.outline,
         outlineVariant = p.outline, error = p.danger, surfaceContainer = p.surface, surfaceContainerHigh = p.surfaceHigh,
         surfaceContainerHighest = p.surfaceHover, surfaceContainerLow = p.surface, primaryContainer = p.userBubble, onPrimaryContainer = p.text,
-    )
+    ) }
+    val type = remember(p) { typography(p) }
     CompositionLocalProvider(LocalPalette provides p) {
-        MaterialTheme(colorScheme = scheme, typography = typography(p), content = content)
+        MaterialTheme(colorScheme = scheme, typography = type, content = content)
     }
 }

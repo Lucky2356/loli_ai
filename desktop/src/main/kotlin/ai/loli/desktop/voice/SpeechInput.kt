@@ -43,16 +43,19 @@ class SpeechInput(private val dataDir: File) {
     /** Скачивает модель (~45 МБ) с сайта Vosk, если её нет ни в установщике, ни в папке данных. */
     fun ensureModel(progress: (Int) -> Unit): Boolean {
         if (modelDir() != null) return true
+        stopRequested = false
+        val tmp = File(dataDir, "$MODEL_DIR.zip.part")
         return runCatching {
-            val tmp = File(dataDir, "$MODEL_DIR.zip.part")
             val conn = URI(MODEL_URL).toURL().openConnection() as HttpURLConnection
             conn.connectTimeout = 15_000; conn.readTimeout = 30_000
+            if (conn.responseCode != 200) throw java.io.IOException("Сервер модели ответил ${conn.responseCode}")
             val total = conn.contentLengthLong
             conn.inputStream.use { input ->
                 tmp.outputStream().use { out ->
                     val buf = ByteArray(64 * 1024)
                     var read = 0L
                     while (true) {
+                        if (stopRequested) throw InterruptedException("Скачивание отменено")
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n); read += n
@@ -76,7 +79,18 @@ class SpeechInput(private val dataDir: File) {
             }
             tmp.delete()
             complete(target)
-        }.onFailure { Logger.w(TAG, "Модель речи не скачалась", it) }.getOrDefault(false)
+        }.onFailure { tmp.delete(); Logger.w(TAG, "Модель речи не скачалась", it) }.getOrDefault(false)
+    }
+
+    /** Загрузить модель в память заранее (1–3 с); true — готово к распознаванию. */
+    fun prepare(): Boolean = loadModel() != null
+
+    val loaded: Boolean get() = model != null
+
+    /** Освободить память модели при выходе. */
+    fun close() {
+        stopRequested = true
+        synchronized(this) { runCatching { model?.close() }; model = null }
     }
 
     @Synchronized

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -16,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Visibility
@@ -44,6 +47,7 @@ import ai.loli.core.ai.AIConfig
 import ai.loli.core.ai.AIProviderFactory
 import ai.loli.core.ai.AIProviderType
 import ai.loli.core.assistant.Persona
+import ai.loli.desktop.Autostart
 import ai.loli.desktop.DesktopContainer
 import ai.loli.desktop.voice.SpeechOutput
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +63,7 @@ fun SettingsScreen(c: DesktopContainer) {
             item { PageHeader("Настройки", "Всё хранится на этом компьютере") }
             item { AiSection(c, s) }
             item { VoiceSection(c, s) }
+            item { StartupSection(c) }
             item {
                 Panel {
                     SectionLabel("Профиль")
@@ -91,6 +96,10 @@ fun SettingsScreen(c: DesktopContainer) {
                         "Синхронизация с телефоном появится в следующих версиях. Ключи AI зашифрованы средствами Windows и не покидают компьютер.",
                         style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp),
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 14.dp)) {
+                        GhostButton("Папка данных", { openPath(c.dataDir) }, icon = Icons.Rounded.FolderOpen)
+                        GhostButton("Журнал ошибок", { openPath(java.io.File(c.dataDir, "logs").takeIf { it.isDirectory } ?: c.dataDir) }, icon = Icons.Rounded.Description)
+                    }
                 }
             }
         }
@@ -107,6 +116,7 @@ private fun AiSection(c: DesktopContainer, s: ai.loli.desktop.DesktopSettings.Va
     var testing by remember { mutableStateOf(false) }
     var result by remember(type) { mutableStateOf<Pair<Boolean, String>?>(null) }
     var models by remember(type) { mutableStateOf(type.suggestedModels) }
+    var loadingModels by remember { mutableStateOf(false) }
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -138,7 +148,7 @@ private fun AiSection(c: DesktopContainer, s: ai.loli.desktop.DesktopSettings.Va
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 18.dp)) {
             AccentButton(if (testing) "Проверяю…" else "Сохранить и проверить", {
-                c.setApiKey(type, key)
+                if (!c.setApiKey(type, key)) { result = false to "Ключ не сохранился: нет доступа к папке данных. Подробности — в журнале."; return@AccentButton }
                 testing = true; result = null
                 scope.launch {
                     val cfg = c.aiConfig()
@@ -148,14 +158,19 @@ private fun AiSection(c: DesktopContainer, s: ai.loli.desktop.DesktopSettings.Va
                     testing = false
                 }
             }, enabled = !testing)
-            GhostButton("Загрузить список моделей", {
+            GhostButton(if (loadingModels) "Загружаю…" else "Загрузить список моделей", {
                 c.setApiKey(type, key)
+                loadingModels = true
                 scope.launch {
-                    runCatching { withContext(Dispatchers.IO) { AIProviderFactory.listModels(c.http, AIConfig(type, s.aiEndpoint.ifBlank { null }, null, key)) } }
-                        .onSuccess { list -> if (list.isNotEmpty()) models = list.map { it.id }; result = true to "Моделей: ${list.size}. Выберите в списке." }
+                    runCatching { withContext(Dispatchers.IO) { AIProviderFactory.listModels(c.http, AIConfig(type, s.aiEndpoint.ifBlank { null }, null, AIConfig.cleanApiKey(key))) } }
+                        .onSuccess { list ->
+                            if (list.isNotEmpty()) models = list.map { it.id }.sorted()
+                            result = if (list.isEmpty()) false to "Провайдер не вернул ни одной модели." else true to "Моделей: ${list.size}. Выберите в списке."
+                        }
                         .onFailure { result = false to (it.message ?: "Не удалось получить список") }
+                    loadingModels = false
                 }
-            })
+            }, enabled = !loadingModels && !testing)
         }
         result?.let { (ok, text) ->
             Row(
@@ -220,6 +235,33 @@ private fun VoiceSection(c: DesktopContainer, s: ai.loli.desktop.DesktopSettings
 }
 
 @Composable
+private fun StartupSection(c: DesktopContainer) {
+    if (!Autostart.supported) return
+    var enabled by remember { mutableStateOf(Autostart.isEnabled()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Panel {
+        SectionLabel("Запуск")
+        ToggleRow(
+            "Запускать вместе с Windows",
+            "Лоли тихо стартует в трее при входе — напоминания приходят, даже если вы её не открывали",
+            enabled,
+        ) { v ->
+            if (Autostart.set(v)) { enabled = v; error = null } else error = "Не получилось изменить автозапуск. Подробности — в журнале."
+        }
+        error?.let { Text(it, style = MaterialTheme.typography.bodySmall.copy(color = palette.danger), modifier = Modifier.padding(top = 6.dp)) }
+        Text(
+            "Закрытие окна крестиком оставляет Лоли в трее. Полностью выйти — правой кнопкой по значку → «Выход».",
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+/** Открыть папку в Проводнике. */
+private fun openPath(dir: java.io.File) {
+    runCatching { if (java.awt.Desktop.isDesktopSupported()) java.awt.Desktop.getDesktop().open(dir) }
+}
+
+@Composable
 private fun ToggleSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     val p = palette
     androidx.compose.material3.Switch(
@@ -245,7 +287,7 @@ fun <T> Dropdown(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> U
             Text(options.firstOrNull { it.first == selected }?.second ?: selected.toString(), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1)
             Icon(Icons.Rounded.ExpandMore, null, tint = p.muted, modifier = Modifier.size(18.dp))
         }
-        DropdownMenu(open, { open = false }, modifier = Modifier.background(p.surface)) {
+        DropdownMenu(open, { open = false }, modifier = Modifier.background(p.surface).heightIn(max = 380.dp)) {
             options.forEach { (value, title) ->
                 DropdownMenuItem(
                     text = { Text(title, style = MaterialTheme.typography.bodyMedium.copy(color = if (value == selected) p.accent else p.text)) },
