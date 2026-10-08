@@ -111,7 +111,18 @@ class AssistantEngine(
     private val daySpend: suspend (java.time.LocalDate) -> String? = { null },
     /** «Будь деловой» — приложение сохраняет новый характер. */
     private val onPersona: (Persona) -> Unit = {},
+    /** Траты за период — для итогов недели и ленты дня. */
+    private val expensesBetween: suspend (java.time.LocalDate, java.time.LocalDate) -> List<ai.loli.core.model.Expense> = { _, _ -> emptyList() },
 ) {
+    private val review = ai.loli.core.review.Review(
+        notes, tasks, reminders,
+        habitLog = { a, b -> habits?.log(a, b).orEmpty() },
+        expenses = expensesBetween, time = time,
+    )
+
+    /** Итоги недели для воскресной сводки — тот же текст, что и по голосовой команде. */
+    suspend fun weeklySummary(): String = review.week()
+
     val context = ConversationContext(time)
     private val mutex = Mutex()
 
@@ -306,6 +317,69 @@ class AssistantEngine(
         )
     }
 
+    /** «Итоги недели», «что я делала 5 октября». Личное — на заблокированном экране не показываем. */
+    private suspend fun reviewTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        val ask = ai.loli.core.review.Review.parse(text, time.today()) ?: return null
+        // «Что было завтра» не бывает: про будущее — план на день.
+        if (ask is ai.loli.core.review.Review.Ask.Day && ask.date.isAfter(time.today())) return null
+        val policy = cfg.lockPolicy ?: if (cfg.locked) LockPolicy.SAFE else null
+        if (policy != null && !policy.allowsSkill(SkillAccess.PRIVATE)) return AssistantReply("Разблокируйте телефон — это личное, без разблокировки не показываю.")
+        val out = when (ask) {
+            ai.loli.core.review.Review.Ask.Week -> review.week()
+            is ai.loli.core.review.Review.Ask.Day -> review.day(ask.date)
+        }
+        return AssistantReply(out, sensitive = true)
+    }
+
+    private var workout: ai.loli.core.skills.WorkoutSession? = null
+    private var workoutAt = time.now()
+
+    /** Тренировка: упражнения по очереди с таймером. Забывается через полчаса тишины. */
+    private suspend fun workoutTurn(text: String, cfg: AssistantSettings): AssistantReply? {
+        if (workout != null && java.time.Duration.between(workoutAt, time.now()) > java.time.Duration.ofMinutes(30)) workout = null
+        val session = workout
+        if (session == null) {
+            if (ai.loli.core.skills.Workout.isList(text)) return AssistantReply(ai.loli.core.skills.Workout.listText())
+            val program = ai.loli.core.skills.Workout.start(text) ?: return null
+            val s = ai.loli.core.skills.WorkoutSession(program)
+            workout = s; workoutAt = time.now(); cook = null
+            return exerciseReply(s.intro(), s, cfg)
+        }
+        val cmd = ai.loli.core.skills.Workout.command(text) ?: return null
+        workoutAt = time.now()
+        return when (cmd) {
+            ai.loli.core.skills.Workout.Command.Stop -> {
+                workout = null
+                AssistantReply(finishWorkout(session, early = true), endsDialog = true, changedData = session.done > 0)
+            }
+            ai.loli.core.skills.Workout.Command.Repeat -> exerciseReply(session.step(), session, cfg)
+            ai.loli.core.skills.Workout.Command.Next, ai.loli.core.skills.Workout.Command.Skip -> {
+                session.advance(skipped = cmd == ai.loli.core.skills.Workout.Command.Skip)
+                if (session.finished) {
+                    workout = null
+                    AssistantReply(finishWorkout(session, early = false), endsDialog = true, changedData = session.done > 0)
+                } else exerciseReply(session.step(), session, cfg)
+            }
+        }
+    }
+
+    /** Текст упражнения + таймер на него (сигнал скажет, когда пора дальше). */
+    private suspend fun exerciseReply(text: String, s: ai.loli.core.skills.WorkoutSession, cfg: AssistantSettings): AssistantReply {
+        val e = s.current ?: return AssistantReply(text, expectFollowUp = true)
+        val timer = AssistantAction.Device(DeviceCommand.Timer(e.seconds, "${s.program.name}: ${e.name.lowercase()}"))
+        val r = execute(AssistantPlan("", listOf(timer), preface = text), usedAI = false, offline = false, name = cfg.assistantName)
+        // Таймер не поставился (нет разрешения) — ведём без него.
+        return r.copy(text = if (r.outcomes.any { it.kind == Outcome.Kind.ERROR }) text + " Засеките время сами, потом скажите «дальше»." else text, expectFollowUp = true)
+    }
+
+    /** Конец тренировки: отмечаем привычку («зарядка»), чтобы считались дни подряд. */
+    private suspend fun finishWorkout(s: ai.loli.core.skills.WorkoutSession, early: Boolean): String {
+        if (s.done == 0) return "Хорошо, без тренировки. В другой раз!"
+        val streak = runCatching { habits?.run(ai.loli.core.health.HabitCommand.Mark(s.program.habit))?.text }.getOrNull()
+        val head = if (early) "Закончили: ${RuFormat.count(s.done, "упражнение", "упражнения", "упражнений")} из ${s.program.exercises.size}." else "Тренировка окончена: ${s.program.name.lowercase()}, ${RuFormat.count(s.done, "упражнение", "упражнения", "упражнений")}. Молодец!"
+        return head + (streak?.let { " $it" } ?: "")
+    }
+
     private var cook: ai.loli.core.skills.CookingSession? = null
     private var cookAskedAt: java.time.Instant? = null
     private var cookAt = time.now()
@@ -428,8 +502,10 @@ class AssistantEngine(
             if (skills.interruptedBy(text, cfg, ::isCommand)) skills.reset()
             else { skillsTried = true; runSkills(text, cfg)?.let { return it } }
         }
-        // 0.4. Режим готовки: «дальше», «повтори», «назад», «таймер».
+        // 0.4. Тренировка и режим готовки: «дальше», «повтори», «назад», «таймер».
+        workoutTurn(text, cfg)?.let { return it }
         cookingTurn(text, cfg)?.let { return it }
+        reviewTurn(text, cfg)?.let { return it }
         diaryTurn(text, cfg)?.let { return it }
         // 0.5. Живой диалог: «повтори», «ещё», «а завтра?», «продолжай».
         dialogTurn(text, cfg)?.let { return it }

@@ -396,6 +396,9 @@ class Habits(private val store: HabitStore, private val time: TimeSource) {
         }
     }
 
+    /** Журнал за период [from, to) — для итогов недели и ленты дня. */
+    suspend fun log(from: java.time.Instant, to: java.time.Instant): List<HabitEntry> = store.since(from).filter { it.at.isBefore(to) }
+
     /** Настроение последних дней низкое: хотя бы две оценки за 3 дня, в среднем не выше 2,5. */
     suspend fun moodLow(): Boolean {
         val from = time.today().minusDays(2).atStartOfDay(time.zone()).toInstant()

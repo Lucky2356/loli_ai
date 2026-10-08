@@ -59,6 +59,7 @@ class TestEnv(
         habits = Habits(store.habits, time),
         daySpend = { d -> store.expenses.between(d, d).takeIf { it.isNotEmpty() }?.let { "Потрачено: ${it.sumOf { e -> e.amountMinor } / 100} ₽." } },
         onPersona = { onPersona(it) },
+        expensesBetween = { a, b -> store.expenses.between(a, b) },
     )
 }
 
