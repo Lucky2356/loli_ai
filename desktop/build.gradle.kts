@@ -40,13 +40,14 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "Loli"
             packageVersion = desktopVersion
-            description = "Лоли — персональный голосовой ассистент"
+            // Метаданные установщика — латиницей: WiX без настройки кодовой страницы не принимает кириллицу.
+            description = "Loli personal assistant"
             vendor = "Lucky2356"
             // java.sql — SQLite через JDBC, jdk.crypto.ec — HTTPS к Supabase и AI.
             modules("java.sql", "jdk.crypto.ec", "java.net.http")
             windows {
                 menu = true
-                menuGroup = "Лоли"
+                menuGroup = "Loli"
                 shortcut = true
                 dirChooser = true
                 perUserInstall = true
