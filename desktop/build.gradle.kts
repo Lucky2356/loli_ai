@@ -1,5 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
+import java.security.MessageDigest
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -30,10 +32,10 @@ sherpaJars.forEach { name ->
         sherpaDir.mkdirs()
         val tmp = File(jar.path + ".part")
         logger.lifecycle("Скачиваю $name…")
-        java.net.URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/$name").toURL().openStream().use { input ->
+        URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/$name").toURL().openStream().use { input ->
             tmp.outputStream().use { input.copyTo(it) }
         }
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+        val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
         logger.lifecycle("$name: sha256 $digest")
         tmp.renameTo(jar)
     }
