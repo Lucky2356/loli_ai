@@ -11,8 +11,10 @@ import ai.loli.core.assistant.ActionExecutor
 import ai.loli.core.assistant.AssistantEngine
 import ai.loli.core.assistant.AssistantReply
 import ai.loli.core.assistant.AssistantSettings
+import ai.loli.core.assistant.ConversationContext
 import ai.loli.core.assistant.InputSource
 import ai.loli.core.assistant.Persona
+import ai.loli.core.assistant.QuickAdd
 import ai.loli.core.assistant.ReminderScheduler
 import ai.loli.core.assistant.TargetResolver
 import ai.loli.core.data.LocalStore
@@ -33,6 +35,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
@@ -48,7 +51,12 @@ class DesktopContainer(val dataDir: File = defaultDataDir()) {
     val settings = DesktopSettings(File(dataDir, "settings.properties"))
     val secrets = SecretStore(File(dataDir, "secrets.properties"))
 
-    private val driver = JdbcSqliteDriver("jdbc:sqlite:" + File(dataDir, "loli.db").absolutePath, Properties(), LoliDatabase.Schema)
+    // WAL: чтение (экраны) не ждёт записи (ответ Лоли); busy_timeout — вместо «database is locked» подождать до 5 с.
+    private val driver = JdbcSqliteDriver(
+        "jdbc:sqlite:" + File(dataDir, "loli.db").absolutePath,
+        Properties().apply { put("journal_mode", "WAL"); put("synchronous", "NORMAL"); put("busy_timeout", "5000") },
+        LoliDatabase.Schema,
+    )
     val store = LocalStore(driver, time, Dispatchers.IO)
 
     val http = HttpClient(Java) {
@@ -80,7 +88,8 @@ class DesktopContainer(val dataDir: File = defaultDataDir()) {
     // --- AI -----------------------------------------------------------------------
 
     fun apiKey(type: AIProviderType): String = secrets.get("ai_key_${type.id}").orEmpty()
-    fun setApiKey(type: AIProviderType, key: String) = secrets.put("ai_key_${type.id}", AIConfig.cleanApiKey(key).ifEmpty { null })
+    /** true — ключ сохранён. */
+    fun setApiKey(type: AIProviderType, key: String): Boolean = secrets.put("ai_key_${type.id}", AIConfig.cleanApiKey(key).ifEmpty { null })
 
     fun aiConfig(s: DesktopSettings.Values = settings.value): AIConfig {
         val type = AIProviderType.fromId(s.aiProvider).takeIf { !it.builtIn } ?: AIProviderType.OPENAI
@@ -148,23 +157,65 @@ class DesktopContainer(val dataDir: File = defaultDataDir()) {
     private val _lastReply = MutableStateFlow<AssistantReply?>(null)
     val lastReply: StateFlow<AssistantReply?> = _lastReply
 
+    private val _error = MutableStateFlow<String?>(null)
+    /** Ответить не получилось — показываем в чате, а не молчим. */
+    val error: StateFlow<String?> = _error
+    fun dismissError() { _error.value = null }
+
     /** Отправить фразу Лоли (из поля ввода или голосом). */
     suspend fun send(text: String, source: InputSource = InputSource.TEXT): AssistantReply? {
         if (text.isBlank()) return null
         _busy.value = true
+        _error.value = null
         return try {
             engine.handle(text, source).also { _lastReply.value = it }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Logger.e("Desktop", "Ошибка обработки", e)
+            _error.value = "Не получилось ответить: ${e.message ?: e::class.simpleName}. Подробности — в журнале (Настройки → О программе)."
             null
         } finally {
             _busy.value = false
         }
     }
 
+    /** Очистить историю чата на этом компьютере (записи, задачи и траты остаются). */
+    suspend fun clearChat() {
+        store.conversations.clear()
+        _lastReply.value = null
+    }
+
+    /**
+     * Быстрое добавление с вкладок: фраза → одно действие → запись. Чат не трогается.
+     * Возвращает (успех, текст для пользователя).
+     */
+    suspend fun quickAdd(kind: QuickAdd.Kind, text: String): Pair<Boolean, String> = try {
+        when (val plan = QuickAdd.plan(kind, text, time.now(), time.zone())) {
+            is QuickAdd.Result.Hint -> false to plan.text
+            is QuickAdd.Result.Ok -> {
+                val result = executor.execute(listOf(plan.action), ConversationContext(time))
+                val message = result.outcomes.joinToString(" ") { it.text }.ifBlank { "Готово." }
+                !result.hasErrors to message
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Logger.e("Desktop", "Быстрое добавление не удалось", e)
+        false to "Не получилось сохранить: ${e.message ?: e::class.simpleName}"
+    }
+
     val voice = VoiceController(this)
+
+    /** Выход из программы: остановить голос и фоновые задачи, закрыть сеть и базу. */
+    fun close() {
+        runCatching { voice.shutdown() }
+        runCatching { settings.flush() }
+        scope.cancel()
+        runCatching { http.close() }
+        runCatching { driver.close() }
+    }
 
     companion object {
         /** %APPDATA%\Loli на Windows, ~/.loli на остальных системах. */

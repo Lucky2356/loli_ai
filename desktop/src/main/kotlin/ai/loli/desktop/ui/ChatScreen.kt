@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -41,6 +44,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.Alarm
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
@@ -69,7 +74,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -80,7 +84,10 @@ import ai.loli.core.model.ConversationMessage
 import ai.loli.core.model.MessageRole
 import ai.loli.desktop.DesktopContainer
 import ai.loli.desktop.voice.VoiceController
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -101,14 +108,29 @@ fun ChatScreen(c: DesktopContainer, openSettings: () -> Unit) {
     val p = palette
     val messages by remember { c.store.conversations.observeRecent(400) }.collectAsState(emptyList())
     val busy by c.busy.collectAsState()
-    val voice by c.voice.state.collectAsState()
+    val error by c.error.collectAsState()
     val settings by c.settings.state.collectAsState()
     var input by remember { mutableStateOf("") }
+    var confirmClear by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
     val focus = remember { FocusRequester() }
-    val ordered = remember(messages) { messages.sortedBy { it.createdAt } }
-    LaunchedEffect(ordered.size, busy) { if (ordered.isNotEmpty()) list.animateScrollToItem(maxOf(0, list.layoutInfo.totalItemsCount - 1)) }
+    // Подписи дней считаются один раз на новый список, а не при каждой перерисовке.
+    val rows = remember(messages) {
+        val zone = ZoneId.systemDefault()
+        var lastDay: LocalDate? = null
+        messages.sortedBy { it.createdAt }.map { m ->
+            val day = m.createdAt.atZone(zone).toLocalDate()
+            val header = if (day != lastDay) day else null
+            lastDay = day
+            header to m
+        }
+    }
+    // Новое сообщение или «печатает…» — прокрутка вниз.
+    LaunchedEffect(rows.lastOrNull()?.second?.id, busy) {
+        val last = rows.size - 1 + (if (busy) 1 else 0)
+        if (last >= 0) list.animateScrollToItem(last)
+    }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
     fun send(text: String = input) {
@@ -118,46 +140,34 @@ fun ChatScreen(c: DesktopContainer, openSettings: () -> Unit) {
         scope.launch { c.send(t) }
     }
 
-    Column(
-        Modifier.fillMaxSize().onPreviewKeyEvent { e ->
-            // Ctrl+Пробел — голос, Esc — замолчать.
-            when {
-                e.type == KeyEventType.KeyDown && e.isCtrlPressed && e.key == Key.Spacebar -> { c.voice.toggle(); true }
-                e.type == KeyEventType.KeyDown && e.key == Key.Escape -> { c.voice.stopAll(); true }
-                else -> false
-            }
-        },
-    ) {
+    Column(Modifier.fillMaxSize()) {
         // Шапка
+        val cfg = remember(settings) { c.aiConfig(settings) }
+        val ai = settings.aiEnabled && cfg.isComplete
         Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Чат", style = MaterialTheme.typography.titleLarge)
-                val ai = c.aiReady
                 Text(
-                    if (ai) "Облачный AI · ${c.aiConfig().model}" else "Работаю без интернета · подключите AI в настройках",
+                    if (ai) "Облачный AI · ${cfg.model}" else "Работаю без интернета · подключите AI в настройках",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            if (!c.aiReady) GhostButton("Подключить AI", openSettings)
+            if (!ai) GhostButton("Подключить AI", openSettings)
+            if (rows.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                IconCircle(Icons.Rounded.DeleteSweep, "Очистить чат", { confirmClear = true }, size = 38.dp)
+            }
         }
         Divider()
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (ordered.isEmpty()) {
-                Welcome(settings.userName, settings.assistantName, voice) { send(it) }
+            if (rows.isEmpty()) {
+                Welcome(settings.userName, settings.assistantName, c.voice.state) { send(it) }
             } else {
                 LazyColumn(
                     state = list, modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 24.dp),
                 ) {
-                    var lastDay: LocalDate? = null
-                    val zone = ZoneId.systemDefault()
-                    val rows = ordered.map { m ->
-                        val day = m.createdAt.atZone(zone).toLocalDate()
-                        val header = if (day != lastDay) day else null
-                        lastDay = day
-                        header to m
-                    }
                     items(rows, key = { it.second.id }) { (header, m) ->
                         Column(Modifier.widthIn(max = 860.dp).fillMaxWidth().padding(horizontal = 32.dp)) {
                             if (header != null) DayChip(header)
@@ -168,18 +178,34 @@ fun ChatScreen(c: DesktopContainer, openSettings: () -> Unit) {
                         Box(Modifier.widthIn(max = 860.dp).fillMaxWidth().padding(horizontal = 32.dp)) { Typing() }
                     }
                 }
+                VerticalScrollbar(
+                    rememberScrollbarAdapter(list), Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 6.dp, horizontal = 4.dp),
+                    style = scrollbarStyle(),
+                )
             }
         }
-        Composer(
-            input, { input = it }, ::send, voice, busy, focus,
-            onMic = { c.voice.toggle() },
-        )
+        error?.let { e ->
+            Row(
+                Modifier.padding(horizontal = 32.dp).widthIn(max = 860.dp).fillMaxWidth().align(Alignment.CenterHorizontally)
+                    .clip(RoundedCornerShape(12.dp)).background(p.danger.copy(alpha = 0.1f)).padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(e, style = MaterialTheme.typography.bodySmall.copy(color = p.danger), modifier = Modifier.weight(1f))
+                IconCircle(Icons.Rounded.Close, "Скрыть", { c.dismissError() }, size = 26.dp)
+            }
+        }
+        Composer(input, { input = it }, ::send, c.voice.state, busy, focus, onMic = { c.voice.toggle() })
     }
+    if (confirmClear) ConfirmDialog(
+        "Очистить чат?", "История разговора на этом компьютере удалится. Заметки, задачи, напоминания и траты останутся.", "Очистить",
+        onConfirm = { scope.launch { c.clearChat() } }, onDismiss = { confirmClear = false },
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Welcome(userName: String, assistant: String, voice: VoiceController.State, onPick: (String) -> Unit) {
+private fun Welcome(userName: String, assistant: String, voiceState: StateFlow<VoiceController.State>, onPick: (String) -> Unit) {
+    val voice = voiceState.collectAsState().value
     val hour = LocalTime.now().hour
     val greeting = when (hour) { in 5..11 -> "Доброе утро"; in 12..17 -> "Добрый день"; in 18..22 -> "Добрый вечер"; else -> "Доброй ночи" }
     val listening = voice is VoiceController.State.Listening || voice is VoiceController.State.Speaking
@@ -189,7 +215,7 @@ private fun Welcome(userName: String, assistant: String, voice: VoiceController.
         Spacer(Modifier.height(20.dp))
         Text(greeting + (if (userName.isNotBlank()) ", $userName" else ""), style = MaterialTheme.typography.displaySmall)
         Text(
-            "Я $assistant. Напишите или нажмите на микрофон — запишу, напомню, посчитаю.",
+            "Я $assistant. Напишите или скажите — запишу, напомню, посчитаю.",
             style = MaterialTheme.typography.bodyLarge.copy(color = palette.muted), modifier = Modifier.padding(top = 8.dp),
         )
         Spacer(Modifier.height(32.dp))
@@ -237,7 +263,11 @@ private fun MessageRow(m: ConversationMessage) {
     val p = palette
     val mine = m.role == MessageRole.USER
     val time = RuFormat.time(m.createdAt.atZone(ZoneId.systemDefault()).toLocalTime())
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
+    Row(Modifier.fillMaxWidth().hoverable(src).padding(vertical = 6.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!mine) { Orb(30.dp, modifier = Modifier.padding(top = 2.dp)); Spacer(Modifier.width(12.dp)) }
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start, modifier = Modifier.widthIn(max = 640.dp)) {
             Box(
@@ -248,7 +278,17 @@ private fun MessageRow(m: ConversationMessage) {
             ) {
                 SelectionContainer { Text(m.content, style = MaterialTheme.typography.bodyLarge) }
             }
-            Text(time, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp))
+            Row(Modifier.height(24.dp).padding(top = 4.dp, start = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(time, style = MaterialTheme.typography.labelSmall)
+                if (hovered || copied) Text(
+                    if (copied) "Скопировано" else "Копировать",
+                    style = MaterialTheme.typography.labelSmall.copy(color = if (copied) p.success else p.accent),
+                    modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(4.dp)).clickable {
+                        runCatching { Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(m.content), null) }
+                        copied = true
+                    },
+                )
+            }
         }
     }
 }
@@ -274,10 +314,12 @@ private fun Typing() {
 
 @Composable
 private fun Composer(
-    value: String, onChange: (String) -> Unit, onSend: (String) -> Unit, voice: VoiceController.State, busy: Boolean,
+    value: String, onChange: (String) -> Unit, onSend: (String) -> Unit, voiceState: StateFlow<VoiceController.State>, busy: Boolean,
     focus: FocusRequester, onMic: () -> Unit,
 ) {
     val p = palette
+    // Состояние голоса меняется 10 раз в секунду, пока слушаем, — перерисовывается только поле ввода, не весь чат.
+    val voice = voiceState.collectAsState().value
     val listening = voice is VoiceController.State.Listening
     val speaking = voice is VoiceController.State.Speaking
     Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -287,7 +329,7 @@ private fun Composer(
                 is VoiceController.State.Listening -> voice.partial.ifBlank { "Слушаю… говорите" }
                 is VoiceController.State.Thinking -> "«${voice.heard}»"
                 is VoiceController.State.Speaking -> "Говорю… Esc — замолчать"
-                is VoiceController.State.Preparing -> "Готовлю распознавание речи… ${voice.percent}%"
+                is VoiceController.State.Preparing -> voice.percent?.let { "Скачиваю распознавание речи… $it% · нажмите ещё раз, чтобы отменить" } ?: "Загружаю распознавание речи…"
                 is VoiceController.State.Error -> voice.message
                 VoiceController.State.Idle -> ""
             }
@@ -310,12 +352,13 @@ private fun Composer(
                     value, onChange, textStyle = MaterialTheme.typography.bodyLarge.copy(color = p.text), cursorBrush = SolidColor(p.accent), maxLines = 6,
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent { e ->
                         // Enter — отправить, Shift+Enter — новая строка.
-                        if (e.type == KeyEventType.KeyDown && e.key == Key.Enter && !e.isShiftPressed) { onSend(value); true } else false
+                        if (e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.NumPadEnter) && !e.isShiftPressed) { onSend(value); true } else false
                     },
                 )
             }
+            val preparing = voice is VoiceController.State.Preparing
             IconCircle(
-                if (listening || speaking) Icons.Rounded.Stop else Icons.Rounded.Mic, if (listening) "Остановить" else "Сказать голосом", onMic, size = 40.dp,
+                if (listening || speaking || preparing) Icons.Rounded.Stop else Icons.Rounded.Mic, if (listening || speaking || preparing) "Остановить" else "Сказать голосом", onMic, size = 40.dp,
                 tint = if (listening) Color.White else p.muted, background = if (listening) p.danger else null,
             )
             Spacer(Modifier.width(6.dp))
@@ -326,7 +369,7 @@ private fun Composer(
             ) { Icon(Icons.AutoMirrored.Rounded.Send, "Отправить", tint = if (canSend) Color.White else p.faint, modifier = Modifier.size(18.dp)) }
         }
         Text(
-            "Enter — отправить · Shift+Enter — новая строка · Ctrl+Пробел — голос",
+            "Enter — отправить · Shift+Enter — новая строка · Ctrl+Пробел — голос · Ctrl+1…5 — разделы",
             style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp),
         )
     }

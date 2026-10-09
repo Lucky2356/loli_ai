@@ -8,7 +8,7 @@ plugins {
 }
 
 /** Номер версии для установщика: только цифры «X.Y.Z» (так требует MSI); «2.9.0-beta.1» → «2.9.0». */
-val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.10.0").substringBefore('-')
+val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.11.0").substringBefore('-')
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -35,6 +35,14 @@ dependencies {
     testImplementation(libs.kotlin.test)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+tasks.test {
+    testLogging {
+        events("failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
 
 compose.desktop {

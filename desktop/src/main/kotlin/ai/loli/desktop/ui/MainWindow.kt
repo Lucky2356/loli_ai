@@ -1,6 +1,7 @@
 package ai.loli.desktop.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -37,9 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,15 +56,14 @@ enum class Section(val title: String, val icon: ImageVector) {
 }
 
 @Composable
-fun MainWindow(c: DesktopContainer, systemDark: Boolean) {
-    var section by remember { mutableStateOf(Section.CHAT) }
+fun MainWindow(c: DesktopContainer, systemDark: Boolean, section: Section, onSection: (Section) -> Unit) {
     val p = palette
     Row(Modifier.fillMaxSize().background(p.background)) {
-        Sidebar(c, section, { section = it }, systemDark)
+        Sidebar(c, section, onSection, systemDark)
         Box(Modifier.width(1.dp).fillMaxHeight().background(p.outline))
-        AnimatedContent(section, transitionSpec = { fadeIn() togetherWith fadeOut() }, modifier = Modifier.fillMaxSize()) { s ->
+        AnimatedContent(section, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, modifier = Modifier.fillMaxSize()) { s ->
             when (s) {
-                Section.CHAT -> ChatScreen(c, openSettings = { section = Section.SETTINGS })
+                Section.CHAT -> ChatScreen(c, openSettings = { onSection(Section.SETTINGS) })
                 Section.RECORDS -> RecordsScreen(c)
                 Section.PLANS -> PlansScreen(c)
                 Section.MONEY -> MoneyScreen(c)
@@ -88,17 +86,18 @@ private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -
                 Text("персональный ассистент", style = MaterialTheme.typography.labelSmall)
             }
         }
-        Section.entries.forEach { item ->
-            NavItem(item.title, item.icon, item == current) { onSelect(item) }
+        Section.entries.forEachIndexed { i, item ->
+            NavItem(item.title, item.icon, item == current, "Ctrl+${i + 1}") { onSelect(item) }
         }
         Spacer(Modifier.weight(1f))
         // Состояние: AI и голос — видно сразу, без захода в настройки.
-        val ai = s.aiEnabled && c.aiConfig(s).isComplete
+        val cfg = remember(s) { c.aiConfig(s) }
+        val ai = s.aiEnabled && cfg.isComplete
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(p.surface).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            StatusLine(if (ai) p.success else p.faint, if (ai) "AI: ${c.aiConfig(s).type.title}" else "AI выключен — работаю на компьютере")
+            StatusLine(if (ai) p.success else p.faint, if (ai) "AI: ${cfg.type.title}" else "AI выключен — работаю на компьютере")
             StatusLine(if (c.voice.output.available) p.success else p.faint, if (s.voiceReplies) "Отвечаю голосом" else "Голос выключен")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Тема", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
@@ -121,7 +120,7 @@ private fun StatusLine(color: Color, text: String) {
 }
 
 @Composable
-private fun NavItem(title: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun NavItem(title: String, icon: ImageVector, selected: Boolean, hint: String, onClick: () -> Unit) {
     val p = palette
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
@@ -141,7 +140,8 @@ private fun NavItem(title: String, icon: ImageVector, selected: Boolean, onClick
         Icon(icon, null, tint = if (selected) p.accent else p.muted, modifier = Modifier.padding(start = 9.dp).size(20.dp))
         Text(
             title, style = MaterialTheme.typography.labelLarge.copy(color = if (selected) p.text else p.muted),
-            modifier = Modifier.padding(start = 12.dp),
+            modifier = Modifier.padding(start = 12.dp).weight(1f),
         )
+        if (hovered) Text(hint, style = MaterialTheme.typography.labelSmall)
     }
 }

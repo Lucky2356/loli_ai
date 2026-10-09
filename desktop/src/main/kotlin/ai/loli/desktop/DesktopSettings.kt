@@ -1,11 +1,18 @@
 package ai.loli.desktop
 
+import ai.loli.core.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.util.Properties
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** Настройки клиента для Windows: обычный файл рядом с базой. API-ключи здесь не хранятся — они в [SecretStore]. */
+/**
+ * Настройки клиента для Windows: обычный файл рядом с базой. API-ключи здесь не хранятся — они в [SecretStore].
+ * Файл пишется в фоне и не чаще раза в полсекунды: ввод имени по буквам не дёргает диск из окна.
+ */
 class DesktopSettings(private val file: File) {
     data class Values(
         val assistantName: String = "Лоли",
@@ -27,17 +34,40 @@ class DesktopSettings(private val file: File) {
         val voiceName: String = "",
         /** После ответа-вопроса продолжать слушать без нажатия. */
         val dialogMode: Boolean = true,
+        // --- Окно (запоминается между запусками)
+        val windowWidth: Int = 1280,
+        val windowHeight: Int = 820,
+        /** Положение окна; null — пусть решит Windows. */
+        val windowX: Int? = null,
+        val windowY: Int? = null,
+        val windowMaximized: Boolean = false,
+        /** Показывали ли подсказку «Лоли свернулась в трей». */
+        val trayHintShown: Boolean = false,
     )
 
     private val _state = MutableStateFlow(load())
     val state: StateFlow<Values> = _state
     val value: Values get() = _state.value
 
+    private val writer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "loli-settings").apply { isDaemon = true } }
+    private val pending = AtomicBoolean(false)
+
     @Synchronized
     fun update(change: (Values) -> Values) {
         val v = change(_state.value)
         if (v == _state.value) return
         _state.value = v
+        if (pending.compareAndSet(false, true)) writer.schedule({ pending.set(false); save(_state.value) }, 500, TimeUnit.MILLISECONDS)
+    }
+
+    /** Записать немедленно (при выходе из программы). */
+    fun flush() {
+        pending.set(false)
+        save(_state.value)
+    }
+
+    @Synchronized
+    private fun save(v: Values) {
         runCatching {
             val p = Properties()
             p["assistantName"] = v.assistantName
@@ -53,9 +83,18 @@ class DesktopSettings(private val file: File) {
             p["speechRate"] = v.speechRate.toString()
             p["voiceName"] = v.voiceName
             p["dialogMode"] = v.dialogMode.toString()
+            p["windowWidth"] = v.windowWidth.toString()
+            p["windowHeight"] = v.windowHeight.toString()
+            v.windowX?.let { p["windowX"] = it.toString() }
+            v.windowY?.let { p["windowY"] = it.toString() }
+            p["windowMaximized"] = v.windowMaximized.toString()
+            p["trayHintShown"] = v.trayHintShown.toString()
             file.parentFile?.mkdirs()
-            file.outputStream().use { p.store(it.writer(Charsets.UTF_8), "Loli for Windows") }
-        }
+            // Сначала во временный файл, потом подмена: обрыв питания не оставит настройки пустыми.
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.outputStream().use { out -> out.writer(Charsets.UTF_8).also { p.store(it, "Loli for Windows") }.flush() }
+            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        }.onFailure { Logger.w("Settings", "Настройки не сохранились", it) }
     }
 
     private fun load(): Values = runCatching {
@@ -77,6 +116,12 @@ class DesktopSettings(private val file: File) {
             speechRate = p.getProperty("speechRate")?.toIntOrNull()?.coerceIn(-10, 10) ?: 0,
             voiceName = p.getProperty("voiceName").orEmpty(),
             dialogMode = p.getProperty("dialogMode")?.toBooleanStrictOrNull() ?: d.dialogMode,
+            windowWidth = p.getProperty("windowWidth")?.toIntOrNull()?.coerceIn(960, 8000) ?: d.windowWidth,
+            windowHeight = p.getProperty("windowHeight")?.toIntOrNull()?.coerceIn(640, 8000) ?: d.windowHeight,
+            windowX = p.getProperty("windowX")?.toIntOrNull(),
+            windowY = p.getProperty("windowY")?.toIntOrNull(),
+            windowMaximized = p.getProperty("windowMaximized")?.toBooleanStrictOrNull() ?: false,
+            trayHintShown = p.getProperty("trayHintShown")?.toBooleanStrictOrNull() ?: false,
         )
     }.getOrDefault(Values())
 }
