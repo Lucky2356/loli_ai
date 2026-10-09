@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import ai.loli.desktop.DesktopContainer
+import ai.loli.desktop.UpdateChecker
+import ai.loli.desktop.voice.LoliVoice
 
 enum class Section(val title: String, val icon: ImageVector) {
     CHAT("Чат", Icons.Rounded.AutoAwesome),
@@ -97,7 +99,7 @@ private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -
         }
         Spacer(Modifier.weight(1f))
         val update by c.updates.state.collectAsState()
-        (update as? ai.loli.desktop.UpdateChecker.State.Available)?.let { u ->
+        (update as? UpdateChecker.State.Available)?.let { u ->
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(p.accent.copy(alpha = 0.14f))
                     .clickable(onClick = openUpdate).padding(12.dp),
@@ -123,7 +125,7 @@ private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -
                 if (s.voiceReplies && c.voice.canSpeak) p.success else p.faint,
                 when {
                     !s.voiceReplies -> "Голос выключен"
-                    loliVoice -> "Голос: " + ai.loli.desktop.voice.LoliVoice.VOICES.first { it.id == c.voice.loli.effective(s.loliVoice) }.title
+                    loliVoice -> "Голос: " + LoliVoice.VOICES.first { it.id == c.voice.loli.effective(s.loliVoice) }.title
                     else -> "Голос Windows"
                 },
             )

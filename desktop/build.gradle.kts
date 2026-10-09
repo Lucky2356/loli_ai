@@ -24,7 +24,12 @@ kotlin {
 // Встроенный «Голос Лоли»: офлайн-синтез sherpa-onnx (Apache-2.0) — тот же движок и те же голоса, что на телефоне.
 // Java API и библиотеки для Windows x64 берутся из официального релиза sherpa-onnx один раз и лежат в desktop/libs.
 val sherpaVersion = "1.13.8"
-val sherpaJars = listOf("sherpa-onnx-jvm-$sherpaVersion.jar", "sherpa-onnx-native-lib-win-x64-$sherpaVersion.jar")
+// Контрольные суммы закреплены: подменённый или повреждённый файл сборка не примет.
+val sherpaChecksums = mapOf(
+    "sherpa-onnx-jvm-$sherpaVersion.jar" to "77b7b047fade4eadada96b568eb92615049aaf1dc317c7244e46c1ea38b9a63b",
+    "sherpa-onnx-native-lib-win-x64-$sherpaVersion.jar" to "33fbdbd5410e9ba9bdda94aa164ec8f7825bb49246420d8ce9bdd88219d97039",
+)
+val sherpaJars = sherpaChecksums.keys.toList()
 val sherpaDir: File = file("libs")
 sherpaJars.forEach { name ->
     val jar = File(sherpaDir, name)
@@ -36,7 +41,10 @@ sherpaJars.forEach { name ->
             tmp.outputStream().use { input.copyTo(it) }
         }
         val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
-        logger.lifecycle("$name: sha256 $digest")
+        if (digest != sherpaChecksums.getValue(name)) {
+            tmp.delete()
+            throw GradleException("$name: неверная контрольная сумма $digest")
+        }
         tmp.renameTo(jar)
     }
 }
