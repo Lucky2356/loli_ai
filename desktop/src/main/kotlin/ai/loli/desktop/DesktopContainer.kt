@@ -47,6 +47,8 @@ import java.util.Properties
  * облачный AI (ключ зашифрован DPAPI), голос, команды компьютеру и напоминания в трее.
  */
 class DesktopContainer(val dataDir: File = defaultDataDir()) {
+    init { dataDir.mkdirs() }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val time = SystemTimeSource()
     val settings = DesktopSettings(File(dataDir, "settings.properties"))
