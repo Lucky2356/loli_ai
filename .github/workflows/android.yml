@@ -48,14 +48,9 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      # Модель русской речи вшивается в установщик: микрофон работает сразу, без скачивания.
-      - name: Speech model for Windows
-        run: |
-          $zip = "$env:RUNNER_TEMP\vosk.zip"
-          Invoke-WebRequest "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip" -OutFile $zip
-          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\vosk" -Force
-          New-Item -ItemType Directory -Force desktop/resources/common | Out-Null
-          Move-Item "$env:RUNNER_TEMP\vosk\vosk-model-small-ru-0.22" desktop/resources/common/vosk-model-ru
+      # Модель распознавания и русский «Голос Лоли» вшиваются в установщик: работают сразу, без скачивания.
+      - name: Speech model and voice for Windows
+        run: ./scripts/prepare-desktop-resources.ps1
       # jpackage собирает MSI через WiX 3: он уже есть на образе, ставим только если вдруг нет.
       - name: WiX 3
         run: |

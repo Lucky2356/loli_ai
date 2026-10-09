@@ -366,7 +366,7 @@ private fun Composer(
             Box(
                 Modifier.size(40.dp).clip(CircleShape).background(if (canSend) p.gradient else SolidColor(p.surfaceHover)).clickable(enabled = canSend) { onSend(value) },
                 contentAlignment = Alignment.Center,
-            ) { Icon(Icons.AutoMirrored.Rounded.Send, "Отправить", tint = if (canSend) Color.White else p.faint, modifier = Modifier.size(18.dp)) }
+            ) { Icon(Icons.AutoMirrored.Rounded.Send, "Отправить", tint = if (canSend) p.onAccent else p.faint, modifier = Modifier.size(18.dp)) }
         }
         Text(
             "Enter — отправить · Shift+Enter — новая строка · Ctrl+Пробел — голос · Ctrl+1…5 — разделы",

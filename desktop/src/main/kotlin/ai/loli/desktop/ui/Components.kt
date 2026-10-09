@@ -24,6 +24,8 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -297,7 +299,7 @@ fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boo
         Switch(
             checked, onChange,
             colors = SwitchDefaults.colors(
-                checkedTrackColor = p.accent, checkedThumbColor = Color.White, uncheckedTrackColor = p.surfaceHover,
+                checkedTrackColor = p.accent, checkedThumbColor = p.onAccent, uncheckedTrackColor = p.surfaceHover,
                 uncheckedThumbColor = p.muted, uncheckedBorderColor = Color.Transparent,
             ),
         )
@@ -316,6 +318,23 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
                     .then(if (on) Modifier.border(1.dp, p.outline, RoundedCornerShape(9.dp)) else Modifier)
                     .clickable { onSelect(value) }.padding(horizontal = 14.dp, vertical = 7.dp),
             ) { Text(title, style = MaterialTheme.typography.labelLarge.copy(color = if (on) p.text else p.muted)) }
+        }
+    }
+}
+
+/** Чипы с переносом строк — для длинных наборов вариантов (категории трат). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun <T> FlowChips(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
+    val p = palette
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (value, title) ->
+            val on = value == selected
+            Box(
+                Modifier.clip(RoundedCornerShape(10.dp)).background(if (on) p.accent.copy(alpha = 0.16f) else p.surfaceHigh)
+                    .border(1.dp, if (on) p.accent.copy(alpha = 0.6f) else p.outline, RoundedCornerShape(10.dp))
+                    .clickable { onSelect(value) }.padding(horizontal = 12.dp, vertical = 6.dp),
+            ) { Text(title, style = MaterialTheme.typography.labelLarge.copy(color = if (on) p.accent else p.text)) }
         }
     }
 }

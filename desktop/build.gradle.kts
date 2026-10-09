@@ -8,7 +8,7 @@ plugins {
 }
 
 /** Номер версии для установщика: только цифры «X.Y.Z» (так требует MSI); «2.9.0-beta.1» → «2.9.0». */
-val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.11.0").substringBefore('-')
+val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.12.0").substringBefore('-')
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -19,8 +19,29 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
+// Встроенный «Голос Лоли»: офлайн-синтез sherpa-onnx (Apache-2.0) — тот же движок и те же голоса, что на телефоне.
+// Java API и библиотеки для Windows x64 берутся из официального релиза sherpa-onnx один раз и лежат в desktop/libs.
+val sherpaVersion = "1.13.8"
+val sherpaJars = listOf("sherpa-onnx-jvm-$sherpaVersion.jar", "sherpa-onnx-native-lib-win-x64-$sherpaVersion.jar")
+val sherpaDir: File = file("libs")
+sherpaJars.forEach { name ->
+    val jar = File(sherpaDir, name)
+    if (!jar.exists()) {
+        sherpaDir.mkdirs()
+        val tmp = File(jar.path + ".part")
+        logger.lifecycle("Скачиваю $name…")
+        java.net.URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/$name").toURL().openStream().use { input ->
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+        logger.lifecycle("$name: sha256 $digest")
+        tmp.renameTo(jar)
+    }
+}
+
 dependencies {
     implementation(project(":core"))
+    implementation(files(sherpaJars.map { File(sherpaDir, it) }))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)

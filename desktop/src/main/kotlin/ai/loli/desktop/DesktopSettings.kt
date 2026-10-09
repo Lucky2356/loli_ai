@@ -34,6 +34,20 @@ class DesktopSettings(private val file: File) {
         val voiceName: String = "",
         /** После ответа-вопроса продолжать слушать без нажатия. */
         val dialogMode: Boolean = true,
+        /** «loli» — встроенный русский голос (как на телефоне), «windows» — синтезатор Windows. */
+        val voiceMode: String = "loli",
+        /** Встроенный голос: denis, irina, vera… */
+        val loliVoice: String = "denis",
+        /** Скорость встроенного голоса в процентах: 70…150. */
+        val loliSpeed: Int = 100,
+        // --- Оформление
+        /** Цвет Лоли: loli, indigo, green… (как на телефоне). */
+        val accent: String = "loli",
+        // --- Напоминания
+        /** Окно напоминания поверх всех программ (не зависит от уведомлений Windows). */
+        val reminderPopup: Boolean = true,
+        /** Звуковой сигнал при напоминании. */
+        val reminderSound: Boolean = true,
         // --- Окно (запоминается между запусками)
         val windowWidth: Int = 1280,
         val windowHeight: Int = 820,
@@ -83,6 +97,12 @@ class DesktopSettings(private val file: File) {
             p["speechRate"] = v.speechRate.toString()
             p["voiceName"] = v.voiceName
             p["dialogMode"] = v.dialogMode.toString()
+            p["voiceMode"] = v.voiceMode
+            p["loliVoice"] = v.loliVoice
+            p["loliSpeed"] = v.loliSpeed.toString()
+            p["accent"] = v.accent
+            p["reminderPopup"] = v.reminderPopup.toString()
+            p["reminderSound"] = v.reminderSound.toString()
             p["windowWidth"] = v.windowWidth.toString()
             p["windowHeight"] = v.windowHeight.toString()
             v.windowX?.let { p["windowX"] = it.toString() }
@@ -116,6 +136,12 @@ class DesktopSettings(private val file: File) {
             speechRate = p.getProperty("speechRate")?.toIntOrNull()?.coerceIn(-10, 10) ?: 0,
             voiceName = p.getProperty("voiceName").orEmpty(),
             dialogMode = p.getProperty("dialogMode")?.toBooleanStrictOrNull() ?: d.dialogMode,
+            voiceMode = p.getProperty("voiceMode")?.takeIf { it == "loli" || it == "windows" } ?: d.voiceMode,
+            loliVoice = p.getProperty("loliVoice")?.ifBlank { null } ?: d.loliVoice,
+            loliSpeed = p.getProperty("loliSpeed")?.toIntOrNull()?.coerceIn(70, 150) ?: d.loliSpeed,
+            accent = p.getProperty("accent")?.ifBlank { null } ?: d.accent,
+            reminderPopup = p.getProperty("reminderPopup")?.toBooleanStrictOrNull() ?: d.reminderPopup,
+            reminderSound = p.getProperty("reminderSound")?.toBooleanStrictOrNull() ?: d.reminderSound,
             windowWidth = p.getProperty("windowWidth")?.toIntOrNull()?.coerceIn(960, 8000) ?: d.windowWidth,
             windowHeight = p.getProperty("windowHeight")?.toIntOrNull()?.coerceIn(640, 8000) ?: d.windowHeight,
             windowX = p.getProperty("windowX")?.toIntOrNull(),
