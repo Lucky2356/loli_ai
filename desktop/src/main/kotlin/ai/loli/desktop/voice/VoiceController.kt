@@ -38,13 +38,28 @@ class VoiceController(private val c: DesktopContainer) {
     @Volatile private var interrupted = false
 
     val input = SpeechInput(c.dataDir)
+    /** Синтезатор Windows — запасной голос (и для тех, кто выбрал голоса Windows). */
     val output = SpeechOutput()
+    /** Встроенный русский «Голос Лоли» — как на телефоне. */
+    val loli = LoliVoice(c.dataDir)
+
+    /** Можно ли вообще говорить на этом компьютере. */
+    val canSpeak: Boolean get() = loli.anyReady() || output.available
+
+    /** Проговорить текст выбранным голосом и дождаться конца (блокирующий вызов, из фонового потока). */
+    fun say(text: String) {
+        val s = c.settings.value
+        val spoken = s.voiceMode == "loli" && loli.anyReady() && loli.speak(text, s.loliVoice, s.loliSpeed / 100f)
+        if (!spoken) output.speak(text, s.voiceName, s.speechRate)
+    }
+
+    private fun stopSpeech() { loli.stop(); output.stop() }
 
     /** Нажатие на микрофон: начать слушать или остановить то, что идёт сейчас. */
     fun toggle() {
         when (_state.value) {
             is State.Listening -> input.stop()
-            is State.Speaking -> { interrupted = true; output.stop() }
+            is State.Speaking -> { interrupted = true; stopSpeech() }
             is State.Preparing -> stopAll()
             is State.Thinking -> Unit
             else -> start()
@@ -53,7 +68,7 @@ class VoiceController(private val c: DesktopContainer) {
 
     fun stopAll() {
         interrupted = true
-        input.stop(); output.stop(); job?.cancel()
+        input.stop(); stopSpeech(); job?.cancel()
         _state.value = State.Idle
     }
 
@@ -61,12 +76,18 @@ class VoiceController(private val c: DesktopContainer) {
     fun shutdown() {
         interrupted = true
         input.stop(); job?.cancel()
-        output.shutdown(); input.close()
+        loli.release(); output.shutdown(); input.close()
     }
 
     /** Подготовить заранее то, что уже есть на диске: синтезатор и (если модель на месте) распознавание. */
     fun warmUp() {
-        if (c.settings.value.voiceReplies) output.warmUp()
+        val s = c.settings.value
+        if (!s.voiceReplies) return
+        if (s.voiceMode == "loli" && loli.anyReady()) {
+            Thread({ runCatching { loli.warmUp(s.loliVoice) } }, "loli-voice-warmup").apply { isDaemon = true }.start()
+        } else {
+            output.warmUp()
+        }
     }
 
     private fun fail(message: String) {
@@ -130,9 +151,9 @@ class VoiceController(private val c: DesktopContainer) {
     /** Ответ вслух (если включено). */
     suspend fun speak(reply: AssistantReply) {
         val s = c.settings.value
-        if (!s.voiceReplies || !output.available || reply.text.isBlank() || interrupted) return
+        if (!s.voiceReplies || !canSpeak || reply.text.isBlank() || interrupted) return
         _state.value = State.Speaking(reply.text)
-        withContext(Dispatchers.IO) { output.speak(SpeechText.forSpeech(reply.text), s.voiceName, s.speechRate) }
+        withContext(Dispatchers.IO) { say(SpeechText.forSpeech(reply.text)) }
         if (_state.value is State.Speaking) _state.value = State.Idle
     }
 }

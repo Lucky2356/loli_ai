@@ -1,5 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
+import java.security.MessageDigest
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -8,7 +10,7 @@ plugins {
 }
 
 /** Номер версии для установщика: только цифры «X.Y.Z» (так требует MSI); «2.9.0-beta.1» → «2.9.0». */
-val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.11.0").substringBefore('-')
+val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.12.0").substringBefore('-')
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -19,8 +21,37 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
+// Встроенный «Голос Лоли»: офлайн-синтез sherpa-onnx (Apache-2.0) — тот же движок и те же голоса, что на телефоне.
+// Java API и библиотеки для Windows x64 берутся из официального релиза sherpa-onnx один раз и лежат в desktop/libs.
+val sherpaVersion = "1.13.8"
+// Контрольные суммы закреплены: подменённый или повреждённый файл сборка не примет.
+val sherpaChecksums = mapOf(
+    "sherpa-onnx-jvm-$sherpaVersion.jar" to "77b7b047fade4eadada96b568eb92615049aaf1dc317c7244e46c1ea38b9a63b",
+    "sherpa-onnx-native-lib-win-x64-$sherpaVersion.jar" to "33fbdbd5410e9ba9bdda94aa164ec8f7825bb49246420d8ce9bdd88219d97039",
+)
+val sherpaJars = sherpaChecksums.keys.toList()
+val sherpaDir: File = file("libs")
+sherpaJars.forEach { name ->
+    val jar = File(sherpaDir, name)
+    if (!jar.exists()) {
+        sherpaDir.mkdirs()
+        val tmp = File(jar.path + ".part")
+        logger.lifecycle("Скачиваю $name…")
+        URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/$name").toURL().openStream().use { input ->
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes()).joinToString("") { "%02x".format(it) }
+        if (digest != sherpaChecksums.getValue(name)) {
+            tmp.delete()
+            throw GradleException("$name: неверная контрольная сумма $digest")
+        }
+        tmp.renameTo(jar)
+    }
+}
+
 dependencies {
     implementation(project(":core"))
+    implementation(files(sherpaJars.map { File(sherpaDir, it) }))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)

@@ -100,7 +100,7 @@ class DesktopInfraTest {
             // Просроченное напоминание показывается один раз, с пометкой «Было в…».
             c.store.reminders.create("Позвонить маме", Instant.now().minusSeconds(600), null, c.time.zone().id)
             val shown = ArrayList<String>()
-            val ticker = ReminderTicker(c) { _, t -> shown += t }
+            val ticker = ReminderTicker(c) { shown += it.full }
             ticker.tick()
             ticker.tick()
             assertEquals(1, shown.size, shown.toString())
@@ -112,6 +112,88 @@ class DesktopInfraTest {
             assertTrue(c.store.conversations.recent().isEmpty())
         } finally {
             c.close()
+        }
+    }
+
+    @Test fun newerVersionComparison() {
+        assertTrue(UpdateChecker.newer("2.12.0", "2.11.0"))
+        assertTrue(UpdateChecker.newer("2.11.10", "2.11.9"))
+        assertTrue(UpdateChecker.newer("3.0", "2.99.99"))
+        assertFalse(UpdateChecker.newer("2.11.0", "2.11.0"))
+        assertFalse(UpdateChecker.newer("2.10.5", "2.11.0"))
+        assertFalse(UpdateChecker.newer("2.11.0-beta.1", "2.11.0"))
+    }
+
+    @Test fun newSettingsSurviveRestart() {
+        val file = File(dir, "settings.properties")
+        val s = DesktopSettings(file)
+        s.update { it.copy(voiceMode = "windows", loliVoice = "irina", loliSpeed = 120, accent = "teal", reminderPopup = false, reminderSound = false) }
+        s.flush()
+        val v = DesktopSettings(file).value
+        assertEquals("windows", v.voiceMode)
+        assertEquals("irina", v.loliVoice)
+        assertEquals(120, v.loliSpeed)
+        assertEquals("teal", v.accent)
+        assertFalse(v.reminderPopup)
+        assertFalse(v.reminderSound)
+    }
+
+    @Test fun backupMovesDataBetweenComputers() = runBlocking {
+        val a = DesktopContainer(File(dir, "a"))
+        val b = DesktopContainer(File(dir, "b"))
+        try {
+            a.store.notes.create(ai.loli.core.model.NoteKind.NOTE, "Пароль от Wi-Fi", "на обороте роутера")
+            a.store.tasks.create("Купить хлеб")
+            a.settings.update { it.copy(userName = "Аня", city = "Казань") }
+            val bytes = a.backup.export("пароль-123".toCharArray(), includeChat = false)
+            val report = b.backup.restore(bytes, "пароль-123".toCharArray())
+            assertEquals(2, report.total)
+            assertEquals("Пароль от Wi-Fi", b.store.notes.all().single().title)
+            assertEquals("Аня", b.settings.value.userName)
+            assertEquals("Казань", b.settings.value.city)
+            val wrong = runCatching { b.backup.restore(bytes, "не тот пароль".toCharArray()) }
+            assertTrue(wrong.isFailure)
+        } finally {
+            a.close(); b.close()
+        }
+    }
+
+    @Test fun alertsShowSnoozeAndDismiss() = runBlocking {
+        val c = DesktopContainer(dir)
+        try {
+            c.settings.update { it.copy(reminderSound = false) }
+            c.alerts.show("Напоминание", "Выпить таблетку", null, routine = false)
+            val alert = c.alerts.alerts.value.single()
+            c.alerts.snooze(alert, java.time.Duration.ofMinutes(10))
+            assertTrue(c.alerts.alerts.value.isEmpty())
+            val r = c.store.reminders.active().single()
+            assertEquals("Выпить таблетку", r.text)
+            assertTrue(r.triggerAt.isAfter(Instant.now().plusSeconds(500)))
+            repeat(6) { c.alerts.show("Напоминание", "№$it", null, routine = false) }
+            assertEquals(4, c.alerts.alerts.value.size, "больше четырёх сразу не показываем")
+            c.alerts.dismissAll()
+            assertTrue(c.alerts.alerts.value.isEmpty())
+        } finally {
+            c.close()
+        }
+    }
+
+    @Test fun builtInRussianVoiceSynthesizes() {
+        // В CI голос по умолчанию лежит в desktop/resources/common/loli-voice (scripts/prepare-desktop-resources.ps1).
+        val bundled = File("resources/common")
+        assumeTrue("нет вшитого голоса (запуск без ресурсов установщика)", File(bundled, "loli-voice").isDirectory)
+        System.setProperty("compose.application.resources.dir", bundled.absolutePath)
+        val voice = ai.loli.desktop.voice.LoliVoice(dir)
+        assertTrue(voice.isReady(ai.loli.desktop.voice.LoliVoice.DEFAULT), "вшитый голос найден")
+        try {
+            val start = System.nanoTime()
+            val (samples, rate) = assertNotNull(voice.synthesize("Привет! Я Лоли. Напоминаю: в три часа созвон с командой.", ai.loli.desktop.voice.LoliVoice.DEFAULT))
+            val seconds = samples.size.toDouble() / rate
+            println("Голос Лоли: ${"%.1f".format(seconds)} с речи за ${(System.nanoTime() - start) / 1_000_000} мс, $rate Гц")
+            assertTrue(seconds > 2.0, "синтезировано слишком мало: $seconds с")
+            assertTrue(samples.any { kotlin.math.abs(it) > 0.05f }, "в синтезе тишина")
+        } finally {
+            voice.release()
         }
     }
 

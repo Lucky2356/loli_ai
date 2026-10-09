@@ -17,6 +17,7 @@ import ai.loli.core.assistant.Persona
 import ai.loli.core.assistant.QuickAdd
 import ai.loli.core.assistant.ReminderScheduler
 import ai.loli.core.assistant.TargetResolver
+import ai.loli.core.backup.BackupService
 import ai.loli.core.data.LocalStore
 import ai.loli.core.db.LoliDatabase
 import ai.loli.core.health.Habits
@@ -46,6 +47,8 @@ import java.util.Properties
  * облачный AI (ключ зашифрован DPAPI), голос, команды компьютеру и напоминания в трее.
  */
 class DesktopContainer(val dataDir: File = defaultDataDir()) {
+    init { dataDir.mkdirs() }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val time = SystemTimeSource()
     val settings = DesktopSettings(File(dataDir, "settings.properties"))
@@ -207,6 +210,14 @@ class DesktopContainer(val dataDir: File = defaultDataDir()) {
     }
 
     val voice = VoiceController(this)
+
+    /** Сработавшие напоминания на экране (окно поверх всех программ). */
+    val alerts = ReminderAlerts(this)
+
+    /** Резервная копия — тот же формат, что на телефоне: копию с телефона можно восстановить здесь и наоборот. */
+    val backup = BackupService(store, DesktopBackupExtras(settings), System.getProperty("jpackage.app-version") ?: "dev")
+
+    val updates = UpdateChecker(http)
 
     /** Выход из программы: остановить голос и фоновые задачи, закрыть сеть и базу. */
     fun close() {

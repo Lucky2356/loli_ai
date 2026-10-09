@@ -35,3 +35,4 @@ app/vosk-cache/
 app/libs/sherpa-onnx-*.aar
 app/libs/llama.cpp-*.tar.gz
 desktop/resources/
+desktop/libs/

@@ -30,7 +30,8 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.StickyNote2
+import androidx.compose.material.icons.automirrored.rounded.StickyNote2
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +39,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,10 +49,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import ai.loli.desktop.DesktopContainer
+import ai.loli.desktop.UpdateChecker
+import ai.loli.desktop.voice.LoliVoice
 
 enum class Section(val title: String, val icon: ImageVector) {
     CHAT("Чат", Icons.Rounded.AutoAwesome),
-    RECORDS("Записи", Icons.Rounded.StickyNote2),
+    RECORDS("Записи", Icons.AutoMirrored.Rounded.StickyNote2),
     PLANS("Планы", Icons.Rounded.CalendarMonth),
     MONEY("Финансы", Icons.Rounded.AccountBalanceWallet),
     SETTINGS("Настройки", Icons.Rounded.Tune),
@@ -58,23 +63,26 @@ enum class Section(val title: String, val icon: ImageVector) {
 @Composable
 fun MainWindow(c: DesktopContainer, systemDark: Boolean, section: Section, onSection: (Section) -> Unit) {
     val p = palette
+    var settingsTarget by remember { mutableStateOf(SettingsSection.PROFILE) }
     Row(Modifier.fillMaxSize().background(p.background)) {
-        Sidebar(c, section, onSection, systemDark)
+        Sidebar(c, section, { if (it == Section.SETTINGS) settingsTarget = SettingsSection.PROFILE; onSection(it) }, systemDark) {
+            settingsTarget = SettingsSection.ABOUT; onSection(Section.SETTINGS)
+        }
         Box(Modifier.width(1.dp).fillMaxHeight().background(p.outline))
         AnimatedContent(section, transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) }, modifier = Modifier.fillMaxSize()) { s ->
             when (s) {
-                Section.CHAT -> ChatScreen(c, openSettings = { onSection(Section.SETTINGS) })
+                Section.CHAT -> ChatScreen(c, openSettings = { settingsTarget = SettingsSection.AI; onSection(Section.SETTINGS) })
                 Section.RECORDS -> RecordsScreen(c)
                 Section.PLANS -> PlansScreen(c)
                 Section.MONEY -> MoneyScreen(c)
-                Section.SETTINGS -> SettingsScreen(c)
+                Section.SETTINGS -> SettingsScreen(c, settingsTarget)
             }
         }
     }
 }
 
 @Composable
-private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -> Unit, systemDark: Boolean) {
+private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -> Unit, systemDark: Boolean, openUpdate: () -> Unit) {
     val p = palette
     val s by c.settings.state.collectAsState()
     Column(Modifier.width(232.dp).fillMaxHeight().background(p.sidebar).padding(horizontal = 14.dp, vertical = 18.dp)) {
@@ -90,6 +98,20 @@ private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -
             NavItem(item.title, item.icon, item == current, "Ctrl+${i + 1}") { onSelect(item) }
         }
         Spacer(Modifier.weight(1f))
+        val update by c.updates.state.collectAsState()
+        (update as? UpdateChecker.State.Available)?.let { u ->
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(p.accent.copy(alpha = 0.14f))
+                    .clickable(onClick = openUpdate).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Download, null, tint = p.accent, modifier = Modifier.size(18.dp))
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text("Вышла версия ${u.version}", style = MaterialTheme.typography.labelLarge)
+                    Text("Нажмите, чтобы обновить", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
         // Состояние: AI и голос — видно сразу, без захода в настройки.
         val cfg = remember(s) { c.aiConfig(s) }
         val ai = s.aiEnabled && cfg.isComplete
@@ -98,7 +120,15 @@ private fun Sidebar(c: DesktopContainer, current: Section, onSelect: (Section) -
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             StatusLine(if (ai) p.success else p.faint, if (ai) "AI: ${cfg.type.title}" else "AI выключен — работаю на компьютере")
-            StatusLine(if (c.voice.output.available) p.success else p.faint, if (s.voiceReplies) "Отвечаю голосом" else "Голос выключен")
+            val loliVoice = s.voiceMode == "loli" && c.voice.loli.anyReady()
+            StatusLine(
+                if (s.voiceReplies && c.voice.canSpeak) p.success else p.faint,
+                when {
+                    !s.voiceReplies -> "Голос выключен"
+                    loliVoice -> "Голос: " + LoliVoice.VOICES.first { it.id == c.voice.loli.effective(s.loliVoice) }.title
+                    else -> "Голос Windows"
+                },
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Тема", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                 val dark = s.darkTheme ?: systemDark

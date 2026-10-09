@@ -27,7 +27,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberTrayState
 import androidx.compose.ui.window.rememberWindowState
 import ai.loli.core.util.Logger
+import ai.loli.desktop.ui.Accent
 import ai.loli.desktop.ui.LoliIcon
+import ai.loli.desktop.ui.ReminderPopups
 import ai.loli.desktop.ui.LoliTheme
 import ai.loli.desktop.ui.MainWindow
 import ai.loli.desktop.ui.Section
@@ -77,6 +79,8 @@ fun main(args: Array<String>) {
     application {
         var visible by remember { mutableStateOf(!startHidden) }
         var section by remember { mutableStateOf(Section.CHAT) }
+        // Тема системы читается внутри окна; окно напоминаний берёт её отсюда.
+        var systemDarkNow by remember { mutableStateOf(true) }
         val tray = rememberTrayState()
         val icon: Painter = rememberVectorPainter(LoliIcon)
         val settings by c.settings.state.collectAsState()
@@ -88,9 +92,20 @@ fun main(args: Array<String>) {
         )
 
         LaunchedEffect(Unit) {
-            ReminderTicker(c) { title, text -> tray.sendNotification(Notification(title, text, Notification.Type.Info)) }.start()
+            // Напоминание: окно поверх всех программ со звуком (не зависит от уведомлений Windows) и уведомление в трее.
+            ReminderTicker(c) { fired ->
+                if (c.settings.value.reminderPopup) c.alerts.show(fired.title, fired.text, fired.note, fired.routine)
+                else if (c.settings.value.reminderSound) ReminderAlerts.Chime.play()
+                runCatching { tray.sendNotification(Notification(fired.title, fired.full, Notification.Type.Info)) }
+            }.start()
             delay(3_000)
             c.voice.warmUp()
+            // Обновления: при запуске и дальше раз в 12 часов.
+            while (true) {
+                delay(10_000)
+                c.updates.check()
+                delay(12L * 3600 * 1000)
+            }
         }
         LaunchedEffect(Unit) {
             showRequests.drop(1).collect { visible = true; windowState.isMinimized = false }
@@ -159,7 +174,11 @@ fun main(args: Array<String>) {
             }
             LaunchedEffect(Unit) { showRequests.drop(1).collect { window.toFront(); window.requestFocus() } }
             val systemDark = isSystemInDarkTheme()
-            LoliTheme(settings.darkTheme ?: systemDark) { MainWindow(c, systemDark, section) { section = it } }
+            LaunchedEffect(systemDark) { systemDarkNow = systemDark }
+            LoliTheme(settings.darkTheme ?: systemDark, Accent.of(settings.accent)) { MainWindow(c, systemDark, section) { section = it } }
+        }
+        ReminderPopups(c, dark = settings.darkTheme ?: systemDarkNow, accent = Accent.of(settings.accent)) {
+            visible = true; windowState.isMinimized = false; section = Section.PLANS
         }
     }
     shutdown()
