@@ -21,6 +21,11 @@ data class WhenSpec(
     val ambiguousHour: Boolean = false,
     /** День недели назван словом («в пятницу»); нужен, чтобы в саму пятницу до названного часа взять сегодня, а не через неделю. */
     val weekday: DayOfWeek? = null,
+    /**
+     * Время названо частью суток («днём», «в обед», «вечером») — до какого часа эта часть длится.
+     * Если её начало сегодня уже прошло, а сама она ещё идёт, напоминание ставится на ближайшие полчаса, а не на завтра.
+     */
+    val softUntil: LocalTime? = null,
 ) {
     val isEmpty: Boolean get() = date == null && time == null && offset == null && recurrence == null
 }
@@ -90,6 +95,12 @@ class RuDateTimeParser {
             if (sameDay.isAfter(nowZ)) return sameDay.toInstant()
         }
         var candidate = ZonedDateTime.of(date, time, zone)
+        // «Напомни днём», сказанное в 14:30: день ещё идёт — через полчаса, а не завтра в 13:00.
+        val until = spec.softUntil
+        if (until != null && !candidate.isAfter(nowZ) && date == nowZ.toLocalDate()) {
+            val soon = nowZ.plusMinutes(30).let { z -> z.withSecond(0).withNano(0).let { it.plusMinutes(((15 - it.minute % 15) % 15).toLong()) } }
+            if (soon.toLocalDate() == date && soon.toLocalTime().isBefore(until)) return soon.toInstant()
+        }
         if (spec.date == null && !candidate.isAfter(nowZ)) candidate = candidate.plusDays(1)
         return candidate.toInstant()
     }
@@ -357,7 +368,12 @@ class RuDateTimeParser {
                 // Без сильного предлога («в», «к») число считаем временем только с «утра/вечера/часов» —
                 // иначе это может быть сумма или количество («на 10 человек»).
                 val strongPrep = hasPrep && w in STRONG_TIME_PREPOSITIONS
-                if (!strongPrep && !hadHourWord && partOfDay !in PART_OF_DAY) return@run
+                // «на 17:45», «на семнадцать сорок пять», «сегодня на 18» — с «на» тоже время, если это похоже на часы:
+                // есть минуты или час после полудня, и дальше не количество («на 18 человек»).
+                val naTime = w == "на" && (minute > 0 || hour in 13..23) && at(i + count)?.let { next ->
+                    next in NOT_MINUTE_FOLLOWERS || QUANTITY_WORDS.any { next.startsWith(it) } || next in Money.currencyWords
+                } != true
+                if (!strongPrep && !hadHourWord && !naTime && partOfDay !in PART_OF_DAY) return@run
                 // «до 10 числа» — это дата, а не время
                 if (at(i + count) == "числа" || at(i + count) == "число" || at(i + count) == "го" || at(i + count) == "числу") return@run
                 // «в 5 рублей» — не время.
@@ -385,7 +401,11 @@ class RuDateTimeParser {
         }
         // «в обед», «после обеда», «перед сном», «в конце дня», «с утра»
         TWO_WORD_TIMES["$w ${at(i + 1)}"]?.let { time ->
-            return Match(2, if (spec.time == null) spec.copy(time = time) else spec)
+            return Match(2, if (spec.time == null) spec.copy(time = time, softUntil = SOFT_UNTIL["$w ${at(i + 1)}"]) else spec)
+        }
+        // «до вечера», «до обеда» — успеть до этой части суток: напоминание чуть раньше её начала.
+        if (w == "до" && spec.time == null) {
+            DEADLINE_TIMES[at(i + 1)]?.let { time -> return Match(2, spec.copy(time = time)) }
         }
         // «на выходных», «в выходные» — ближайшая суббота
         if ((w == "на" && at(i + 1) == "выходных") || (w == "в" && at(i + 1) == "выходные")) {
@@ -400,7 +420,7 @@ class RuDateTimeParser {
             }
         }
         PART_OF_DAY_ADVERBS[w]?.let { time ->
-            if (spec.time == null) return Match(1, spec.copy(time = time))
+            if (spec.time == null) return Match(1, spec.copy(time = time, softUntil = SOFT_UNTIL[w]))
             // «в 7 вечером» — сдвигаем уже названный час во вторую половину дня
             val current = spec.time
             if (time.hour >= 13 && current.hour in 1..11) return Match(1, spec.copy(time = current.plusHours(12), ambiguousHour = false))
@@ -448,6 +468,8 @@ class RuDateTimeParser {
         private val WEEKDAY_PREPOSITIONS = setOf("в", "во", "на", "к", "до", "с")
         private val TIME_PREPOSITIONS = setOf("в", "во", "к", "до", "около", "на")
         private val STRONG_TIME_PREPOSITIONS = setOf("в", "во", "к", "около")
+        /** После «на 18 …» — это количество, а не время. */
+        private val QUANTITY_WORDS = listOf("чел", "шт", "гост", "перс", "мест", "порц", "процент", "кг", "кило", "грам", "литр", "метр", "км", "%", "лет", "год", "минут", "секунд")
         private val PART_OF_DAY = setOf("утра", "дня", "вечера", "ночи")
         private val PART_OF_DAY_ADVERBS = mapOf(
             "утром" to LocalTime.of(9, 0), "днем" to LocalTime.of(13, 0),
@@ -458,6 +480,16 @@ class RuDateTimeParser {
             "в конце" to null, "с утра" to LocalTime.of(9, 0), "рано утром" to LocalTime.of(7, 0),
             "поздно вечером" to LocalTime.of(22, 0),
         ).filterValues { it != null }.mapValues { it.value!! }
+        /** До какого часа длится часть суток (для «днём», сказанного в 14:30, — напомнить сегодня). */
+        private val SOFT_UNTIL = mapOf(
+            "утром" to LocalTime.of(12, 0), "с утра" to LocalTime.of(12, 0), "рано утром" to LocalTime.of(9, 0),
+            "днем" to LocalTime.of(17, 0), "в обед" to LocalTime.of(15, 0), "после обеда" to LocalTime.of(18, 0),
+            "вечером" to LocalTime.of(23, 0), "поздно вечером" to LocalTime.of(23, 30), "перед сном" to LocalTime.of(23, 30),
+            "ночью" to LocalTime.of(23, 59),
+        )
+        private val DEADLINE_TIMES = mapOf(
+            "обеда" to LocalTime.of(12, 30), "вечера" to LocalTime.of(17, 30), "ночи" to LocalTime.of(22, 0), "утра" to LocalTime.of(8, 30),
+        )
         private val SOME_WORDS = mapOf("несколько" to 3.0, "пару" to 2.0, "пара" to 2.0)
         private val WEEK_SHIFT = linkedMapOf("позапрошл" to -2, "прошл" to -1, "следующ" to 1, "эт" to 0, "текущ" to 0)
         private val NOT_MINUTE_FOLLOWERS = setOf("дня", "дней", "день", "недели", "недель", "раз", "раза", "человек", "штук")

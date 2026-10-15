@@ -57,6 +57,8 @@ class DesktopSettings(private val file: File) {
         val windowMaximized: Boolean = false,
         /** Показывали ли подсказку «Лоли свернулась в трей». */
         val trayHintShown: Boolean = false,
+        /** Автозапуск с Windows уже включали при первом запуске (дальше решает пользователь). */
+        val autostartOffered: Boolean = false,
     )
 
     private val _state = MutableStateFlow(load())
@@ -109,6 +111,7 @@ class DesktopSettings(private val file: File) {
             v.windowY?.let { p["windowY"] = it.toString() }
             p["windowMaximized"] = v.windowMaximized.toString()
             p["trayHintShown"] = v.trayHintShown.toString()
+            p["autostartOffered"] = v.autostartOffered.toString()
             file.parentFile?.mkdirs()
             // Сначала во временный файл, потом подмена: обрыв питания не оставит настройки пустыми.
             val tmp = File(file.parentFile, file.name + ".tmp")
@@ -148,6 +151,7 @@ class DesktopSettings(private val file: File) {
             windowY = p.getProperty("windowY")?.toIntOrNull(),
             windowMaximized = p.getProperty("windowMaximized")?.toBooleanStrictOrNull() ?: false,
             trayHintShown = p.getProperty("trayHintShown")?.toBooleanStrictOrNull() ?: false,
+            autostartOffered = p.getProperty("autostartOffered")?.toBooleanStrictOrNull() ?: false,
         )
     }.getOrDefault(Values())
 }

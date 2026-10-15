@@ -1,6 +1,7 @@
 package ai.loli.desktop
 
 import ai.loli.core.assistant.RuFormat
+import ai.loli.core.assistant.TaskReminders
 import ai.loli.core.model.Routine
 import ai.loli.core.util.Logger
 import kotlinx.coroutines.Job
@@ -53,8 +54,12 @@ class ReminderTicker(private val c: DesktopContainer, private val notify: (Fired
                 notify(Fired(r.text.removePrefix(Routine.SCHEDULE_PREFIX), reply.text.substringAfter('\n', reply.text), null, routine = true))
                 continue
             }
+            // Напоминание к сроку задачи, а задача уже выполнена или удалена — не показываем.
+            if (TaskReminders.obsolete(r.text, c.store.tasks)) continue
             val note = if (late > Duration.ofMinutes(2)) "Было в " + RuFormat.time(r.triggerAt.atZone(c.time.zone()).toLocalTime()) else null
-            runCatching { notify(Fired("Напоминание", r.text, note, routine = false)) }.onFailure { Logger.w("Reminders", "Не удалось показать напоминание", it) }
+            val fired = if (TaskReminders.isTaskReminder(r.text)) Fired("Пора: задача", TaskReminders.title(r.text), note, routine = false)
+            else Fired("Напоминание", r.text, note, routine = false)
+            runCatching { notify(fired) }.onFailure { Logger.w("Reminders", "Не удалось показать напоминание", it) }
         }
         return c.store.reminders.active().filter { it.triggerAt.isAfter(now) }.minOfOrNull { it.triggerAt }
     }

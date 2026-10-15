@@ -130,8 +130,12 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
             is SlotRequest.ReminderTime -> {
                 val parsed = dates.parse(text, today)
                 if (parsed.spec.isEmpty) return null
+                // «сегодня» без часа — уточняем время, а не ставим на 9 утра, которые уже прошли.
+                if (todayWithoutTime(parsed.spec, today)) {
+                    return AssistantPlan("", emptyList(), slot = slot.copy(question = "Во сколько сегодня? Например: ${exampleTime(now, zone)}."))
+                }
                 val trigger = dates.resolveTrigger(parsed.spec, now, zone) ?: return null
-                if (!trigger.isAfter(now)) return AssistantPlan("", emptyList(), slot = slot.copy(question = "Это время уже прошло. Когда напомнить?"))
+                if (!trigger.isAfter(now)) return AssistantPlan("", emptyList(), slot = slot.copy(question = "Это время уже прошло. Когда напомнить? Например: ${exampleTime(now, zone)}."))
                 plan(AssistantAction.CreateReminder(slot.text, trigger, dates.effectiveRecurrence(parsed.spec)))
             }
             is SlotRequest.SaveAsNote -> when {
@@ -582,16 +586,24 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
         if (text.isEmpty()) return AssistantPlan("", listOf(AssistantAction.Clarify("О чём напомнить?")))
         text = text.replaceFirstChar { it.uppercase() }
         if (parsed.spec.isEmpty) {
-            return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Когда напомнить ${RuFormat.quote(text)}? Например: «завтра в 10» или «через час»."))
+            return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Когда напомнить ${RuFormat.quote(text)}? Например: ${exampleTime(now, zone)}."))
+        }
+        // «напомни сегодня позвонить маме» — день есть, часа нет: спрашиваем «во сколько», а не переносим на завтра.
+        if (todayWithoutTime(parsed.spec, now.atZone(zone).toLocalDate())) {
+            return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Во сколько сегодня напомнить ${RuFormat.quote(text)}? Например: ${exampleTime(now, zone)}."))
         }
         val trigger = dates.resolveTrigger(parsed.spec, now, zone)
-            ?: return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Не поняла время. Когда напомнить?"))
+            ?: return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Не поняла время. Когда напомнить? Например: ${exampleTime(now, zone)}."))
         if (!trigger.isAfter(now.minusSeconds(60))) {
-            return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Это время уже прошло. Когда напомнить ${RuFormat.quote(text)}?"))
+            return AssistantPlan("", emptyList(), slot = SlotRequest.ReminderTime(text, "Это время уже прошло. Когда напомнить ${RuFormat.quote(text)}? Например: ${exampleTime(now, zone)}."))
         }
         val recurrence = dates.effectiveRecurrence(parsed.spec)
         return AssistantPlan("", listOf(AssistantAction.CreateReminder(text, trigger, recurrence, persistent = nag && recurrence == null)))
     }
+
+    /** День — сегодня, а часа, сдвига и повтора нет. */
+    private fun todayWithoutTime(spec: ai.loli.core.nlp.WhenSpec, today: LocalDate): Boolean =
+        spec.date == today && spec.time == null && spec.offset == null && spec.recurrence == null
 
     // --- Задачи -----------------------------------------------------------
 
@@ -1175,6 +1187,12 @@ class LocalCommandParser(private val dates: RuDateTimeParser = RuDateTimeParser(
     }
 
     companion object {
+        /** Пример времени для подсказки: днём — сегодняшний час через 2 часа, поздно вечером — завтра утром. */
+        fun exampleTime(now: Instant, zone: ZoneId): String {
+            val z = now.atZone(zone)
+            return if (z.hour < 21) "«в ${z.plusHours(2).hour}:00» или «через час»" else "«завтра в 9» или «через 30 минут»"
+        }
+
         /** Слова, с которых начинается новая команда (для разбиения составных фраз). */
         val TRIGGERS = setOf(
             "напомни", "напоминай", "добавь", "запиши", "запомни", "создай", "отметь", "удали", "найди", "покажи",

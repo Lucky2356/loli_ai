@@ -10,7 +10,7 @@ plugins {
 }
 
 /** Номер версии для установщика: только цифры «X.Y.Z» (так требует MSI); «2.9.0-beta.1» → «2.9.0». */
-val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.12.0").substringBefore('-')
+val desktopVersion = (providers.gradleProperty("loli.desktopVersion").orNull ?: "2.13.0").substringBefore('-')
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

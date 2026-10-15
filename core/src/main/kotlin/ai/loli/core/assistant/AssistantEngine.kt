@@ -1079,7 +1079,7 @@ class AssistantEngine(
 
         /** Убирает обращение «Лоли, …» из начала текстовой команды. */
         fun stripWakeWord(input: String, name: String): String {
-            val trimmed = input.trim()
+            val trimmed = misheardName(input.trim(), name)
             WakeWordMatcher(name, threshold = 0.85).match(trimmed)?.let { return it.command }
             // Распознаватель пишет имя по-разному («Лоля», «Лолли»). Мягче сравниваем, если дальше идёт команда.
             WakeWordMatcher(name, threshold = 0.7).match(trimmed)?.let { m ->
@@ -1095,6 +1095,43 @@ class AssistantEngine(
             }
             return trimmed
         }
+
+        /**
+         * Офлайн-распознаватель не знает слова «Лоли» и пишет вместо него похожее настоящее слово:
+         * «ноль», «ну ли», «лол», «ляли». В начале фразы перед командой это обращение — убираем,
+         * иначе в задаче или напоминании появляется «Ноль …» или «00 …».
+         */
+        private fun misheardName(text: String, name: String): String {
+            val loliLike = WakeWordMatcher(name, threshold = 0.85).similarity("лоли") >= 0.85
+            if (!loliLike) return text
+            val words = text.split(Regex("""\s+""")).filter { it.isNotEmpty() }
+            fun norm(i: Int) = words.getOrNull(i)?.let { ai.loli.core.nlp.RuTokenizer.normalize(it.trim(',', '.', '!', ':', '-', '—')) }
+            var skip = 0
+            while (skip < 2) {
+                val w = norm(skip) ?: break
+                val pair = norm(skip + 1)?.let { "$w $it" }
+                when {
+                    pair != null && pair in MISHEARD_PAIRS -> skip += 2
+                    w in MISHEARD_LOLI -> skip += 1
+                    else -> break
+                }
+            }
+            if (skip == 0) return text
+            val next = norm(skip) ?: return text
+            val command = next in COMMAND_WORDS || next in EXTRA_COMMAND_WORDS || (next.endsWith("ть") && next.length >= 5)
+            return if (command) words.drop(skip).joinToString(" ") else text
+        }
+
+        private val MISHEARD_LOLI = setOf(
+            "ноль", "ноли", "ноле", "нолик", "лоль", "лол", "лоле", "лели", "лили", "лиля", "ляля", "ляли", "лола", "лоля",
+            "оли", "олли", "голи", "доли", "толи", "боли", "роли", "лоло", "нолли", "лолли", "лоли",
+        )
+        private val MISHEARD_PAIRS = setOf("ну ли", "но ли", "ноль ноль", "ой ли", "а ли", "лол и", "ло ли", "но ль")
+        private val EXTRA_COMMAND_WORDS = setOf(
+            "купи", "засеки", "посчитай", "давай", "привет", "как", "отмени", "перенеси", "убери", "кто", "почему", "зачем", "можешь",
+            "помоги", "сделай", "спой", "переключи", "поставить", "пожалуйста", "слушай", "скажи", "покажи", "надо", "нужно",
+            "потратила", "потратил", "заплатила", "заплатил", "купила", "купил", "доброе", "спокойной", "итоги", "погода", "курс", "новости",
+        )
 
         private val COMMAND_WORDS = setOf(
             "добавь", "поставь", "заведи", "создай", "запиши", "напомни", "найди", "покажи", "удали", "отметь", "запомни",

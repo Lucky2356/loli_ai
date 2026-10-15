@@ -30,9 +30,11 @@ object QuickAdd {
             }
             Kind.REMINDER -> {
                 val found = pick<AssistantAction.CreateReminder>(withPrefix(text, REMINDER_PREFIX, "напомни "), now, zone)
+                val today = Regex("(?iu)сегодня").containsMatchIn(text)
                 when {
-                    found == null -> Result.Hint("Не поняла, когда напомнить. Например: «завтра в 9 позвонить маме» или «через 20 минут выключить духовку».")
-                    found.triggerAt.isBefore(now) && found.recurrence == null -> Result.Hint("Это время уже прошло — укажите будущее.")
+                    found == null && today -> Result.Hint("Во сколько сегодня? Например: «сегодня в 18:00 позвонить маме» или «через час полить цветы».")
+                    found == null -> Result.Hint("Не поняла, когда напомнить. Например: «в 18:00 позвонить маме», «вечером полить цветы» или «через 20 минут выключить духовку».")
+                    found.triggerAt.isBefore(now) && found.recurrence == null -> Result.Hint("Это время уже прошло — укажите время позже, например «через час».")
                     else -> Result.Ok(found)
                 }
             }

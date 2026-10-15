@@ -66,14 +66,15 @@ fun ReminderPopups(c: DesktopContainer, dark: Boolean, accent: Accent, onOpen: (
         state = state,
         title = "Напоминание",
         undecorated = true,
-        transparent = true,
+        // Без прозрачности: на части видеокарт Windows прозрачные окна не рисуются — напоминание должно быть видно всегда.
+        transparent = false,
         resizable = false,
         focusable = false,
         alwaysOnTop = true,
     ) {
         LoliTheme(dark, accent) {
             Column(
-                Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+                Modifier.fillMaxSize().background(palette.background).border(1.dp, palette.accent.copy(alpha = 0.6f)).padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
             ) {
                 alerts.forEach { a -> AlertCard(c, a, onOpen) }
@@ -88,7 +89,7 @@ private fun AlertCard(c: DesktopContainer, a: ReminderAlerts.Alert, onOpen: () -
     val scope = rememberCoroutineScope()
     val shape = RoundedCornerShape(18.dp)
     Column(
-        Modifier.fillMaxWidth().shadow(10.dp, shape).clip(shape).background(p.surface).border(1.dp, p.accent.copy(alpha = 0.5f), shape).padding(16.dp),
+        Modifier.fillMaxWidth().clip(shape).background(p.surface).border(1.dp, p.accent.copy(alpha = 0.5f), shape).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(p.gradient), contentAlignment = Alignment.Center) {
