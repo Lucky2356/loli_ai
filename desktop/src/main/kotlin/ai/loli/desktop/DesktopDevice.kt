@@ -17,8 +17,9 @@ import ai.loli.core.model.Reminder
 import ai.loli.core.nlp.RuTokenizer
 import ai.loli.core.util.Logger
 import ai.loli.core.util.TimeSource
-import com.sun.jna.platform.win32.Kernel32
-import com.sun.jna.platform.win32.WinBase
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Structure
 import java.awt.Desktop
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -222,8 +223,8 @@ class DesktopDevice(private val store: LocalStore, private val time: TimeSource)
     private fun battery(): DeviceResult {
         if (!windows) return unsupported()
         return runCatching {
-            val s = WinBase.SYSTEM_POWER_STATUS()
-            Kernel32.INSTANCE.GetSystemPowerStatus(s)
+            val s = PowerStatus()
+            check(PowerLib.INSTANCE.GetSystemPowerStatus(s))
             val percent = s.BatteryLifePercent.toInt() and 0xff
             val plugged = s.ACLineStatus.toInt() == 1
             if (percent == 255 || (s.BatteryFlag.toInt() and 0x80) != 0) DeviceResult("У этого компьютера нет батареи — он работает от сети.")
@@ -347,5 +348,24 @@ class DesktopDevice(private val store: LocalStore, private val time: TimeSource)
             "скайп" to "skype", "вайбер" to "viber", "обс" to "obs", "вскод" to "code", "вс код" to "code", "фотошоп" to "photoshop",
             "винрар" to "winrar", "тимс" to "teams", "нотпад" to "notepad", "вк" to "vk", "одноклассники" to "ok",
         )
+    }
+}
+
+/** SYSTEM_POWER_STATUS из kernel32 (в jna-platform её нет). */
+@Structure.FieldOrder("ACLineStatus", "BatteryFlag", "BatteryLifePercent", "SystemStatusFlag", "BatteryLifeTime", "BatteryFullLifeTime")
+class PowerStatus : Structure() {
+    @JvmField var ACLineStatus: Byte = 0
+    @JvmField var BatteryFlag: Byte = 0
+    @JvmField var BatteryLifePercent: Byte = 0
+    @JvmField var SystemStatusFlag: Byte = 0
+    @JvmField var BatteryLifeTime: Int = 0
+    @JvmField var BatteryFullLifeTime: Int = 0
+}
+
+interface PowerLib : Library {
+    fun GetSystemPowerStatus(status: PowerStatus): Boolean
+
+    companion object {
+        val INSTANCE: PowerLib by lazy { Native.load("kernel32", PowerLib::class.java) }
     }
 }
