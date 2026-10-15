@@ -115,6 +115,26 @@ class DesktopInfraTest {
         }
     }
 
+    @Test fun taskRemindersFireOnlyForOpenTasks() = runBlocking {
+        val c = DesktopContainer(dir)
+        try {
+            val now = Instant.now()
+            val open = c.store.tasks.create("Созвон", "", null, null)
+            val closed = c.store.tasks.create("Купить хлеб", "", null, null)
+            c.store.tasks.setDone(closed.id, true)
+            c.store.reminders.create("Задача: ${open.title}", now.minusSeconds(5), null, c.time.zone().id)
+            c.store.reminders.create("Задача: ${closed.title}", now.minusSeconds(5), null, c.time.zone().id)
+            val shown = ArrayList<ReminderTicker.Fired>()
+            ReminderTicker(c) { shown += it }.tick()
+            assertEquals(1, shown.size, shown.toString())
+            assertEquals("Пора: задача", shown.single().title)
+            assertEquals("Созвон", shown.single().text)
+            assertTrue(c.store.reminders.active().isEmpty())
+        } finally {
+            c.close()
+        }
+    }
+
     @Test fun newerVersionComparison() {
         assertTrue(UpdateChecker.newer("2.12.0", "2.11.0"))
         assertTrue(UpdateChecker.newer("2.11.10", "2.11.9"))

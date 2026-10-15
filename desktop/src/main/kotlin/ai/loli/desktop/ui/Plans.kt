@@ -45,7 +45,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ai.loli.core.assistant.QuickAdd
+import ai.loli.core.assistant.ReminderScheduler
 import ai.loli.core.assistant.RuFormat
+import ai.loli.core.assistant.TaskReminders
 import ai.loli.core.model.Reminder
 import ai.loli.core.model.ShoppingItem
 import ai.loli.core.model.TaskItem
@@ -56,6 +58,12 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+
+/** На компьютере будильников нет: напоминания проверяет ReminderTicker по базе. */
+private object NoScheduler : ReminderScheduler {
+    override fun schedule(reminder: Reminder) = Unit
+    override fun cancel(reminderId: String) = Unit
+}
 
 /** Вкладка «Планы» — как на телефоне: задачи, напоминания и списки покупок. */
 @Composable
@@ -117,7 +125,13 @@ fun PlansScreen(c: DesktopContainer) {
                                 )
                                 shownTasks.forEachIndexed { i, t ->
                                     if (i > 0) Divider(Modifier.padding(vertical = 2.dp))
-                                    TaskRow(t, today, now, onToggle = { scope.launch { c.store.tasks.setDone(t.id, !t.done) } }, onOpen = { editTask = t })
+                                    TaskRow(t, today, now, onToggle = {
+                                        scope.launch {
+                                            val upd = c.store.tasks.setDone(t.id, !t.done) ?: return@launch
+                                            if (upd.done) TaskReminders.cancel(upd.title, c.store.reminders, NoScheduler)
+                                            else TaskReminders.schedule(upd, c.store.reminders, NoScheduler, c.time.zone(), c.time.now())
+                                        }
+                                    }, onOpen = { editTask = t })
                                 }
                             }
                         }
@@ -284,8 +298,10 @@ private fun TaskEditor(c: DesktopContainer, task: TaskItem?, onDone: (Pair<Boole
         scope.launch {
             if (task == null) {
                 val clean = parsed.remainder.ifBlank { title }.trim().replaceFirstChar { it.uppercase() }
-                c.store.tasks.create(clean, details.trim(), dueDate, parsed.spec.time)
-                onDone(true to "Добавила задачу.")
+                val created = c.store.tasks.create(clean, details.trim(), dueDate, parsed.spec.time)
+                // Задача со временем — напоминание к сроку (окно поверх программ в назначенное время).
+                val alarm = TaskReminders.schedule(created, c.store.reminders, NoScheduler, c.time.zone(), c.time.now())
+                onDone(true to if (alarm != null) "Добавила задачу. Напомню в ${RuFormat.time(created.dueTime!!)}." else "Добавила задачу.")
             } else {
                 c.store.tasks.update(task.copy(title = title.trim(), details = details.trim()))
                 onDone(true to "Сохранила.")
@@ -315,7 +331,14 @@ private fun TaskEditor(c: DesktopContainer, task: TaskItem?, onDone: (Pair<Boole
     }
     if (askDelete && task != null) ConfirmDialog(
         "Удалить задачу?", "«${task.title}» будет удалена.", "Удалить",
-        onConfirm = { scope.launch { c.store.tasks.delete(task.id); onDone(true to "Удалила задачу.") }; onDismiss() },
+        onConfirm = {
+            scope.launch {
+                c.store.tasks.delete(task.id)
+                TaskReminders.cancel(task.title, c.store.reminders, NoScheduler)
+                onDone(true to "Удалила задачу.")
+            }
+            onDismiss()
+        },
         onDismiss = { askDelete = false },
     )
 }
@@ -331,7 +354,8 @@ private fun ReminderCreator(c: DesktopContainer, onDone: (Pair<Boolean, String>)
     val parser = remember { RuDateTimeParser() }
     val spec = remember(whenText) { parser.parse(whenText, LocalDate.now()).spec }
     val trigger = remember(spec) { parser.resolveTrigger(spec, c.time.now(), zone) }
-    val valid = trigger != null && trigger.isAfter(c.time.now())
+    val todayNoTime = spec.date == LocalDate.now() && spec.time == null && spec.offset == null && spec.recurrence == null
+    val valid = trigger != null && trigger.isAfter(c.time.now()) && !todayNoTime
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     fun create() {
@@ -349,6 +373,7 @@ private fun ReminderCreator(c: DesktopContainer, onDone: (Pair<Boolean, String>)
         Text(
             when {
                 whenText.isBlank() -> "Укажите время словами"
+                todayNoTime -> "Во сколько сегодня? Например: «сегодня в 18:00» или «через час»"
                 trigger == null -> "Время не распознано"
                 !valid -> "Это время уже прошло"
                 else -> "Сработает " + RuFormat.dateTime(trigger, zone, c.time.now()) + (parser.effectiveRecurrence(spec)?.let { ", ${it.describeRu()}" } ?: "")

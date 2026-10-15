@@ -108,7 +108,13 @@ fun PlansScreen(c: AppContainer, segment: Int, onSegment: (Int) -> Unit) {
                             titleColor = if (t.done) MaterialTheme.colorScheme.onSurfaceVariant else if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                             onClick = { editTask = t },
                             leading = {
-                                IconButton(onClick = { scope.launch { c.store.tasks.setDone(t.id, !t.done) } }, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        val upd = c.store.tasks.setDone(t.id, !t.done) ?: return@launch
+                                        if (upd.done) ai.loli.core.assistant.TaskReminders.cancel(upd.title, c.store.reminders, c.reminderScheduler)
+                                        else ai.loli.core.assistant.TaskReminders.schedule(upd, c.store.reminders, c.reminderScheduler, c.time.zone(), c.time.now())
+                                    }
+                                }, modifier = Modifier.size(32.dp)) {
                                     Icon(
                                         if (t.done) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
                                         contentDescription = if (t.done) "Вернуть в работу" else "Выполнено",
@@ -243,7 +249,9 @@ private fun TaskEditor(c: AppContainer, task: TaskItem?, onDismiss: () -> Unit) 
                 scope.launch {
                     if (task == null) {
                         val clean = parsed.remainder.ifBlank { title }.trim().replaceFirstChar { it.uppercase() }
-                        c.store.tasks.create(clean, details.trim(), dueDate, parsed.spec.time)
+                        val created = c.store.tasks.create(clean, details.trim(), dueDate, parsed.spec.time)
+                        // Задача со временем — напоминание к сроку.
+                        ai.loli.core.assistant.TaskReminders.schedule(created, c.store.reminders, c.reminderScheduler, c.time.zone(), c.time.now())
                     } else {
                         c.store.tasks.update(task.copy(title = title.trim(), details = details.trim()))
                     }
@@ -253,7 +261,13 @@ private fun TaskEditor(c: AppContainer, task: TaskItem?, onDismiss: () -> Unit) 
         }
     }
     if (askDelete && task != null) ConfirmDialog("Удалить задачу?", "«${task.title}» будет удалена.", "Удалить",
-        onConfirm = { scope.launch { c.store.tasks.delete(task.id) }; onDismiss() }, onDismiss = { askDelete = false })
+        onConfirm = {
+            scope.launch {
+                c.store.tasks.delete(task.id)
+                ai.loli.core.assistant.TaskReminders.cancel(task.title, c.store.reminders, c.reminderScheduler)
+            }
+            onDismiss()
+        }, onDismiss = { askDelete = false })
 }
 
 @Composable
@@ -265,14 +279,17 @@ private fun ReminderCreator(c: AppContainer, onDismiss: () -> Unit) {
     val parser = remember { RuDateTimeParser() }
     val spec = parser.parse(whenText, c.time.today()).spec
     val trigger = parser.resolveTrigger(spec, c.time.now(), zone)
-    val valid = trigger != null && trigger.isAfter(c.time.now())
+    // «сегодня» без часа — спрашиваем время, а не берём прошедшие 9 утра.
+    val todayNoTime = spec.date == c.time.today() && spec.time == null && spec.offset == null && spec.recurrence == null
+    val valid = trigger != null && trigger.isAfter(c.time.now()) && !todayNoTime
     EditorSheet("Новое напоминание", onDismiss) {
         LoliField(text, { text = it }, "О чём напомнить", singleLine = false)
-        LoliField(whenText, { whenText = it }, "Когда", placeholder = "завтра в 10:00, каждый понедельник в 9")
+        LoliField(whenText, { whenText = it }, "Когда", placeholder = "в 18:00, через час, завтра в 10, каждый понедельник в 9")
         Column(Modifier.padding(start = 4.dp)) {
             Text(
                 when {
                     whenText.isBlank() -> "Укажите время словами"
+                    todayNoTime -> "Во сколько сегодня? Например: «сегодня в 18:00» или «через час»"
                     trigger == null -> "Время не распознано"
                     !valid -> "Это время уже прошло"
                     else -> "Сработает " + RuFormat.dateTime(trigger, zone, c.time.now()) + (parser.effectiveRecurrence(spec)?.let { ", ${it.describeRu()}" } ?: "")

@@ -111,6 +111,11 @@ class ReminderReceiver : BroadcastReceiver() {
                     if (late > ROUTINE_LATE_LIMIT) return
                     return@withLock reminder.text
                 }
+                // Напоминание к сроку задачи, а задача уже выполнена или удалена — молча снимаем.
+                if (ai.loli.core.assistant.TaskReminders.obsolete(reminder.text, c.store.tasks)) {
+                    c.store.reminders.markFired(id, now)
+                    return
+                }
                 val zone = runCatching { ZoneId.of(reminder.timeZone) }.getOrDefault(ZoneId.systemDefault())
                 var text = if (late > LATE_NOTE_AFTER) {
                     reminder.text + "\nБыло в " + RuFormat.time(reminder.triggerAt.atZone(zone).toLocalTime())

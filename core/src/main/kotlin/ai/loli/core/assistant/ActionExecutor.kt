@@ -127,7 +127,7 @@ class ActionExecutor(
             val ok = when (op.type) {
                 RecordType.NOTE, RecordType.IDEA -> notes.delete(op.id)
                 RecordType.EXPENSE -> expenses.delete(op.id)
-                RecordType.TASK -> tasks.delete(op.id)
+                RecordType.TASK -> tasks.delete(op.id).also { if (it) TaskReminders.cancel(op.title, reminders, scheduler) }
                 RecordType.REMINDER -> {
                     scheduler.cancel(op.id)
                     if (op.cancelOnly) reminders.cancel(op.id) != null else reminders.delete(op.id)
@@ -278,12 +278,15 @@ class ActionExecutor(
             is AssistantAction.CreateTask -> {
                 val t = tasks.create(action.title, action.details, action.dueDate, action.dueTime)
                 val due = t.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today).removePrefix("в ")}" + (t.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
-                changed("Добавила задачу ${RuFormat.quote(t.title)}$due.", RecordRef(RecordType.TASK, t.id, t.title))
+                // Задача со временем — напоминание к сроку, чтобы она не прошла незамеченной.
+                val alarm = TaskReminders.schedule(t, reminders, scheduler, time.zone(), time.now())
+                changed("Добавила задачу ${RuFormat.quote(t.title)}$due." + (if (alarm != null) " Напомню в ${RuFormat.time(t.dueTime!!)}." else ""), RecordRef(RecordType.TASK, t.id, t.title))
             }
 
             is AssistantAction.CompleteTask -> when (val r = resolver.resolve(action.target, ctx.focus, ctx.recent)) {
                 is Resolution.Found -> {
                     val t = tasks.setDone(r.ref.id, action.done) ?: return error("Задача не найдена.")
+                    if (action.done) TaskReminders.cancel(t.title, reminders, scheduler) else TaskReminders.schedule(t, reminders, scheduler, time.zone(), time.now())
                     changed(if (action.done) "Отметила задачу ${RuFormat.quote(t.title)} выполненной." else "Вернула задачу ${RuFormat.quote(t.title)} в работу.", r.ref)
                 }
                 is Resolution.Ambiguous -> ambiguous(r.options, "отметить", action)
@@ -339,6 +342,7 @@ class ActionExecutor(
                         val tm = action.time ?: action.triggerAt?.atZone(zone)?.toLocalTime()
                         if (d == null && tm == null) return error("Задачу можно перенести на день или время, например: «на завтра».")
                         val upd = tasks.update(t.copy(dueDate = d ?: t.dueDate ?: today, dueTime = tm ?: t.dueTime))
+                        TaskReminders.schedule(upd, reminders, scheduler, zone, time.now())
                         val due = upd.dueDate?.let { dd -> " на ${RuFormat.dateFull(dd, today).removePrefix("в ")}" + (upd.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
                         return changed("Перенесла задачу ${RuFormat.quote(upd.title)}$due.", r.ref)
                     }
@@ -367,6 +371,7 @@ class ActionExecutor(
                 is Resolution.Found -> {
                     val cur = tasks.get(r.ref.id) ?: return error("Задача не найдена.")
                     val updated = tasks.update(cur.copy(dueDate = action.dueDate ?: cur.dueDate, dueTime = action.dueTime ?: cur.dueTime))
+                    TaskReminders.schedule(updated, reminders, scheduler, time.zone(), time.now())
                     val due = updated.dueDate?.let { d -> " на ${RuFormat.dateFull(d, today).removePrefix("в ")}" + (updated.dueTime?.let { " в ${RuFormat.time(it)}" } ?: "") } ?: ""
                     changed("Перенесла задачу ${RuFormat.quote(updated.title)}$due.", r.ref)
                 }

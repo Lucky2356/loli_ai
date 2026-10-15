@@ -49,7 +49,7 @@ class WakeWordService : LifecycleService() {
     private val container get() = (application as LoliApp).container
     private var speechService: SpeechService? = null
     private var recognizer: Recognizer? = null
-    private var matcher = WakeWordMatcher("Лоли")
+    private var matcher = WakeWordMatcher("Лоли", aliases = WakeWordMatcher.misheardAliases("Лоли"))
     @Volatile private var mode = Mode.WAITING
     @Volatile private var commandDeadline = 0L
     /** Сколько реплик подряд прошло без повторного обращения по имени. */
@@ -101,7 +101,7 @@ class WakeWordService : LifecycleService() {
 
     private suspend fun startRecognition() {
         val name = container.settings.current().assistantName
-        matcher = WakeWordMatcher(name)
+        matcher = WakeWordMatcher(name, aliases = WakeWordMatcher.misheardAliases(name))
         updateNotification(getString(R.string.wake_listening, name))
         val model = withContext(Dispatchers.Default) { if (container.voskModels.ensureReady()) container.voskEngine.model() else null }
         if (model == null) {

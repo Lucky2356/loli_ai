@@ -66,6 +66,11 @@ fun main(args: Array<String>) {
     }
     Runtime.getRuntime().addShutdownHook(Thread { runCatching { c.settings.flush() } })
     Autostart.refresh()
+    // Напоминания приходят, только пока Лоли запущена: при первом запуске включаем автозапуск (выключается в настройках).
+    if (Autostart.supported && !c.settings.value.autostartOffered) {
+        if (Autostart.set(true)) Logger.i("App", "Включён запуск вместе с Windows")
+        c.settings.update { it.copy(autostartOffered = true) }
+    }
     val startHidden = Autostart.TRAY_FLAG in args
     var closed = false
     fun shutdown() {
